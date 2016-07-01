@@ -1,0 +1,7 @@
+modisco/__init__.py
+modisco/util.py
+modisco.egg-info/PKG-INFO
+modisco.egg-info/SOURCES.txt
+modisco.egg-info/dependency_links.txt
+modisco.egg-info/requires.txt
+modisco.egg-info/top_level.txt
