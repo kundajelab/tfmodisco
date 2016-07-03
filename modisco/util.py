@@ -1,6 +1,8 @@
 import deeplift
 import numpy as np
 import deeplift.backend as B
+import theano
+import theano.tensor.signal.conv
 
 def create_detector_from_subset_of_sequential_layers(sequential_container,
                                                     idx_of_layer_of_interest,
@@ -49,3 +51,83 @@ def create_detector_from_subset_of_sequential_layers(sequential_container,
     model_to_return.get_layers()
 
     return model_to_return
+
+def get_conv_out_symbolic_var(input_var,
+                              set_of_2d_patterns_to_conv_with,
+                              normalise_by_magnitude,
+                              take_max):
+    assert len(set_of_2d_patterns_to_conv_with.shape)==3
+    if (normalise_by_magnitude):
+        set_of_2d_patterns_to_conv_with =\
+         np.sqrt(np.sum(np.sum(np.square(set_of_2d_patterns_to_conv_with),
+                               axis=-1),
+                        axis=-1))[:,None,None]
+    filters = theano.tensor.as_tensor_variable(
+               x=set_of_2d_patterns_to_conv_with,
+               name="filters")
+    conv_out = theano.tensor.signal.conv.conv2d(
+                input=input_var,
+                filters=filters)
+    if (normalise_by_magnitude):
+        sum_squares_per_pos =\
+                   theano.tensor.signal.conv.conv2d(
+                    input=theano.tensor.square(input_var),
+                    filters=np.ones(set_of_2d_patterns_to_conv_with.shape)\
+                            .astype("float32")) 
+        per_pos_magnitude = theano.tensor.sqrt(sum_squares_per_pos)
+        per_pos_magnitude += 0.0000001*(per_pos_magnitude < 0.0000001)
+        conv_out = conv_out/per_pos_magnitude
+    if (take_max):
+        conv_out = theano.tensor.max(conv_out, axis=-1)
+    return conv_out 
+
+def compile_conv_func_with_theano(set_of_2d_patterns_to_conv_with,
+                                  normalise_by_magnitude=False,
+                                  take_max=False):
+    #reverse the patterns as the func is a conv not a cross corr
+    input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                         broadcastable=[False]*3)("input")
+    conv_out = get_conv_out_symbolic_var(input_var,
+                                 set_of_2d_patterns_to_conv_with,
+                                 normalise_by_magnitude=normalise_by_magnitude,
+                                 take_max=take_max)
+    func = theano.function([input_var],
+                           conv_out,
+                           allow_input_downcast=True)
+    return func 
+
+def get_max_cross_corr(filters, things_to_scan,
+                           verbose=True, batch_size=10,
+                           func_params_size=1000000):
+    """
+        func_params_size: when compiling functions
+    """
+    to_return = np.zeros((filters.shape[0], things_to_scan.shape[0]))
+    #compile the number of filters that result in a function with
+    #params equal to func_params_size 
+    params_per_filter = np.prod(filters[0].shape)
+    filter_batch_size = int(func_params_size/params_per_filter)
+    filter_length = filters.shape[-1]
+    filter_idx = 0 
+    while filter_idx < filters.shape[0]:
+        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
+        filter_batch = filter_batch[:,::-1,::-1]
+        cross_corr_func = compile_conv_func_with_theano(
+                           set_of_2d_patterns_to_conv_with=filter_batch,
+                           normalise_by_magnitude=False,
+                           take_max=True)  
+        padded_input = np.pad(things_to_scan,
+                              pad_width=[(0,0), (0,0),
+                                         (filter_length-1, filter_length-1)])
+        max_cross_corrs = deeplift.run_func_in_batches(
+                            func=cross_corr_func,
+                            input_data_list=[padded_input],
+                            batch_size=batch_size,
+                            verbose=verbose)
+        assert len(max_cross_corrs.shape)==2
+        to_return[filter_idx:
+                  (filter_idx+filter_batch_size),:] =\
+                  np.transpose(max_cross_corrs)
+        filter_idx += filter_batch_size
+        
+    return to_return
