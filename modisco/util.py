@@ -159,4 +159,17 @@ def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
             top_n_scores.append(top_n_scores_for_region) 
         return np.array(top_n_scores)
  
-            
+def jaccardifyDistMat(distMat, verbose=True):
+    if (verbose):
+        print("calling jaccardify")
+    import time
+    t1 = time.time()
+    minimum_sum = np.sum(np.minimum(distMat[:,None,:],
+                         distMat[None,:,:]), axis=-1)
+    maximum_sum = np.sum(np.maximum(distMat[:,None,:],
+                         distMat[None,:,:]), axis=-1)
+    ratio = minimum_sum/maximum_sum
+    t2 = time.time()
+    if (verbose):
+        print("time taken in jaccardify",t2-t1)
+    return ratio 
