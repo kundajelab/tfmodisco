@@ -142,6 +142,7 @@ def get_max_cross_corr(filters, things_to_scan,
         
     return to_return
 
+
 def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
     scores = scores.copy()
     assert len(scores.shape)==2, scores.shape
@@ -159,9 +160,11 @@ def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
             top_n_scores.append(top_n_scores_for_region) 
         return np.array(top_n_scores)
  
-def jaccardifyDistMat(distMat, verbose=True):
+
+def jaccardifyDistMat(distMat, verbose=True, power=1):
     if (verbose):
         print("calling jaccardify")
+    distMat = np.power(distMat, power)
     import time
     t1 = time.time()
     minimum_sum = np.sum(np.minimum(distMat[:,None,:],
@@ -173,3 +176,22 @@ def jaccardifyDistMat(distMat, verbose=True):
     if (verbose):
         print("time taken in jaccardify",t2-t1)
     return ratio 
+
+
+def make_graph_from_dist_mat(distMat):
+    import networkx as nx
+    G = nx.Graph()
+    for i in range(len(distMat)):
+        G.add_node(i)
+    for i in range(len(distMat)):
+        for j in range(i+1,len(distMat)):
+            G.add_edge(i, j, weight=distMat[i,j])
+    return G
+
+
+def cluster_louvian(distMat):
+    import community
+    graph = make_graph_from_dist_mat(distMat)
+    partition = community.best_partition(graph)
+    louvian_labels = [partition[i] for i in range(len(partition.keys()))]
+    return louvian_labels
