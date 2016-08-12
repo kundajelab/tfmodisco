@@ -189,9 +189,9 @@ def make_graph_from_dist_mat(distMat):
     return G
 
 
-def cluster_louvian(distMat):
+def cluster_louvain(distMat):
     import community
     graph = make_graph_from_dist_mat(distMat)
     partition = community.best_partition(graph)
-    louvian_labels = [partition[i] for i in range(len(partition.keys()))]
-    return louvian_labels
+    louvain_labels = [partition[i] for i in range(len(partition.keys()))]
+    return louvain_labels
