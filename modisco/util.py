@@ -202,15 +202,19 @@ def parallel_jaccardify(dist_mat, num_processes=4,
                         temp_file_dir="tmp",
                         temp_file_prefix="jaccardify_h5"):
 
+    if (os.path.isdir(temp_file_dir)==False):
+        os.system("mkdir "+temp_file_dir)
     dist_mat = np.power(dist_mat, power)
 
     num_nodes = dist_mat.shape[0]
     total_tasks = num_nodes**2
-    tasks_per_job = np.ceil(total_tasks/num_processes)
+    tasks_per_job = int(np.ceil(total_tasks/num_processes))
 
     launched_pids = []
+    print(num_processes)
     for i in xrange(num_processes):
         pid = os.fork() 
+        print(pid)
         if pid==0:
             try:
                 #set a signal handler for interrupt signals
@@ -223,23 +227,44 @@ def parallel_jaccardify(dist_mat, num_processes=4,
                 h5_file_name = temp_file_dir+"/"\
                                +temp_file_prefix+"_"+str(i)+".h5"
                 f = h5py.File(h5_file_name, "w")
-                dset = f.create_dataset("distances", data=distances)
+                dset = f.create_dataset("/distances", data=distances)
                 f.close()
+                print("Exit!")
+                os._exit(os.EX_OK) #exit the child
             except Exception, _:
                 raise RuntimeError("Exception in job "+str(i)+\
                                    "\n"+traceback.format_exc()) 
-                #exit gracefully
                 os._exit(os.EX_SOFTWARE)
         else:
             launched_pids.append(pid)
+
     try:
         while len(launched_pids) > 0:
             pid, return_code = os.wait()
             if return_code != os.EX_OK:  
-                raise RuntimeError("pid "+str(pid)
-                                   +" gave error code "+str(return_code))
+                raise RuntimeError(
+                "pid "+str(pid)+" gave error code "+str(return_code))
             if pid in launched_pids:
                 launched_pids.remove(pid)
+
+        #child processes would have all exited
+        collated_distances = []
+        #now collate all the stuff written to the various h5 files
+        for i in xrange(num_processes):
+            h5_file_name = temp_file_dir+"/"\
+                           +temp_file_prefix+"_"+str(i)+".h5"
+            f = h5py.File(h5_file_name)
+            collated_distances.extend(f['/distances'])
+            f.close()
+            os.system("rm "+h5_file_name)
+        assert len(collated_distances) == total_tasks 
+        to_return = np.zeros((num_nodes, num_nodes))
+        #now reshape the collated distances into a numpy array
+        for i in xrange(len(collated_distances)):
+            row_idx = int(i/num_nodes)
+            col_idx = i%num_nodes
+            to_return[row_idx, col_idx] = collated_distances[i]
+        return to_return
     except KeyboardInterrupt, OSError:
         for pid in launched_pids:
             try:
@@ -248,21 +273,6 @@ def parallel_jaccardify(dist_mat, num_processes=4,
                 pass
         raise
 
-    collated_distances = []
-    #now collate all the stuff written to the various h5 files
-    for i in xrange(num_processes):
-        h5_file_name = temp_file_dir+"/"\
-                       +temp_file_prefix+"_"+str(i)+".h5"
-        f = h5py.File(h5_file_name, "w")
-        collated_distances.extend(f['distances'])
-    assert len(collated_distances) = total_tasks 
-    to_return = np.zeros(num_nodes, num_nodes)
-    #now reshape the collated distances into a numpy array
-    for i in xrange(len(collated_distances)):
-        row_idx = int(i/num_nodes)
-        col_idx = i%num_nodes
-        to_return[row_idx, col_idx] = collated_distances[i]
-    return to_return
 
 
 def make_graph_from_dist_mat(distMat):
