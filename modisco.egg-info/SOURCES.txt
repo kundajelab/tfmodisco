@@ -5,3 +5,4 @@ modisco.egg-info/SOURCES.txt
 modisco.egg-info/dependency_links.txt
 modisco.egg-info/requires.txt
 modisco.egg-info/top_level.txt
+test/test_jaccardify.py
