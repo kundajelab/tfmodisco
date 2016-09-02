@@ -1,8 +1,12 @@
+import os
+import signal
 import deeplift
 import numpy as np
 import deeplift.backend as B
 import theano
 import theano.tensor.signal.conv
+import h5py
+import traceback
 
 
 def create_detector_from_subset_of_sequential_layers(sequential_container,
@@ -176,6 +180,89 @@ def jaccardifyDistMat(distMat, verbose=True, power=1):
     if (verbose):
         print("time taken in jaccardify",t2-t1)
     return ratio 
+
+
+def compute_jaccardify(dist_mat, start_job, end_job):
+    num_nodes = dist_mat.shape[0]
+    distances = []
+    for job_num in xrange(start_job, end_job):
+        row_idx = int(job_num/num_nodes)
+        col_idx = job_num%num_nodes
+        minimum_sum = np.sum(np.minimum(dist_mat[row_idx,:],
+                                        dist_mat[col_idx,:]))
+        maximum_sum = np.sum(np.maximum(dist_mat[row_idx,:],
+                                        dist_mat[col_idx,:]))
+        ratio = minimum_sum/maximum_sum
+        distances.append(ratio)
+    return distances
+
+
+def parallel_jaccardify(dist_mat, num_processes=4,
+                        verbose=True, power=1,
+                        temp_file_dir="tmp",
+                        temp_file_prefix="jaccardify_h5"):
+
+    dist_mat = np.power(dist_mat, power)
+
+    num_nodes = dist_mat.shape[0]
+    total_tasks = num_nodes**2
+    tasks_per_job = np.ceil(total_tasks/num_processes)
+
+    launched_pids = []
+    for i in xrange(num_processes):
+        pid = os.fork() 
+        if pid==0:
+            try:
+                #set a signal handler for interrupt signals
+                signal.signal(signal.SIGINT,
+                              (lambda signum, frame: os._exit(os.EX_TEMPFAIL)))
+                start_job = tasks_per_job*i
+                end_job = min(total_tasks, tasks_per_job*(i+1))
+                distances = compute_jaccardify(dist_mat, start_job, end_job) 
+                #write the distances to an h5 file
+                h5_file_name = temp_file_dir+"/"\
+                               +temp_file_prefix+"_"+str(i)+".h5"
+                f = h5py.File(h5_file_name, "w")
+                dset = f.create_dataset("distances", data=distances)
+                f.close()
+            except Exception, _:
+                raise RuntimeError("Exception in job "+str(i)+\
+                                   "\n"+traceback.format_exc()) 
+                #exit gracefully
+                os._exit(os.EX_SOFTWARE)
+        else:
+            launched_pids.append(pid)
+    try:
+        while len(launched_pids) > 0:
+            pid, return_code = os.wait()
+            if return_code != os.EX_OK:  
+                raise RuntimeError("pid "+str(pid)
+                                   +" gave error code "+str(return_code))
+            if pid in launched_pids:
+                launched_pids.remove(pid)
+    except KeyboardInterrupt, OSError:
+        for pid in launched_pids:
+            try:
+                os.kill(pid, signal.SIGHUP)
+            except:
+                pass
+        raise
+
+    collated_distances = []
+    #now collate all the stuff written to the various h5 files
+    for i in xrange(num_processes):
+        h5_file_name = temp_file_dir+"/"\
+                       +temp_file_prefix+"_"+str(i)+".h5"
+        f = h5py.File(h5_file_name, "w")
+        collated_distances.extend(f['distances'])
+    assert len(collated_distances) = total_tasks 
+    to_return = np.zeros(num_nodes, num_nodes)
+    #now reshape the collated distances into a numpy array
+    for i in xrange(len(collated_distances)):
+        row_idx = int(i/num_nodes)
+        col_idx = i%num_nodes
+        to_return[row_idx, col_idx] = collated_distances[i]
+    return to_return
 
 
 def make_graph_from_dist_mat(distMat):
