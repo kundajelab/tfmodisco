@@ -197,6 +197,58 @@ def compute_jaccardify(dist_mat, start_job, end_job):
     return distances
 
 
+#might be speed-upable further by recognizing that the distance is symmetric
+def gpu_jaccardify(dist_mat, power=1,
+                   func_params_size=1000000,
+                   batch_size=100):
+    num_nodes = dist_mat.shape[0]
+    cols_batch_size = int(func_params_size/num_nodes) 
+    assert cols_batch_size > 0, "Please increase func_params_size; a single"+\
+                                " col can't fit in the function otherwise"
+
+    to_return = np.zeros(dist_mat.shape)
+
+    col_idx = 0
+    while col_idx < num_nodes:
+        #compile a function for computing distance to
+        #nodes col_idx:(col_idx + cols_batch_size)
+
+        #input var will store a batch of input data points
+        input_var = theano.tensor.TensorType(
+                        dtype=theano.config.floatX,
+                        broadcastable=[False]*2)("input")
+        
+        end_col_idx = min(col_idx + cols_batch_size, num_nodes)
+        minimum_sum = theano.tensor.sum(
+                         theano.tensor.minimum(
+                            input_var[:,None,:],
+                            dist_mat[None,
+                                     col_idx:end_col_idx,:]),
+                                     axis=-1)
+        maximum_sum = theano.tensor.sum(
+                         theano.tensor.maximum(
+                            input_var[:,None,:],
+                            dist_mat[None,
+                                     col_idx:end_col_idx,:]),
+                                     axis=-1)
+        ratios = minimum_sum/maximum_sum #the "jaccardified" distance
+
+        #compile the function which takes input_var as the input tensor
+        #and returns ratios 
+        func = theano.function([input_var], ratios, allow_input_downcast=True)
+
+        #apply the function in batches to all the nodes
+        row_idx = 0
+        while row_idx < num_nodes: 
+            end_row_idx = row_idx+batch_size
+            distances = func(dist_mat[row_idx:end_row_idx,:])
+            to_return[row_idx:end_row_idx, col_idx:end_col_idx]
+            row_idx = end_row_idx
+        col_idx = end_col_idx
+    return to_return
+
+
+#should be speed-upable further by recognizing that the distance is symmetric
 def parallel_jaccardify(dist_mat, num_processes=4,
                         verbose=True, power=1,
                         temp_file_dir="tmp",
@@ -272,7 +324,6 @@ def parallel_jaccardify(dist_mat, num_processes=4,
             except:
                 pass
         raise
-
 
 
 def make_graph_from_dist_mat(distMat):
