@@ -202,6 +202,7 @@ def gpu_jaccardify(dist_mat, power=1,
                    func_params_size=1000000,
                    batch_size=100,
                    verbose=True):
+    dist_mat = np.power(dist_mat, power)
     num_nodes = dist_mat.shape[0]
     cols_batch_size = int(func_params_size/num_nodes) 
     assert cols_batch_size > 0, "Please increase func_params_size; a single"+\
