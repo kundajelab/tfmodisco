@@ -200,7 +200,8 @@ def compute_jaccardify(dist_mat, start_job, end_job):
 #might be speed-upable further by recognizing that the distance is symmetric
 def gpu_jaccardify(dist_mat, power=1,
                    func_params_size=1000000,
-                   batch_size=100):
+                   batch_size=100,
+                   verbose=True):
     num_nodes = dist_mat.shape[0]
     cols_batch_size = int(func_params_size/num_nodes) 
     assert cols_batch_size > 0, "Please increase func_params_size; a single"+\
@@ -210,6 +211,8 @@ def gpu_jaccardify(dist_mat, power=1,
 
     col_idx = 0
     while col_idx < num_nodes:
+        if (verbose):
+            print("cols idx:",col_idx)
         #compile a function for computing distance to
         #nodes col_idx:(col_idx + cols_batch_size)
 
@@ -242,7 +245,7 @@ def gpu_jaccardify(dist_mat, power=1,
         while row_idx < num_nodes: 
             end_row_idx = row_idx+batch_size
             distances = func(dist_mat[row_idx:end_row_idx,:])
-            to_return[row_idx:end_row_idx, col_idx:end_col_idx]
+            to_return[row_idx:end_row_idx, col_idx:end_col_idx] = distances
             row_idx = end_row_idx
         col_idx = end_col_idx
     return to_return

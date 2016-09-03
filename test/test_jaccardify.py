@@ -20,8 +20,7 @@ class TestJaccardify(unittest.TestCase):
         rand_mat = np.random.random((100,100)) 
         answer = modisco.util.jaccardifyDistMat(rand_mat) 
         t1 = time.time()
-        parallel_answer = modisco.util.parallel_jaccardify(rand_mat)
+        parallel_answer = modisco.util.gpu_jaccardify(rand_mat, func_params_size=1000)
         t2 = time.time()
         print("Time taken in parallel jaccardify",t2-t1)
         np.testing.assert_allclose(answer, parallel_answer)
-        assert False
