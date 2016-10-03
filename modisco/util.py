@@ -93,7 +93,6 @@ def get_conv_out_symbolic_var(input_var,
 def compile_conv_func_with_theano(set_of_2d_patterns_to_conv_with,
                                   normalise_by_magnitude=False,
                                   take_max=False):
-    #reverse the patterns as the func is a conv not a cross corr
     input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                          broadcastable=[False]*3)("input")
     conv_out = get_conv_out_symbolic_var(input_var,
@@ -113,6 +112,7 @@ def get_max_cross_corr(filters, things_to_scan,
     """
         func_params_size: when compiling functions
     """
+    #reverse the patterns as the func is a conv not a cross corr
     filters = filters.astype("float32")[:,::-1,::-1]
     to_return = np.zeros((filters.shape[0], things_to_scan.shape[0]))
     #compile the number of filters that result in a function with
@@ -165,16 +165,16 @@ def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
         return np.array(top_n_scores)
  
 
-def jaccardifyDistMat(distMat, verbose=True, power=1):
+def jaccardify_dist_mat(dist_mat, verbose=True, power=1):
     if (verbose):
         print("calling jaccardify")
-    distMat = np.power(distMat, power)
+    dist_mat = np.power(dist_mat, power)
     import time
     t1 = time.time()
-    minimum_sum = np.sum(np.minimum(distMat[:,None,:],
-                         distMat[None,:,:]), axis=-1)
-    maximum_sum = np.sum(np.maximum(distMat[:,None,:],
-                         distMat[None,:,:]), axis=-1)
+    minimum_sum = np.sum(np.minimum(dist_mat[:,None,:],
+                         dist_mat[None,:,:]), axis=-1)
+    maximum_sum = np.sum(np.maximum(dist_mat[:,None,:],
+                         dist_mat[None,:,:]), axis=-1)
     ratio = minimum_sum/maximum_sum
     t2 = time.time()
     if (verbose):
@@ -347,3 +347,61 @@ def cluster_louvain(distMat):
     partition = community.best_partition(graph)
     louvain_labels = [partition[i] for i in range(len(partition.keys()))]
     return louvain_labels
+
+
+def scan_regions_with_filters(filters, regions_to_scan,
+                              batch_size=50, progress_update=1000):
+    """
+        filters: for PWMs, use log-odds matrices.
+        Will be cross-correlated with sequence
+    
+        set_of_regions: either one-hot-encoded or deeplift score tracks.
+    """ 
+    if (len(filters.shape)==3):
+        filters = filters[:,None,:,:]
+    assert filters.shape[1]==1 #input channels=1
+    assert filters.shape[2]==4 #acgt
+    assert len(regions_to_scan.shape)==4
+    assert regions_to_scan.shape[1]==1 #input channels=1
+    assert regions_to_scan.shape[2]==4 #acgt
+
+    #set up the theano convolution 
+    fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
+    rev_comp_filters = filters
+
+    input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                         broadcastable=[False]*4)("input") 
+    fwd_filters_var = theano.tensor.as_tensor_variable(
+                        x=fwd_filters, name="fwd_filters")
+    rev_comp_filters_var = theano.tensor.as_tensor_variable(
+                             x=rev_comp_filters, name="rev_comp_filters")
+    fwd_conv_out = theano.tensor.nnet.conv2d(
+                    input=input_var, filters=fwd_filters_var)
+    rev_comp_conv_out = theano.tensor.nnet.conv2d(
+                         input=input_var, filters=rev_comp_filters_var)
+
+    #concatenate the results to take an elementwise max
+    #remember that the lenght of the row dimension is 1, so this is a
+    #good dimension to take advantage of for concatenation
+    concatenated_fwd_and_rev_results = theano.tensor.concatenate(
+        [fwd_conv_out, rev_comp_conv_out], axis=2) 
+
+    fwd_or_rev = theano.tensor.argmax(concatenated_fwd_and_rev_results, axis=2, keepdims=True)
+    scores = theano.tensor.max(concatenated_fwd_and_rev_results, axis=2, keepdims=True)
+
+    #concatenated score and complementation
+    concatenated_score_and_orientation = theano.tensor.concatenate(
+        [scores,fwd_or_rev], axis=2)
+
+    compiled_func = theano.function([input_var],
+                                    concatenated_score_and_orientation,
+                                    allow_input_downcast=True)
+
+    #run function in batches
+    conv_results = np.array(deeplift.util.run_function_in_batches(
+                            func=compiled_func,
+                            input_data_list=[regions_to_scan],
+                            batch_size=batch_size,
+                            progress_update=progress_update))
+
+    return conv_results
