@@ -201,10 +201,15 @@ def compute_jaccardify(dist_mat, start_job, end_job):
 def gpu_jaccardify(dist_mat, power=1,
                    func_params_size=1000000,
                    batch_size=100,
+                   progress_update=1000,
                    verbose=True):
-    dist_mat = np.power(dist_mat, power)
+    if (power != 1):
+        print("taking the power")
+        dist_mat = np.power(dist_mat, power)
+        print("took the power")
     num_nodes = dist_mat.shape[0]
     cols_batch_size = int(func_params_size/num_nodes) 
+    print("cols_batch_size is",cols_batch_size)
     assert cols_batch_size > 0, "Please increase func_params_size; a single"+\
                                 " col can't fit in the function otherwise"
 
@@ -244,6 +249,9 @@ def gpu_jaccardify(dist_mat, power=1,
         #apply the function in batches to all the nodes
         row_idx = 0
         while row_idx < num_nodes: 
+            if (verbose):
+                if (row_idx%progress_update == 0):
+                    print("Done",row_idx)
             end_row_idx = row_idx+batch_size
             distances = func(dist_mat[row_idx:end_row_idx,:])
             to_return[row_idx:end_row_idx, col_idx:end_col_idx] = distances
@@ -330,21 +338,30 @@ def parallel_jaccardify(dist_mat, num_processes=4,
         raise
 
 
-def make_graph_from_dist_mat(distMat):
+def make_graph_from_dist_mat(dist_mat):
     import networkx as nx
     G = nx.Graph()
-    for i in range(len(distMat)):
+    print("Adding nodes")
+    for i in range(len(dist_mat)):
         G.add_node(i)
-    for i in range(len(distMat)):
-        for j in range(i+1,len(distMat)):
-            G.add_edge(i, j, weight=distMat[i,j])
+    print("nodes added")
+    edges_to_add = []
+    print("Preparing edges")
+    for i in range(len(dist_mat)):
+        for j in range(i+1,len(dist_mat)):
+            edges_to_add.append((i,j,{'weight':dist_mat[i,j]})) 
+    print("Done preparing edges")
+    G.add_edges_from(edges_to_add)
+    print("Done adding edges")
     return G
 
 
-def cluster_louvain(distMat):
+def cluster_louvain(dist_mat):
     import community
-    graph = make_graph_from_dist_mat(distMat)
+    graph = make_graph_from_dist_mat(dist_mat)
+    print("making partition")
     partition = community.best_partition(graph)
+    print("done making partition")
     louvain_labels = [partition[i] for i in range(len(partition.keys()))]
     return louvain_labels
 
