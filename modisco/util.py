@@ -60,7 +60,8 @@ def create_detector_from_subset_of_sequential_layers(sequential_container,
 def get_conv_out_symbolic_var(input_var,
                               set_of_2d_patterns_to_conv_with,
                               normalise_by_magnitude,
-                              take_max):
+                              take_max,
+                              mode='full'):
     assert len(set_of_2d_patterns_to_conv_with.shape)==3
     if (normalise_by_magnitude):
         set_of_2d_patterns_to_conv_with =\
@@ -73,13 +74,15 @@ def get_conv_out_symbolic_var(input_var,
                name="filters")
     conv_out = theano.tensor.signal.conv.conv2d(
                 input=input_var,
-                filters=filters)
+                filters=filters,
+                border_mode=mode)
     if (normalise_by_magnitude):
         sum_squares_per_pos =\
                    theano.tensor.signal.conv.conv2d(
                     input=theano.tensor.square(input_var),
                     filters=np.ones(set_of_2d_patterns_to_conv_with.shape)\
-                            .astype("float32")) 
+                            .astype("float32"),
+                    border_mode=mode) 
         per_pos_magnitude = theano.tensor.sqrt(sum_squares_per_pos)
         per_pos_magnitude += 0.0000001*(per_pos_magnitude < 0.0000001)
         conv_out = conv_out/per_pos_magnitude
@@ -92,13 +95,15 @@ def get_conv_out_symbolic_var(input_var,
 
 def compile_conv_func_with_theano(set_of_2d_patterns_to_conv_with,
                                   normalise_by_magnitude=False,
-                                  take_max=False):
+                                  take_max=False,
+                                  mode='full'):
     input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                          broadcastable=[False]*3)("input")
     conv_out = get_conv_out_symbolic_var(input_var,
                                  set_of_2d_patterns_to_conv_with,
                                  normalise_by_magnitude=normalise_by_magnitude,
-                                 take_max=take_max)
+                                 take_max=take_max,
+                                 mode=mode)
     func = theano.function([input_var],
                            conv_out,
                            allow_input_downcast=True)
@@ -148,6 +153,57 @@ def get_max_cross_corr(filters, things_to_scan,
         
     return to_return
 
+def get_full_cross_corr(filters, things_to_scan,
+                           verbose=True, batch_size=10,
+                           func_params_size=1000000,
+                           progress_update=1000,
+                           min_overlap=1,
+                           mode='valid'):
+    """
+        func_params_size: when compiling functions
+    """
+    #reverse the patterns as the func is a conv not a cross corr
+    filters = filters.astype("float32")[:,::-1,::-1]
+    # padding_amount0 = int((filters[0].shape[-1])*(1-min_overlap))
+    if mode == 'valid':
+      num_xcor_sites = things_to_scan[0].shape[-1]-filters[0].shape[-1]+1
+    elif mode == 'full':
+      num_xcor_sites = things_to_scan[0].shape[-1]+filters[0].shape[-1]-1      
+    to_return = np.zeros((filters.shape[0], len(things_to_scan), num_xcor_sites))
+    #compile the number of filters that result in a function with
+    #params equal to func_params_size 
+    params_per_filter = np.prod(filters[0].shape)
+    filter_batch_size = int(func_params_size/params_per_filter)
+    filter_length = filters.shape[-1]
+    filter_idx = 0 
+    while filter_idx < filters.shape[0]:
+        if (verbose):
+            print("On filters",filter_idx,"to",(filter_idx+filter_batch_size))
+        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
+        cross_corr_func = compile_conv_func_with_theano(
+                           set_of_2d_patterns_to_conv_with=filter_batch,
+                           normalise_by_magnitude=False,
+                           take_max=False,
+                           mode=mode) 
+        padding_amount = int((filter_length)*(1-min_overlap))
+        padded_input = [np.pad(array=x,
+                              pad_width=((padding_amount, padding_amount)),
+                              mode="constant") for x in things_to_scan]
+        all_cross_corrs = np.array(deeplift.util.run_function_in_batches(
+                            func=cross_corr_func,
+                            input_data_list=[padded_input],
+                            batch_size=batch_size,
+                            progress_update=(None if verbose==False else
+                                             progress_update)))
+        all_cross_corrs_max = all_cross_corrs.max(axis=2)
+        assert len(all_cross_corrs_max.shape)==3, all_cross_corrs_max.shape
+        to_return[filter_idx:
+                  (filter_idx+filter_batch_size),:,:] =\
+                  np.transpose(all_cross_corrs_max, axes=[1,0,2])
+        filter_idx += filter_batch_size
+        
+    return to_return
+
 
 def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
     scores = scores.copy()
@@ -165,18 +221,37 @@ def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
                           max_idx+exclude_hits_within_window-1] = -np.inf
             top_n_scores.append(top_n_scores_for_region) 
         return np.array(top_n_scores)
+
+
+def phenojaccard_sim_mat(sim_mat, k):
+    from collections import defaultdict
+    node_to_nearest = defaultdict(set)
+    for node,neighbours_affs in enumerate(sim_mat):
+        sorted_neighbours_affs = sorted(enumerate(neighbours_affs), key=lambda x: -x[1])
+        node_to_nearest[node].update([x[0] for x in sorted_neighbours_affs[:k]])
+    new_sim_mat = np.zeros_like(sim_mat)
+    for node1 in node_to_nearest:
+        for node2 in node_to_nearest:
+            intersection = set(node_to_nearest[node1])
+            intersection.intersection_update(node_to_nearest[node2])
+            union = set(node_to_nearest[node1])
+            union.update(node_to_nearest[node2])
+            jaccard = float(len(intersection))/float(len(union))
+            new_sim_mat[node1,node2] = jaccard
+    return new_sim_mat
  
 
-def jaccardify_dist_mat(dist_mat, verbose=True, power=1):
+def jaccardify_sim_mat(sim_mat, verbose=True, power=1):
+    print("Seriously consider using phenojaccard")
     if (verbose):
         print("calling jaccardify")
-    dist_mat = np.power(dist_mat, power)
+    sim_mat = np.power(sim_mat, power)
     import time
     t1 = time.time()
-    minimum_sum = np.sum(np.minimum(dist_mat[:,None,:],
-                         dist_mat[None,:,:]), axis=-1)
-    maximum_sum = np.sum(np.maximum(dist_mat[:,None,:],
-                         dist_mat[None,:,:]), axis=-1)
+    minimum_sum = np.sum(np.minimum(sim_mat[:,None,:],
+                         sim_mat[None,:,:]), axis=-1)
+    maximum_sum = np.sum(np.maximum(sim_mat[:,None,:],
+                         sim_mat[None,:,:]), axis=-1)
     ratio = minimum_sum/maximum_sum
     t2 = time.time()
     if (verbose):
@@ -184,38 +259,38 @@ def jaccardify_dist_mat(dist_mat, verbose=True, power=1):
     return ratio 
 
 
-def compute_jaccardify(dist_mat, start_job, end_job):
-    num_nodes = dist_mat.shape[0]
+def compute_jaccardify(sim_mat, start_job, end_job):
+    num_nodes = sim_mat.shape[0]
     distances = []
     for job_num in xrange(start_job, end_job):
         row_idx = int(job_num/num_nodes)
         col_idx = job_num%num_nodes
-        minimum_sum = np.sum(np.minimum(dist_mat[row_idx,:],
-                                        dist_mat[col_idx,:]))
-        maximum_sum = np.sum(np.maximum(dist_mat[row_idx,:],
-                                        dist_mat[col_idx,:]))
+        minimum_sum = np.sum(np.minimum(sim_mat[row_idx,:],
+                                        sim_mat[col_idx,:]))
+        maximum_sum = np.sum(np.maximum(sim_mat[row_idx,:],
+                                        sim_mat[col_idx,:]))
         ratio = minimum_sum/maximum_sum
         distances.append(ratio)
     return distances
 
 
 #might be speed-upable further by recognizing that the distance is symmetric
-def gpu_jaccardify(dist_mat, power=1,
+def gpu_jaccardify(sim_mat, power=1,
                    func_params_size=1000000,
                    batch_size=100,
                    progress_update=1000,
                    verbose=True):
     if (power != 1):
         print("taking the power")
-        dist_mat = np.power(dist_mat, power)
+        sim_mat = np.power(sim_mat, power)
         print("took the power")
-    num_nodes = dist_mat.shape[0]
+    num_nodes = sim_mat.shape[0]
     cols_batch_size = int(func_params_size/num_nodes) 
     print("cols_batch_size is",cols_batch_size)
     assert cols_batch_size > 0, "Please increase func_params_size; a single"+\
                                 " col can't fit in the function otherwise"
 
-    to_return = np.zeros(dist_mat.shape)
+    to_return = np.zeros(sim_mat.shape)
 
     col_idx = 0
     while col_idx < num_nodes:
@@ -233,13 +308,13 @@ def gpu_jaccardify(dist_mat, power=1,
         minimum_sum = theano.tensor.sum(
                          theano.tensor.minimum(
                             input_var[:,None,:],
-                            dist_mat[None,
+                            sim_mat[None,
                                      col_idx:end_col_idx,:]),
                                      axis=-1)
         maximum_sum = theano.tensor.sum(
                          theano.tensor.maximum(
                             input_var[:,None,:],
-                            dist_mat[None,
+                            sim_mat[None,
                                      col_idx:end_col_idx,:]),
                                      axis=-1)
         ratios = minimum_sum/maximum_sum #the "jaccardified" distance
@@ -255,7 +330,7 @@ def gpu_jaccardify(dist_mat, power=1,
                 if (row_idx%progress_update == 0):
                     print("Done",row_idx)
             end_row_idx = row_idx+batch_size
-            distances = func(dist_mat[row_idx:end_row_idx,:])
+            distances = func(sim_mat[row_idx:end_row_idx,:])
             to_return[row_idx:end_row_idx, col_idx:end_col_idx] = distances
             row_idx = end_row_idx
         col_idx = end_col_idx
@@ -263,16 +338,16 @@ def gpu_jaccardify(dist_mat, power=1,
 
 
 #should be speed-upable further by recognizing that the distance is symmetric
-def parallel_jaccardify(dist_mat, num_processes=4,
+def parallel_jaccardify(sim_mat, num_processes=4,
                         verbose=True, power=1,
                         temp_file_dir="tmp",
                         temp_file_prefix="jaccardify_h5"):
 
     if (os.path.isdir(temp_file_dir)==False):
         os.system("mkdir "+temp_file_dir)
-    dist_mat = np.power(dist_mat, power)
+    sim_mat = np.power(sim_mat, power)
 
-    num_nodes = dist_mat.shape[0]
+    num_nodes = sim_mat.shape[0]
     total_tasks = num_nodes**2
     tasks_per_job = int(np.ceil(total_tasks/num_processes))
 
@@ -288,7 +363,7 @@ def parallel_jaccardify(dist_mat, num_processes=4,
                               (lambda signum, frame: os._exit(os.EX_TEMPFAIL)))
                 start_job = tasks_per_job*i
                 end_job = min(total_tasks, tasks_per_job*(i+1))
-                distances = compute_jaccardify(dist_mat, start_job, end_job) 
+                distances = compute_jaccardify(sim_mat, start_job, end_job) 
                 #write the distances to an h5 file
                 h5_file_name = temp_file_dir+"/"\
                                +temp_file_prefix+"_"+str(i)+".h5"
@@ -340,27 +415,27 @@ def parallel_jaccardify(dist_mat, num_processes=4,
         raise
 
 
-def make_graph_from_dist_mat(dist_mat):
+def make_graph_from_sim_mat(sim_mat):
     import networkx as nx
     G = nx.Graph()
     print("Adding nodes")
-    for i in range(len(dist_mat)):
+    for i in range(len(sim_mat)):
         G.add_node(i)
     print("nodes added")
     edges_to_add = []
     print("Preparing edges")
-    for i in range(len(dist_mat)):
-        for j in range(i+1,len(dist_mat)):
-            edges_to_add.append((i,j,{'weight':dist_mat[i,j]})) 
+    for i in range(len(sim_mat)):
+        for j in range(i+1,len(sim_mat)):
+            edges_to_add.append((i,j,{'weight':sim_mat[i,j]})) 
     print("Done preparing edges")
     G.add_edges_from(edges_to_add)
     print("Done adding edges")
     return G
 
 
-def cluster_louvain(dist_mat):
+def cluster_louvain(sim_mat):
     import community
-    graph = make_graph_from_dist_mat(dist_mat)
+    graph = make_graph_from_sim_mat(sim_mat)
     print("making partition")
     partition = community.best_partition(graph)
     print("done making partition")
