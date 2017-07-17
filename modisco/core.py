@@ -54,10 +54,14 @@ class TrackSet(object):
         self.track_name_to_data_track[data_track.name] = data_track
 
     def create_seqlet(self, track_names, example_idx, start_idx, end_idx):
-        pass
+        seqlet = Seqlet(example_idx=example_idx,
+                        start_idx=start_idx, end_idx=end_idx)
+        self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
 
     def augment_seqlet(self, seqlet, track_names):
-        pass
+        for track_name in track_names:
+            seqlet.add_snippet_from_data_track(
+                data_track=self.track_name_to_data_track[track_name])
 
 
 class Seqlet(object):
@@ -69,16 +73,18 @@ class Seqlet(object):
         self.reverse = reverse
         self.track_name_to_snippet = OrderedDict()
 
-    def add_snippet(self, data_track): 
+    def add_snippet_from_data_track(self, data_track): 
         snippet =  data_track.get_snippet(example_idx=self.example_idx,
                                           start_idx=self.start_idx,
                                           end_idx=self.end_idx,
                                           reverse=self.reverse)
-        self.track_name_to_snippet[data_track.name] = snippet 
+        self.add_snippet(data_track_name=data_track.name, snippet=snippet)
+        
+    def add_snippet(self, data_track_name, snippet): 
+        self.track_name_to_snippet[data_track_name] = snippet 
 
     def __getitem__(self, key):
         return self.track_name_to_snippet[key]
-
 
 
 class SeqletAndAlignment(object):
