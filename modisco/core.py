@@ -12,7 +12,7 @@ class Snippet(self):
     def __len__(self):
         return len(self.fwd)
 
-    def reverse(self):
+    def revcomp(self):
         return Snippet(fwd=self.rev, rev=self.fwd)
 
 
@@ -35,53 +35,72 @@ class DataTrack(object):
     def track_length(self):
         return len(self.fwd_tracks[0])
 
-    def get_snippet(self, example_idx, start_idx, end_idx, reverse):
+    def get_snippet(self, coor):
         snippet = Snippet(
-                fwd=self.fwd_tracks[example_idx, start_idx:end_idx],
-                rev=self.rev_tracks[example_idx, start_idx:end_idx])
-        if (reverse):
-            snippet = snippet.reverse
+                fwd=self.fwd_tracks[coor.example_idx, coor.start:coor.end],
+                rev=self.rev_tracks[coor.example_idx, coor.start:coor.end])
+        if (coor.revcomp):
+            snippet = snippet.revcomp()
         return snippet
 
 
 class TrackSet(object):
 
-    def __init__(self):
+    def __init__(self, data_tracks=[]):
         self.track_name_to_data_track = OrderedDict()
+        for data_track in data_tracks:
+            self.add_track(data_track)
 
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
         self.track_name_to_data_track[data_track.name] = data_track
+        return self
 
-    def create_seqlet(self, track_names, example_idx, start_idx, end_idx):
-        seqlet = Seqlet(example_idx=example_idx,
-                        start_idx=start_idx, end_idx=end_idx)
-        self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
+    def create_seqlets(self, track_names, coords):
+        seqlets = []
+        for coor in coords:
+            seqlet = Seqlet(coor=coor)
+            self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
+            seqlets.append(seqlet)
+        return seqlets
 
     def augment_seqlet(self, seqlet, track_names):
         for track_name in track_names:
             seqlet.add_snippet_from_data_track(
                 data_track=self.track_name_to_data_track[track_name])
+        return seqlet
+
+
+SeqletCoordinates = namedtuple("SeqletCoords",
+                               ['example_idx', 'start', 'end', 'revcomp'])
+
+
+class SeqletCoordinates(object):
+
+    def __init__(self, example_idx, start, end, revcomp):
+        self.example_idx = example_idx
+        self.start = start
+        self.end = end
+        self.revcomp = revcomp
 
 
 class Seqlet(object):
 
-    def __init__(self, example_idx, start_idx, end_idx, reverse):
-        self.example_idx = example_idx
-        self.start_idx = start_idx
-        self.end_idx = end_idx 
-        self.reverse = reverse
+    def __init__(self, coor):
+        self.coor = coor
         self.track_name_to_snippet = OrderedDict()
 
     def add_snippet_from_data_track(self, data_track): 
-        snippet =  data_track.get_snippet(example_idx=self.example_idx,
-                                          start_idx=self.start_idx,
-                                          end_idx=self.end_idx,
-                                          reverse=self.reverse)
+        snippet =  data_track.get_snippet(coor=self.coor)
         self.add_snippet(data_track_name=data_track.name, snippet=snippet)
         
     def add_snippet(self, data_track_name, snippet): 
+        assert len(snippet)==len(self),\
+               "tried to add snippets of unequal lengths"
         self.track_name_to_snippet[data_track_name] = snippet 
+
+    def __len__(self):
+        return self.coor.end - self.coor.start
 
     def __getitem__(self, key):
         return self.track_name_to_snippet[key]
@@ -112,13 +131,13 @@ class AggregatedSeqlet(object):
     def _initialize_track_name_to_aggregation(self): 
         sample_seqlet = self.seqlets_and_alnmts[0] 
         self.track_name_to_agg = OrderedDict() 
-        self.track_name_to_agg_reverse = OrderedDict() 
+        self.track_name_to_agg_revcomp = OrderedDict() 
         for track_name in self.track_name_to_snippet:
             track_shape = tuple([self.length]
                            +list(sample_seqlet[track_name].shape[1:]))
             self.track_name_to_agg[track_name] =\
                 np.zeros(track_shape).astype("float") 
-            self.track_name_to_agg_reverse[track_name] =\
+            self.track_name_to_agg_revcomp[track_name] =\
                 np.zeros(track_shape).astype("float") 
 
     def _pad_before(self, num_zeros):
@@ -131,14 +150,14 @@ class AggregatedSeqlet(object):
                             self.per_position_counts],axis=0) 
         for track_name in self.track_name_to_snippet:
             track = self.track_name_to_agg[track_name]
-            rev_track = self.track_name_to_agg_reverse[track_name]
+            rev_track = self.track_name_to_agg_revcomp[track_name]
             padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
             extended_track = np.concatenate(
                 [np.zeros(padding_shape), track], axis=0)
             extended_rev_track = np.concatenate(
                 [rev_track, np.zeros(padding_shape)], axis=0)
             self.track_name_to_agg[track_name] = extended_track
-            self.track_name_to_agg_reverse[track_name] = extended_rev_track
+            self.track_name_to_agg_revcomp[track_name] = extended_rev_track
 
     def _pad_after(self, num_zeros):
         assert num_zeros > 0
@@ -148,14 +167,14 @@ class AggregatedSeqlet(object):
                             np.zeros((num_zeros,))],axis=0) 
         for track_name in self.track_name_to_snippet:
             track = self.track_name_to_agg[track_name]
-            rev_track = self.track_name_to_agg_reverse[track_name]
+            rev_track = self.track_name_to_agg_revcomp[track_name]
             padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
             extended_track = np.concatenate(
                 [track, np.zeros(padding_shape)], axis=0)
             extended_rev_track = np.concatenate(
                 [np.zeros(padding_shape),rev_track], axis=0)
             self.track_name_to_agg[track_name] = extended_track
-            self.track_name_to_agg_reverse[track_name] = extended_rev_track
+            self.track_name_to_agg_revcomp[track_name] = extended_rev_track
 
     def add_seqlet(self, seqlet_and_alnmt):
         self.seqlets_and_alnmts.append(seqlet_and_alnmt)
@@ -177,7 +196,7 @@ class AggregatedSeqlet(object):
         for track_name in self.track_name_to_agg:
             self.track_name_to_agg[track_name][slice_obj] +=\
                 seqlet[track_name].fwd 
-            self.track_name_to_agg_reverse[track_name][rev_slice_obj] +=\
+            self.track_name_to_agg_revcomp[track_name][rev_slice_obj] +=\
                 seqlet[track_name].rev
 
     def __len__(self):
