@@ -23,8 +23,7 @@ class SeqletCoordsFWAP(SeqletCoordinates):
 
 class FixedWindowAroundChunks(object):
 
-    def __init__(self, score_track,
-                       sliding,
+    def __init__(self, sliding,
                        flank,
                        suppress,
                        min_ratio,
@@ -32,7 +31,6 @@ class FixedWindowAroundChunks(object):
                        batch_size=50,
                        progress_update=5000,
                        verbose=True):
-        self.score_track = score_track 
         self.sliding = sliding
         self.flank = flank
         self.suppress = suppress
@@ -42,7 +40,7 @@ class FixedWindowAroundChunks(object):
         self.progress_update = progress_update
         self.verbose = verbose
 
-    def get_coords(self):
+    def get_coords(self, score_track):
       
         if (self.verbose):
             print("Compiling functions") 
@@ -54,7 +52,7 @@ class FixedWindowAroundChunks(object):
         if (self.verbose):
             print("Computing window sums") 
         summed_score_track = window_sum_function(
-            inp=self.score_track,
+            inp=score_track,
             batch_size=self.batch_size,
             progress_update=(self.progress_update if self.verbose else None)) 
          

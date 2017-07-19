@@ -98,3 +98,47 @@ def get_argmax_function():
     return argmax_func
 
 
+def get_max_cross_corr(filters, things_to_scan, min_overlap,
+                       verbose=True, batch_size=50,
+                       func_params_size=1000000,
+                       progress_update=1000):
+    """
+        func_params_size: when compiling functions
+    """
+    #reverse the patterns as the func is a conv not a cross corr
+    filters = filters.astype("float32")[:,::-1,::-1]
+    to_return = np.zeros((filters.shape[0], len(things_to_scan)))
+    #compile the number of filters that result in a function with
+    #params equal to func_params_size 
+    params_per_filter = np.prod(filters[0].shape)
+    filter_batch_size = int(func_params_size/params_per_filter)
+    filter_length = filters.shape[-1]
+    filter_idx = 0 
+    while filter_idx < filters.shape[0]:
+        if (verbose):
+            print("On filters",filter_idx,"to",(filter_idx+filter_batch_size))
+        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
+
+        cross_corr_func = compile_conv_func_with_theano(
+                           set_of_2d_patterns_to_conv_with=filter_batch,
+                           normalise_by_magnitude=False,
+                           take_max=True)  
+
+        padding_amount = int((filter_length)*(1-min_overlap))
+        padded_input = [np.pad(array=x,
+                              pad_width=((padding_amount, padding_amount)),
+                              mode="constant") for x in things_to_scan]
+
+        max_cross_corrs = np.array(deeplift.util.run_function_in_batches(
+                            func=cross_corr_func,
+                            input_data_list=[padded_input],
+                            batch_size=batch_size,
+                            progress_update=(None if verbose==False else
+                                             progress_update)))
+        assert len(max_cross_corrs.shape)==2, max_cross_corrs.shape
+        to_return[filter_idx:
+                  (filter_idx+filter_batch_size),:] =\
+                  np.transpose(max_cross_corrs)
+        filter_idx += filter_batch_size
+        
+    return to_return
