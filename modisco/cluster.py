@@ -1,4 +1,4 @@
-
+import .backend as B
 
 class AbstractNormalizer(self):
 
@@ -36,19 +36,43 @@ class MagnitudeNormalizer(AbstractNormalizer):
         return (inp / (np.linalg.norm(inp,axis=1)+0.0000001))
 
 
-class DistanceMatrixFromSeqlets(object):
+class AffinityMatrixFromSeqlets(object):
 
-    def __init__(self, track_names, normalizer):
+    def __init__(self, track_names, normalizer,
+                       min_overlap, batch_size=50,
+                       func_params_size=1000000,
+                       progress_update=1000):
         assert hasattr(track_names, '__iter__')
         assert hasattr(normalizers, '__iter__')
         self.track_names = track_names
         self.normalizer = normalizer
+        self.min_overlap = min_overlap
+        self.batch_size = batch_size
+        self.func_params_size = func_params_size
+        self.progress_update = progress_update
 
-    def get_distance_matrix(self, seqlets):
+    def get_affinity_matrix(self, seqlets):
         (all_fwd_data, all_rev_data) =\
             get_2d_data_from_seqlets(seqlets=seqlets,
                                      track_names=self.track_names,
                                      normalizer=self.normalizer) 
+        #do cross correlations
+        cross_corrs_fwd = B.max_cross_corrs(
+                             filters=all_fwd_data,
+                             things_to_scan=all_fwd_data,
+                             min_overlap=self.min_overlap,
+                             batch_size=self.batch_size,
+                             func_params_size=self.func_params_size,
+                             progress_update=self.progress_update) 
+        cross_corrs_rev = B.max_cross_corrs(
+                             filters=all_rev_data,
+                             things_to_scan=all_fwd_data,
+                             min_overlap=self.min_overlap,
+                             batch_size=self.batch_size,
+                             func_params_size=self.func_params_size,
+                             progress_update=self.progress_update) 
+        cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
+        return cross_corrs
 
 
 def get_2d_data_from_seqlets(seqlets, track_names, normalizer):

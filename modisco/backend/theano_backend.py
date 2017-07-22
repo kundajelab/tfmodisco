@@ -117,17 +117,28 @@ def get_max_cross_corr(filters, things_to_scan, min_overlap,
     while filter_idx < filters.shape[0]:
         if (verbose):
             print("On filters",filter_idx,"to",(filter_idx+filter_batch_size))
-        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
 
-        cross_corr_func = compile_conv_func_with_theano(
-                           set_of_2d_patterns_to_conv_with=filter_batch,
-                           normalise_by_magnitude=False,
-                           take_max=True)  
+        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
 
         padding_amount = int((filter_length)*(1-min_overlap))
         padded_input = [np.pad(array=x,
                               pad_width=((padding_amount, padding_amount)),
                               mode="constant") for x in things_to_scan]
+
+        input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                             broadcastable=[False]*3)("input")
+        filters = theano.tensor.as_tensor_variable(
+                   x=filters, name="filters")
+        conv_out = theano.nnet.conv.conv2d(
+                    input=input_var[:,None,:,:],
+                    filters=filters[TODO],
+                    border_mode='valid')[TODO]
+
+        max_out = T.max(conv_out, axis=-1)
+
+        func = theano.function([input_var], max_out,
+                               allow_input_downcast=True)
+
 
         max_cross_corrs = np.array(deeplift.util.run_function_in_batches(
                             func=cross_corr_func,
