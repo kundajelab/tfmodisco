@@ -4,30 +4,33 @@ import numpy as np
 
 class Snippet(self):
 
-    def __init__(self, fwd, rev):
+    def __init__(self, fwd, rev, has_pos_axis):
         assert len(fwd)==len(rev)
         self.fwd = fwd
         self.rev = rev
+        self.has_pos_axis = has_pos_axis
 
     def __len__(self):
         return len(self.fwd)
 
     def revcomp(self):
-        return Snippet(fwd=self.rev, rev=self.fwd)
+        return Snippet(fwd=self.rev, rev=self.fwd,
+                       has_pos_axis=self.has_pos_axis)
 
 
 class DataTrack(object):
 
     """
     First dimension of fwd_tracks and rev_tracks should be the example,
-    second dimension should be the length
+    second dimension should be the position (if applicable)
     """
-    def __init__(name, fwd_tracks, rev_tracks):
+    def __init__(name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
         assert len(fwd_tracks)==len(rev_tracks)
         assert len(fwd_tracks[0]==len(rev_tracks[0]))
         self.fwd_tracks = fwd_tracks
         self.rev_tracks = rev_tracks
+        self.has_pos_axis = has_pos_axis
 
     def __len__(self):
         return len(self.fwd_tracks)
@@ -36,9 +39,14 @@ class DataTrack(object):
         return len(self.fwd_tracks[0])
 
     def get_snippet(self, coor):
-        snippet = Snippet(
-                fwd=self.fwd_tracks[coor.example_idx, coor.start:coor.end],
-                rev=self.rev_tracks[coor.example_idx, coor.start:coor.end])
+        if (self.has_pos_axis==False):
+            snippet = Snippet(
+                    fwd=self.fwd_tracks[coor.example_idx],
+                    rev=self.rev_tracks[coor.example_idx])
+        else:
+            snippet = Snippet(
+                    fwd=self.fwd_tracks[coor.example_idx, coor.start:coor.end],
+                    rev=self.rev_tracks[coor.example_idx, coor.start:coor.end])
         if (coor.revcomp):
             snippet = snippet.revcomp()
         return snippet
@@ -83,6 +91,9 @@ class SeqletCoordinates(object):
         self.end = end
         self.revcomp = revcomp
 
+    def __len__(self):
+        return self.end - self.start
+
 
 class Seqlet(object):
 
@@ -94,13 +105,16 @@ class Seqlet(object):
         snippet =  data_track.get_snippet(coor=self.coor)
         self.add_snippet(data_track_name=data_track.name, snippet=snippet)
         
-    def add_snippet(self, data_track_name, snippet): 
-        assert len(snippet)==len(self),\
-               "tried to add snippets of unequal lengths"
+    def add_snippet(self, data_track_name, snippet):
+        if (snippet.has_pos_axis):
+            assert len(snippet)==len(self),\
+                   ("tried to add snippet with pos axis of len "
+                    +str(len(snippet))+" but snippet coords have "
+                    +"len "+str(self.coor))
         self.track_name_to_snippet[data_track_name] = snippet 
 
     def __len__(self):
-        return self.coor.end - self.coor.start
+        return len(self.coor)
 
     def __getitem__(self, key):
         return self.track_name_to_snippet[key]
@@ -110,10 +124,11 @@ class SeqletAndAlignment(object):
 
     def __init__(self, seqlet, alnmt):
         self.seqlet = seqlet
-        self.alnmt = alnmt
+        #alnmt is the position of the beginning of seqlet
+        #in the aggregated seqlet
+        self.alnmt = alnmt 
 
 
-#need to think more about design of this
 class AggregatedSeqlet(object):
 
     def __init__(self, seqlets_and_alnmts):
@@ -150,14 +165,15 @@ class AggregatedSeqlet(object):
                             self.per_position_counts],axis=0) 
         for track_name in self.track_name_to_snippet:
             track = self.track_name_to_agg[track_name]
-            rev_track = self.track_name_to_agg_revcomp[track_name]
-            padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
-            extended_track = np.concatenate(
-                [np.zeros(padding_shape), track], axis=0)
-            extended_rev_track = np.concatenate(
-                [rev_track, np.zeros(padding_shape)], axis=0)
-            self.track_name_to_agg[track_name] = extended_track
-            self.track_name_to_agg_revcomp[track_name] = extended_rev_track
+            if (track.has_pos_axis):
+                rev_track = self.track_name_to_agg_revcomp[track_name]
+                padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
+                extended_track = np.concatenate(
+                    [np.zeros(padding_shape), track], axis=0)
+                extended_rev_track = np.concatenate(
+                    [rev_track, np.zeros(padding_shape)], axis=0)
+                self.track_name_to_agg[track_name] = extended_track
+                self.track_name_to_agg_revcomp[track_name] = extended_rev_track
 
     def _pad_after(self, num_zeros):
         assert num_zeros > 0
@@ -167,14 +183,15 @@ class AggregatedSeqlet(object):
                             np.zeros((num_zeros,))],axis=0) 
         for track_name in self.track_name_to_snippet:
             track = self.track_name_to_agg[track_name]
-            rev_track = self.track_name_to_agg_revcomp[track_name]
-            padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
-            extended_track = np.concatenate(
-                [track, np.zeros(padding_shape)], axis=0)
-            extended_rev_track = np.concatenate(
-                [np.zeros(padding_shape),rev_track], axis=0)
-            self.track_name_to_agg[track_name] = extended_track
-            self.track_name_to_agg_revcomp[track_name] = extended_rev_track
+            if (track.has_pos_axis):
+                rev_track = self.track_name_to_agg_revcomp[track_name]
+                padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
+                extended_track = np.concatenate(
+                    [track, np.zeros(padding_shape)], axis=0)
+                extended_rev_track = np.concatenate(
+                    [np.zeros(padding_shape),rev_track], axis=0)
+                self.track_name_to_agg[track_name] = extended_track
+                self.track_name_to_agg_revcomp[track_name] = extended_rev_track
 
     def add_seqlet(self, seqlet_and_alnmt):
         self.seqlets_and_alnmts.append(seqlet_and_alnmt)
@@ -201,6 +218,4 @@ class AggregatedSeqlet(object):
 
     def __len__(self):
         return self.length
-
-
 
