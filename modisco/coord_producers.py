@@ -21,7 +21,7 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             revcomp=False) 
 
 
-class FixedWindowAroundChunks(object):
+class FixedWindowAroundChunks(AbstractCoordProducer):
 
     def __init__(self, sliding,
                        flank,

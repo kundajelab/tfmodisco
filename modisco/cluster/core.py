@@ -2,6 +2,7 @@ import sklearn
 from .bruteforce_nn import knnsearch
 import .phenograph_code as pheno
 
+
 class AbstractClusterer(object):
 
     def cluster(self, affinit_mat):

@@ -1,11 +1,13 @@
-#Copied from https://github.com/jacoblevine/PhenoGraph/blob/master/phenograph/bruteforce_nn.py
+#copied from
+#https://github.com/jacoblevine/PhenoGraph/blob/master/phenograph/bruteforce_nn.py
 """
 Compute k-nearest neighbors using brute force search in parallel
 via scipy.spatial.distance.cdist and multiprocessing.Pool
 psutil is used to evaluate available memory and minimize the number
 of parallel jobs for the available resources
 """
-
+from __future__ import print_function
+from __future__ import absolute_import
 import numpy as np
 from scipy.spatial.distance import cdist
 from multiprocessing import Pool

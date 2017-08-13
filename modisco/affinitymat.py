@@ -36,7 +36,7 @@ class MagnitudeNormalizer(AbstractNormalizer):
         return (inp / (np.linalg.norm(inp,axis=1)+0.0000001))
 
 
-class AffinityMatrixFromSeqlets(object):
+class MaxCrossCorrAffinityMatrixFromSeqlets(object):
 
     def __init__(self, track_names, normalizer,
                        min_overlap, batch_size=50,

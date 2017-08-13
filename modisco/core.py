@@ -61,6 +61,12 @@ class TrackSet(object):
 
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
+        if len(self.track_name_to_data_track)==0:
+            self.num_items = len(data_track) 
+        else:
+            assert len(data_track)==self.num_items,\
+                    ("first track had "+str(self.num_items)+" but "
+                     "data track has "+str(len(data_track))+" items")
         self.track_name_to_data_track[data_track.name] = data_track
         return self
 
