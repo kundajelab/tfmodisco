@@ -25,7 +25,7 @@ class DataTrack(object):
     First dimension of fwd_tracks and rev_tracks should be the example,
     second dimension should be the position (if applicable)
     """
-    def __init__(name, fwd_tracks, rev_tracks, has_pos_axis):
+    def __init__(self, name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
         assert len(fwd_tracks)==len(rev_tracks)
         assert len(fwd_tracks[0]==len(rev_tracks[0]))
@@ -43,11 +43,16 @@ class DataTrack(object):
         if (self.has_pos_axis==False):
             snippet = Snippet(
                     fwd=self.fwd_tracks[coor.example_idx],
-                    rev=self.rev_tracks[coor.example_idx])
+                    rev=self.rev_tracks[coor.example_idx],
+                    has_pos_axis=self.has_pos_axis)
         else:
             snippet = Snippet(
                     fwd=self.fwd_tracks[coor.example_idx, coor.start:coor.end],
-                    rev=self.rev_tracks[coor.example_idx, coor.start:coor.end])
+                    rev=self.rev_tracks[
+                         coor.example_idx,
+                         (self.track_length()-coor.end):
+                         (self.track_length()-coor.start)],
+                    has_pos_axis=self.has_pos_axis)
         if (coor.revcomp):
             snippet = snippet.revcomp()
         return snippet
