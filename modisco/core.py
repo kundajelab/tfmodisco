@@ -1,8 +1,9 @@
 from collections import OrderedDict
+from collections import namedtuple
 import numpy as np
 
 
-class Snippet(self):
+class Snippet(object):
 
     def __init__(self, fwd, rev, has_pos_axis):
         assert len(fwd)==len(rev)
