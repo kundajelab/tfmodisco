@@ -106,6 +106,11 @@ class SeqletCoordinates(object):
     def __len__(self):
         return self.end - self.start
 
+    def __str__(self):
+        return "Coor-"+(
+                str(self.example_idx)+":"+str(self.start)+"-"+str(self.end)
+                +"rc-"+str(self.revcomp))
+
 
 class Seqlet(object):
 

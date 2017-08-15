@@ -4,7 +4,7 @@ score_track = core.DataTrack(name=..., fwd_tracks=...,
 track_set = core.TrackSet(data_tracks=[score_track, ...])
 
 seqlets = TrackSet.create_seqlets(
-            coord_producers.FixedWindowAroundPeaks(...)
+            coordproducers.FixedWindowAroundPeaks(...)
                            .get_coords(score_track))
 
 clusters = cluster.core.PhenographCluster().cluster(

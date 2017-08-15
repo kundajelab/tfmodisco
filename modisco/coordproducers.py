@@ -1,5 +1,5 @@
 from .core import SeqletCoordinates
-import .backend as B 
+from modisco import backend as B 
 import numpy as np
 
 
@@ -11,7 +11,7 @@ class AbstractCoordProducer(object):
 
 class SeqletCoordsFWAP(SeqletCoordinates):
     """
-        Coordinates for the FixedWindowAroundPeaks CoordProducer 
+        Coordinates for the FixedWindowAroundChunks CoordProducer 
     """
     def __init__(self, example_idx, start, end, score):
         self.score = score 
@@ -67,7 +67,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                                 batch_size=self.batch_size,
                                 progress_update=(self.progress_update
                                                  if self.verbose else None)) 
-            if (max_per_seq is None)
+            if (max_per_seq is None):
                 max_per_seq = max_vals
             for example_idx,argmax in enumerate(argmax_coords):
                 #need to be able to expand without going off the edge
@@ -88,8 +88,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 #suppress the chunks within +- self.suppress
                 summed_score_track[
                     example_idx,
-                    (max(argmax-self.suppress,0):
-                     max(argmax+self.suppress))] = -np.inf 
+                    max(argmax-self.suppress,0):
+                    min(argmax+self.suppress, len(summed_score_track[0]))]\
+                    = -np.inf 
         return coords
 
 

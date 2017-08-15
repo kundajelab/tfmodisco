@@ -120,5 +120,3 @@ class TestSeqlet(unittest.TestCase):
             seqlet["track_no_pos_axis"].fwd, -self.fwd_tracks[1][::-1])
 
 
-
-
