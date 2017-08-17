@@ -14,20 +14,39 @@ from modisco import coordproducers
 
 class TestFixedWindowAroundChunks(unittest.TestCase):
 
-    def get_fwac(self, max_peaks_per_seq): 
+    def get_fwac(self, max_peaks_per_seq,sliding): 
         fwac = coordproducers.FixedWindowAroundChunks(
-                sliding=6,
+                sliding=sliding,
                 flank=1,
                 suppress=4,
                 min_ratio=0.5,
-                max_peaks_per_seq=max_peaks_per_seq)
+                max_seqlets_per_seq=max_peaks_per_seq)
         return fwac
 
     def test_fixed_window_around_chunks(self):
-        fwac = self.get_fwac(max_peaks_per_seq=1) 
+        fwac = self.get_fwac(max_peaks_per_seq=1,sliding=6) 
         score_track=np.array([
+            [2,3,4,4,3,2,2,1,1,0],
+            [1,2,3,4,4,3,2,1,1,0],
             [0,1,2,3,4,4,3,2,2,1],
-            [2,3,4,4,3,2,2,1,1,0]
+            [0,1,1,3,3,4,4,2,2,1],
         ]) 
         coords = fwac.get_coords(score_track=score_track)
-        print(coords[0]+", "+coords[1]) 
+
+        self.assertEqual(coords[0].example_idx,1)
+        self.assertEqual(coords[0].start,0)
+        self.assertEqual(coords[0].end,8)
+        self.assertEqual(coords[0].revcomp,False)
+
+        self.assertEqual(coords[1].example_idx,2)
+        self.assertEqual(coords[1].start,1)
+        self.assertEqual(coords[1].end,9)
+        self.assertEqual(coords[1].revcomp,False)
+
+        self.assertEqual(coords[2].example_idx,3)
+        self.assertEqual(coords[2].start,2)
+        self.assertEqual(coords[2].end,10)
+        self.assertEqual(coords[2].revcomp,False)
+
+
+

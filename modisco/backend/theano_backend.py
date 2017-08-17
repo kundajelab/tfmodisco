@@ -43,7 +43,7 @@ def tensor_with_dims(num_dims, name):
                         broadcastable=[False]*num_dims)(name)
 
 
-def get_window_sum_function(window_size, same_size_return):
+def get_window_sum_function(window_size,same_size_return):
     """
         Returns a function for smoothening inputs with a window
          of size window_size.
@@ -51,21 +51,17 @@ def get_window_sum_function(window_size, same_size_return):
         Returned function has arguments of inp,
          batch_size and progress_update
     """
-    inp_tensor = tensor_with_dims(2, "inp_tensor") 
-    inp_tensor = inp_tensor[:,None,None,:]
+    orig_inp_tensor = tensor_with_dims(2, "inp_tensor") 
+    inp_tensor = orig_inp_tensor[:,None,None,:]
 
-    if (same_size_return):
-        border_mode='same'
-    else:
-        border_mode='valid'
-
-    averaged_inp = theano.pool2d(
-                        inp=inp_tensor,
-                        pool_size=(1,window_size),
-                        strides=(1,1),
-                        border_mode=border_mode,
+    averaged_inp = theano.tensor.signal.pool.pool_2d(
+                        input=inp_tensor,
+                        ws=(1,window_size),
                         ignore_border=True,
-                        pool_mode='avg_exc_pad') 
+                        stride=(1,1),
+                        pad=(0,0 if (not same_size_return)
+                               else int(window_size/2)),
+                        mode='average_exc_pad') 
 
     #if window_size is even, then we have an extra value in the output,
     #so kick off the value from the front
@@ -73,7 +69,9 @@ def get_window_sum_function(window_size, same_size_return):
         averaged_inp = averaged_inp[:,:,:,1:]
 
     averaged_inp = averaged_inp[:,0,0,:]
-    smoothen_func = theano.function([inp_tensor], averaged_inp*window_size)
+    smoothen_func = theano.function([orig_inp_tensor],
+                                    averaged_inp*window_size,
+                                    allow_input_downcast=True)
 
     def smoothen(inp, batch_size, progress_update=None):
        return run_function_in_batches(
@@ -89,13 +87,13 @@ def get_argmax_function():
     inp_tensor = tensor_with_dims(2, "inp_tensor") 
     argmaxes = T.argmax(inp_tensor, axis=1) 
     argmax_func = theano.function([inp_tensor], argmaxes)
-    def argmax_func(inp, batch_size, progress_update=None):
+    def argmax_func_wrapper(inp, batch_size, progress_update=None):
         return run_function_in_batches(
                 func=argmax_func,
                 input_data_list=[inp],
                 batch_size=batch_size,
                 progress_update=progress_update)
-    return argmax_func
+    return argmax_func_wrapper
 
 
 def get_max_cross_corr(filters, things_to_scan, min_overlap,

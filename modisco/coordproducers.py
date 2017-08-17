@@ -27,7 +27,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        flank,
                        suppress,
                        min_ratio,
-                       max_peaks_per_seq,
+                       max_seqlets_per_seq,
                        batch_size=50,
                        progress_update=5000,
                        verbose=True):
@@ -35,7 +35,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.flank = flank
         self.suppress = suppress
         self.min_ratio = min_ratio
-        self.max_peaks_per_seq = max_peaks_per_seq
+        self.max_seqlets_per_seq = max_seqlets_per_seq
         self.batch_size = batch_size
         self.progress_update = progress_update
         self.verbose = verbose
@@ -45,16 +45,16 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         if (self.verbose):
             print("Compiling functions") 
         window_sum_function = B.get_window_sum_function(
-            window_size=self.sliding,
-            same_size_return=False)  
+                                window_size=self.sliding,
+                                same_size_return=False)
         argmax_func = B.get_argmax_function()
 
         if (self.verbose):
             print("Computing window sums") 
-        summed_score_track = window_sum_function(
+        summed_score_track = np.array(window_sum_function(
             inp=score_track,
             batch_size=self.batch_size,
-            progress_update=(self.progress_update if self.verbose else None)) 
+            progress_update=(self.progress_update if self.verbose else None))) 
          
         if (self.verbose):
             print("Identifying seqlet coordinates") 
@@ -68,12 +68,13 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                                 progress_update=(self.progress_update
                                                  if self.verbose else None)) 
             if (max_per_seq is None):
-                max_per_seq = max_vals
+                max_per_seq = summed_score_track[
+                               list(range(len(summed_score_track))),
+                               argmax_coords]
             for example_idx,argmax in enumerate(argmax_coords):
                 #need to be able to expand without going off the edge
                 if ((argmax >= self.flank) and
-                    (argmax <= (summed_score_track.shape[1]
-                               -(self.sliding+ self.flank)))): 
+                    (argmax <= (summed_score_track.shape[1]-self.flank))): 
                     chunk_height = summed_score_track[example_idx][argmax]
                     #only include chunk that are at least a certain
                     #fraction of the max chunk
