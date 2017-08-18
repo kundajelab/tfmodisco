@@ -90,9 +90,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 #suppress the chunks within +- self.suppress
                 summed_score_track[
                     example_idx,
-                    max(np.floor(argmax+0.5-self.suppress),0):
-                    min(np.ceil(argmax+0.5+self.suppress),
-                        len(summed_score_track[0]))]\
+                    int(max(np.floor(argmax+0.5-self.suppress),0)):
+                    int(min(np.ceil(argmax+0.5+self.suppress),
+                        len(summed_score_track[0])))]\
                     = -np.inf 
         return coords
 
