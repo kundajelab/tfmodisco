@@ -86,7 +86,8 @@ def get_window_sum_function(window_size,same_size_return):
 def get_argmax_function(): 
     inp_tensor = tensor_with_dims(2, "inp_tensor") 
     argmaxes = T.argmax(inp_tensor, axis=1) 
-    argmax_func = theano.function([inp_tensor], argmaxes)
+    argmax_func = theano.function([inp_tensor], argmaxes,
+                                  allow_input_downcast=True)
     def argmax_func_wrapper(inp, batch_size, progress_update=None):
         return run_function_in_batches(
                 func=argmax_func,

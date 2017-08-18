@@ -54,7 +54,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         summed_score_track = np.array(window_sum_function(
             inp=score_track,
             batch_size=self.batch_size,
-            progress_update=(self.progress_update if self.verbose else None))) 
+            progress_update=
+             (self.progress_update if self.verbose else None))).astype("float") 
          
         if (self.verbose):
             print("Identifying seqlet coordinates") 
@@ -89,8 +90,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 #suppress the chunks within +- self.suppress
                 summed_score_track[
                     example_idx,
-                    max(argmax-self.suppress,0):
-                    min(argmax+self.suppress, len(summed_score_track[0]))]\
+                    max(np.floor(argmax+0.5-self.suppress),0):
+                    min(np.ceil(argmax+0.5+self.suppress),
+                        len(summed_score_track[0]))]\
                     = -np.inf 
         return coords
 
