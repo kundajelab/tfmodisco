@@ -3,8 +3,8 @@ from __future__ import print_function
 from __future__ import absolute_import
 import numpy as np
 from scipy import sparse as sp
-from phenograph.core import (gaussian_kernel, parallel_jaccard_kernel, jaccard_kernel,
-                             find_neighbors, neighbor_graph, graph2binary, runlouvain)
+from .core import (gaussian_kernel, parallel_jaccard_kernel, jaccard_kernel,
+                   find_neighbors, neighbor_graph, graph2binary, runlouvain)
 import time
 import re
 import os
@@ -78,7 +78,7 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
     tic = time.time()
     # Go!
     if isinstance(data, sp.spmatrix) and data.shape[0] == data.shape[1]:
-        print("Using neighbor information from provided graph, rather than computing neighbors directly", flush=True)
+        print("Using neighbor information from provided graph, rather than computing neighbors directly")
         lilmatrix = data.tolil()
         d = np.vstack(lilmatrix.data).astype('float32')  # distances
         idx = np.vstack(lilmatrix.rows).astype('int32')  # neighbor indices by row
@@ -87,7 +87,7 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
         k = idx.shape[1]
     else:
         d, idx = find_neighbors(data, k=k, metric=primary_metric, method=nn_method, n_jobs=n_jobs)
-        print("Neighbors computed in {} seconds".format(time.time() - tic), flush=True)
+        print("Neighbors computed in {} seconds".format(time.time() - tic))
 
     subtic = time.time()
     kernelargs['idx'] = idx
@@ -97,11 +97,11 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
         kernelargs['sigma'] = 1.
         kernel = gaussian_kernel
         graph = neighbor_graph(kernel, kernelargs)
-        print("Gaussian kernel graph constructed in {} seconds".format(time.time() - subtic), flush=True)
+        print("Gaussian kernel graph constructed in {} seconds".format(time.time() - subtic))
     else:
         del d
         graph = neighbor_graph(kernel, kernelargs)
-        print("Jaccard graph constructed in {} seconds".format(time.time() - subtic), flush=True)
+        print("Jaccard graph constructed in {} seconds".format(time.time() - subtic))
     if not directed:
         if not prune:
             # symmetrize graph by averaging with transpose
@@ -114,12 +114,13 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
     # write to file with unique id
     uid = uuid.uuid1().hex
     graph2binary(uid, graph)
-    communities, Q = runlouvain(uid, tol=q_tol, time_limit=louvain_time_limit)
-    print("PhenoGraph complete in {} seconds".format(time.time() - tic), flush=True)
+    communities, Q, hierarchy =\
+     runlouvain(uid, tol=q_tol, time_limit=louvain_time_limit)
+    print("PhenoGraph complete in {} seconds".format(time.time() - tic))
     communities = sort_by_size(communities, min_cluster_size)
     # clean up
-    for f in os.listdir():
+    for f in os.listdir(os.getcwd()):
         if re.search(uid, f):
             os.remove(f)
 
-    return communities, graph, Q
+    return communities, graph, Q, hierarchy

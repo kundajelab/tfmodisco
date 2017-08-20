@@ -41,8 +41,7 @@ def find_neighbors(data, k=30, metric='minkowski', p=2, method='brute', n_jobs=-
     else:
         algorithm = "auto"
 
-    print("Finding {} nearest neighbors using {} metric and '{}' algorithm".format(k, metric, algorithm),
-          flush=True)
+    print("Finding {} nearest neighbors using {} metric and '{}' algorithm".format(k, metric, algorithm))
     if method == 'kdtree':
         nbrs = NearestNeighbors(n_neighbors=k+1,        # k+1 because results include self
                                 n_jobs=n_jobs,              # use multiple cores if possible
@@ -118,11 +117,12 @@ def jaccard_kernel(idx):
     return i, j, s
 
 
-def calc_jaccard(i, idx):
+def calc_jaccard(i_and_idx): #for python 2 map compatibility, single argument
+    i, idx = i_and_idx
     """Compute the Jaccard coefficient between i and i's direct neighbors"""
     coefficients = np.fromiter((len(set(idx[i]).intersection(set(idx[j]))) for j in idx[i]), dtype=float)
     coefficients /= (2 * idx.shape[1] - coefficients)
-    return idx[i], coefficients
+    return (idx[i], coefficients)
 
 
 def parallel_jaccard_kernel(idx):
@@ -132,7 +132,12 @@ def parallel_jaccard_kernel(idx):
     """
     n = len(idx)
     with closing(Pool()) as pool:
-        jaccard_values = pool.starmap(calc_jaccard, zip(range(n), repeat(idx)))
+        if (sys.version_info[0]==3):
+            jaccard_values = pool.starmap(calc_jaccard,
+                                          zip(range(n), repeat(idx)))
+        else:
+            jaccard_values = pool.map(calc_jaccard, zip(range(n),
+                                                     [idx for i in range(n)]))
 
     graph = sp.lil_matrix((n, n), dtype=float)
     for i, tup in enumerate(jaccard_values):
@@ -194,10 +199,10 @@ def runlouvain(filename, max_runs=100, time_limit=2000, tol=1e-3):
         matches = pattern.findall(msg.decode())
         q = list()
         for line in matches:
-            q.append(line.split(sep=" ")[-1])
+            q.append(line.split(" ")[-1])
         return list(map(float, q))
 
-    print('Running Louvain modularity optimization', flush=True)
+    print('Running Louvain modularity optimization')
     
     # Use package location to find Louvain code
     # lpath = os.path.abspath(resource_filename(Requirement.parse("PhenoGraph"), 'louvain'))
@@ -205,7 +210,7 @@ def runlouvain(filename, max_runs=100, time_limit=2000, tol=1e-3):
     try:
         assert os.path.isdir(lpath)
     except AssertionError:
-        print("Could not find Louvain code, tried: {}".format(lpath), flush=True)
+        print("Could not find Louvain code, tried: {}".format(lpath))
 
     # Determine if we're using Windows, Mac, or Linux
     if sys.platform == "win32" or sys.platform == "cygwin":
@@ -222,7 +227,7 @@ def runlouvain(filename, max_runs=100, time_limit=2000, tol=1e-3):
         hierarchy_binary = "hierarchy"
     else:
         raise RuntimeError("Operating system could not be determined or is not supported. "
-                           "sys.platform == {}".format(sys.platform), flush=True)
+                           "sys.platform == {}".format(sys.platform))
     # Prepend appropriate path separator
     convert_binary = os.path.sep + convert_binary
     community_binary = os.path.sep + community_binary
@@ -268,7 +273,7 @@ def runlouvain(filename, max_runs=100, time_limit=2000, tol=1e-3):
             out, err = p.communicate()
             # find number of levels in hierarchy and number of nodes in graph
             nlevels = int(re.findall('\d+', out.decode())[0])
-            nnodes = int(re.findall('level 0: \d+', out.decode())[0].split(sep=" ")[-1])
+            nnodes = int(re.findall('level 0: \d+', out.decode())[0].split(" ")[-1])
 
             # get community assignments at each level in hierarchy
             hierarchy = np.empty((nnodes, nlevels), dtype='int')
@@ -278,13 +283,13 @@ def runlouvain(filename, max_runs=100, time_limit=2000, tol=1e-3):
                     out, err = p.communicate()
                     h = np.empty((nnodes,))
                     for i, line in enumerate(out.decode().splitlines()):
-                        h[i] = int(line.split(sep=' ')[-1])
+                        h[i] = int(line.split(' ')[-1])
                     hierarchy[:, level] = h
 
             communities = hierarchy[:, nlevels-1]
 
-            print("After {} runs, maximum modularity is Q = {}".format(run, Q), flush=True)
+            print("After {} runs, maximum modularity is Q = {}".format(run, Q))
 
-    print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic), flush=True)
+    print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
 
-    return communities, Q
+    return communities, Q, hierarchy
