@@ -1,6 +1,7 @@
-import .backend as B
+from . import backend as B
+import numpy as np
 
-class AbstractNormalizer(self):
+class AbstractNormalizer(object):
 
     def normalize(self, inp):
         """
@@ -25,15 +26,13 @@ class AdhocNormalizer(AbstractNormalizer):
 class MeanNormalizer(AbstractNormalizer):
 
     def normalize(self, inp):
-        assert len(inp.shape)==2
-        return (inp - np.mean(inp, axis=1)[:,None])
+        return inp - np.mean(inp)
 
 
 class MagnitudeNormalizer(AbstractNormalizer):
 
     def normalize(self, inp):
-        assert len(inp.shape)==2
-        return (inp / (np.linalg.norm(inp,axis=1)+0.0000001))
+        return (inp / (np.linalg.norm(inp.ravel())+0.0000001))
 
 
 class MaxCrossCorrAffinityMatrixFromSeqlets(object):
