@@ -76,7 +76,9 @@ class TrackSet(object):
         self.track_name_to_data_track[data_track.name] = data_track
         return self
 
-    def create_seqlets(self, track_names, coords):
+    def create_seqlets(self, coords, track_names=None):
+        if (track_names is None):
+            track_names=self.track_name_to_data_track.keys()
         seqlets = []
         for coor in coords:
             seqlet = Seqlet(coor=coor)
