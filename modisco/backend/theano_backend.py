@@ -1,5 +1,6 @@
 import theano
 from theano import tensor as T
+import numpy as np
 
 
 def run_function_in_batches(func,
@@ -97,7 +98,7 @@ def get_argmax_function():
     return argmax_func_wrapper
 
 
-def get_max_cross_corr(filters, things_to_scan, min_overlap,
+def max_cross_corrs(filters, things_to_scan, min_overlap,
                        verbose=True, batch_size=50,
                        func_params_size=1000000,
                        progress_update=1000):
@@ -105,6 +106,7 @@ def get_max_cross_corr(filters, things_to_scan, min_overlap,
         func_params_size: when compiling functions
     """
     #reverse the patterns as the func is a conv not a cross corr
+    print(filters.shape)
     filters = filters.astype("float32")[:,::-1,::-1]
     to_return = np.zeros((filters.shape[0], len(things_to_scan)))
     #compile the number of filters that result in a function with
@@ -126,21 +128,21 @@ def get_max_cross_corr(filters, things_to_scan, min_overlap,
 
         input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                              broadcastable=[False]*3)("input")
-        filters = theano.tensor.as_tensor_variable(
+        theano_filters = theano.tensor.as_tensor_variable(
                    x=filters, name="filters")
-        conv_out = theano.nnet.conv.conv2d(
+        conv_out = theano.tensor.nnet.conv.conv2d(
                     input=input_var[:,None,:,:],
-                    filters=filters[TODO],
-                    border_mode='valid')[TODO]
+                    filters=theano_filters[:,None,::-1,::-1],
+                    border_mode='valid')[:,:,0,:]
 
         max_out = T.max(conv_out, axis=-1)
 
-        func = theano.function([input_var], max_out,
+        max_cross_corr_func = theano.function([input_var], max_out,
                                allow_input_downcast=True)
 
 
-        max_cross_corrs = np.array(deeplift.util.run_function_in_batches(
-                            func=cross_corr_func,
+        max_cross_corrs = np.array(run_function_in_batches(
+                            func=max_cross_corr_func,
                             input_data_list=[padded_input],
                             batch_size=batch_size,
                             progress_update=(None if verbose==False else

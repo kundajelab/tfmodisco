@@ -42,7 +42,6 @@ class MaxCrossCorrAffinityMatrixFromSeqlets(object):
                        func_params_size=1000000,
                        progress_update=1000):
         assert hasattr(track_names, '__iter__')
-        assert hasattr(normalizers, '__iter__')
         self.track_names = track_names
         self.normalizer = normalizer
         self.min_overlap = min_overlap
@@ -88,5 +87,5 @@ def get_2d_data_from_seqlets(seqlets, track_names, normalizer):
                 for snippet in snippets], axis=1)
         all_fwd_data.append(fwd)
         all_rev_data.append(rev)
-    return (np.concatenate(all_fwd_data, axis=0),
-            np.concatenate(all_rev_data, axis=0))
+    return (np.array(all_fwd_data),
+            np.array(all_rev_data))

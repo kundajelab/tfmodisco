@@ -6,7 +6,9 @@ from unittest import skip
 import sys
 import os
 import numpy as np
-from modisco.affinitymat import MeanNormalizer, MagnitudeNormalizer  
+from modisco.affinitymat import (MeanNormalizer, MagnitudeNormalizer, 
+                                 MaxCrossCorrAffinityMatrixFromSeqlets) 
+from modisco import core
 from nose.tools import raises
 
 
@@ -19,5 +21,23 @@ class TestNormalizers(unittest.TestCase):
         np.testing.assert_almost_equal(np.mean(normalized), 0.0)
         np.testing.assert_almost_equal(np.linalg.norm(normalized), 1.0)
 
+    def test_max_cross_corr(self):
 
+        seqlets = []
+        #make 100 seqlets
+        for i in range(100):
+            arr = np.random.random((100,4))
+            snippet = core.Snippet(fwd=arr, rev=arr[::-1,::-1],
+                                   has_pos_axis=True) 
+            seqlet = core.Seqlet(coor=core.SeqletCoordinates(
+                           example_idx=0, start=0, end=100, revcomp=False)
+                           ).add_snippet(
+                           data_track_name="scores",
+                           snippet=snippet)
+            seqlets.append(seqlet)
+        affinitymat = MaxCrossCorrAffinityMatrixFromSeqlets(
+                    track_names=["scores"],
+                    normalizer=MeanNormalizer().chain(MagnitudeNormalizer()),
+                    min_overlap=0.3).get_affinity_matrix(seqlets)
+         
 

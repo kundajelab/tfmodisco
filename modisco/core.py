@@ -122,7 +122,8 @@ class Seqlet(object):
 
     def add_snippet_from_data_track(self, data_track): 
         snippet =  data_track.get_snippet(coor=self.coor)
-        self.add_snippet(data_track_name=data_track.name, snippet=snippet)
+        return self.add_snippet(data_track_name=data_track.name,
+                                snippet=snippet)
         
     def add_snippet(self, data_track_name, snippet):
         if (snippet.has_pos_axis):
@@ -131,6 +132,7 @@ class Seqlet(object):
                     +str(len(snippet))+" but snippet coords have "
                     +"len "+str(self.coor))
         self.track_name_to_snippet[data_track_name] = snippet 
+        return self
 
     def __len__(self):
         return len(self.coor)
