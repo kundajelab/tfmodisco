@@ -27,7 +27,7 @@ class TestScanRegions(unittest.TestCase):
              [0.0, 0.0, 0.2, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0],
              [0.0, 0.0, 0.0, 0.0, 0.4, 0.5, 0.0, 0.0, 0.0],
              [0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0]]
-        ]])
+        ]]).astype("float32")
         filters = np.array([[
             [1.0, 0.0, 1.0, 0.0],
             [2.0, 3.0, 1.0, 0.0],
@@ -38,7 +38,7 @@ class TestScanRegions(unittest.TestCase):
             [5.0, 1.0, 0.0, 0.0],
             [0.0, 1.0, 3.0, 2.0],
             [0.0, 1.0, 0.0, 1.0]
-        ]])
+        ]]).astype("float32")
 
         scanning_results = np.array(modisco.util.scan_regions_with_filters(
             filters=filters,
