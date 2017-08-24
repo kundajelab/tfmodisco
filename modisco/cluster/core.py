@@ -2,6 +2,21 @@ import sklearn
 from . import phenograph as ph
 
 
+class ClusterResults(object):
+
+    def __init__(self, cluster_indices):
+        self.cluster_indices = cluster_indices 
+
+
+class PhenographClusterResults(ClusterResults):
+
+    def __init__(self, cluster_indices, hierarchy, Q):
+        super(PhenographClusterResults, self).__init__(
+         cluster_indices=cluster_indices)
+        self.hierarchy = hierarchy
+        self.Q = Q
+
+
 class AbstractClusterer(object):
 
     def cluster(self, affinity_mat):
@@ -31,6 +46,9 @@ class PhenographCluster(AbstractClusterer):
             n_jobs=self.n_jobs, q_tol=self.q_tol,
             louvain_time_limit=self.louvain_time_limit,
             nn_method=self.nn_method)
-        return communities
+        return PhenographClusterResults(
+                cluster_indices=communities,
+                hierarchy=hierarchy,
+                Q=Q)
         
  
