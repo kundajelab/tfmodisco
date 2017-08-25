@@ -123,7 +123,8 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
 
         padding_amount = int((filter_length)*(1-min_overlap))
         padded_input = [np.pad(array=x,
-                              pad_width=((padding_amount, padding_amount)),
+                              pad_width=((padding_amount, padding_amount),
+                                         (0,0)),
                               mode="constant") for x in things_to_scan]
 
         input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
@@ -133,13 +134,12 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
         conv_out = theano.tensor.nnet.conv.conv2d(
                     input=input_var[:,None,:,:],
                     filters=theano_filters[:,None,::-1,::-1],
-                    border_mode='valid')[:,:,0,:]
+                    border_mode='valid')[:,:,:,0]
 
         max_out = T.max(conv_out, axis=-1)
 
         max_cross_corr_func = theano.function([input_var], max_out,
                                allow_input_downcast=True)
-
 
         max_cross_corrs = np.array(run_function_in_batches(
                             func=max_cross_corr_func,
