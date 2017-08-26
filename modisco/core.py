@@ -6,7 +6,7 @@ import numpy as np
 class Snippet(object):
 
     def __init__(self, fwd, rev, has_pos_axis):
-        assert len(fwd)==len(rev)
+        assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
         self.fwd = fwd
         self.rev = rev
         self.has_pos_axis = has_pos_axis
