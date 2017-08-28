@@ -514,6 +514,7 @@ def product_of_cosine_distances(filters, track1, track2,
     assert len(filters.shape)==3
     assert len(track1.shape)==3
     assert len(one_hot_to_scan.shape)==3
+    #for DNA sequences, filters.shape[1] will be 4 (ACGT)
     assert filters.shape[1] == track1.shape[2] #channel axis has same dims
     assert filters.shape[1] == track2.shape[2]
 
@@ -521,23 +522,28 @@ def product_of_cosine_distances(filters, track1, track2,
     #first flatten the last two dimensions of the filters, then compute norm
     filter_magnitudes = np.linalg.norm(filters.reshape(filters.shape[0],-1),
                                        axis=1)
+    #'None' inserts dummy dimensions of length 1
     filters = filters/filter_magnitudes[:,None,None]
     scanning_window_area = filters.shape[1]*filters.shape[2]
 
-    #insert dummy dimensions to make shapes
-    #compatible with theano conv2d, which goes: samples x 1 x ACGT x length
-    #in 2d setup, ACGT is the 'height' axis and channel axis has dim 0
-    #"None" inserts a dummy axis of size 1
+    #insert dummy dimensions to convert shapes from 1d format to
+    #the theano 2d format
+    #for input tracks:
+    #keras 1d format is: samples x length x ACGT (channels)
+    #theano conv2d wants: samples x 1 (channels) x ACGT (height) x length
+    #for filters:
+    #start with: num_filters x ACGT (channels) x filter len
+    #conv2d wants: num_filters x 1 (channels) x ACGT (height) x filter len
+    #transpose is necessary to get the ACGT into axis index 2
     filters = filters[:,None,:,:]
-    #transpose is necessary to get the ACGT axis into position index 2
     track1 = track1[:,None,:,:].transpose(0,1,3,2)
     track2 = track2[:,None,:,:].transpose(0,1,3,2)
 
-    #set up the theano convolution 
+    #prepare the forward and reverse complement filters for the conv2d call
     fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
     rev_comp_filters = filters
 
-    #create theano variables
+    #create theano variables for the inputs and filters
     track1_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                          broadcastable=[False]*4)("track1") 
     track2_var = theano.tensor.TensorType(dtype=theano.config.floatX,
@@ -548,7 +554,7 @@ def product_of_cosine_distances(filters, track1, track2,
                              x=rev_comp_filters, name="rev_comp_filters")
 
     #get variables representing the results of the convolutions,
-    #which are basically the dot products at each position
+    #which are equal to the the dot products at each sliding window
     fwd_track1_conv_out_var = theano.tensor.nnet.conv2d(
                          input=track1_var, filters=fwd_filters_var)
     fwd_track2_conv_out_var = theano.tensor.nnet.conv2d(
@@ -559,24 +565,23 @@ def product_of_cosine_distances(filters, track1, track2,
                          input=track2_var, filters=rev_comp_filters_var)
 
     #cosine distance is dot product divided by magnitude; we compute
-    #per-positionmagnitude by squaring the tracks, then summing in
+    #per-window magnitude by squaring the tracks, then summing in
     #sliding windows, then taking the square root
     #squaring:
     track1_squared_var = track1_var*track1_var 
     track2_squared_var = track2_var*track2_var
-
     #compute per-position sliding window sums using average and then
     #scaling up by window size
     track1_squared_sumpool_var = theano.tensor.signal.pool.pool_2d(
                                 input=track1_squared_var,
-                                ws=(filters.shape[1], track1.shape[2]),
+                                ws=(filters.shape[-2], filters.shape[-1]),
                                 ignore_border=False,
                                 stride=(1,1),
                                 pad=(0,0),
                                 mode='average_exc_pad')*scanning_window_area
     track2_squared_sumpool_var = theano.tensor.signal.pool.pool_2d(
                                 input=track2_squared_var,
-                                ws=(filters.shape[1], track1.shape[2]),
+                                ws=(filters.shape[-2], filters.shape[-1]),
                                 ignore_border=False,
                                 stride=(1,1),
                                 pad=(0,0),
@@ -588,6 +593,8 @@ def product_of_cosine_distances(filters, track1, track2,
 
     pseudocount=0.0000001
     #compute product of cosine distances. Add pseudocount to avoid div by 0
+    #filters were already normalized to have magnituded 1, so don't have
+    #to worry about them
     fwd_scores_var = ((fwd_track1_conv_out_var/
                     (track1_magnitude_var+pseudocount))
                   *(fwd_track2_conv_out_var/
@@ -598,9 +605,8 @@ def product_of_cosine_distances(filters, track1, track2,
                     (track2_magnitude_var+pseudocount))) 
 
     #concatenate the results to take an elementwise max
-    #remember that the lenght of the row dimension is 1 after the scoring,
-    #so this is a
-    #good dimension to take advantage of for concatenation
+    #The length of the height dimension becomes 1 after convolution,
+    #so this is a good dimension to take advantage of for concatenation
     concatenated_fwd_and_rev_scores_var = theano.tensor.concatenate(
         [fwd_scores_var, rev_scores_var], axis=2) 
     #use argmax to determine whether the fwd or rev match is stronger
