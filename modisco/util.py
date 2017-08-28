@@ -499,3 +499,130 @@ def scan_regions_with_filters(filters, regions_to_scan,
                             progress_update=progress_update))
 
     return conv_results
+
+
+def product_of_cosine_distances(filters, track1, track2,
+                                batch_size=50, progress_update=1000):
+    """
+        filters: 3d array: filter_idx x ACGT x length
+        Will take cosine distance of filter with track1 and
+         as track2 at each position and return product of cosines
+
+        track1: 3-d array: samples x length x channels(ACGT)
+        track2: 3-d array: samples x length x channels(ACGT)
+    """ 
+    assert len(filters.shape)==3
+    assert len(track1.shape)==3
+    assert len(one_hot_to_scan.shape)==3
+    assert filters.shape[1] == track1.shape[2] #channel axis has same dims
+    assert filters.shape[1] == track2.shape[2]
+
+    #Normalize filters by magnitude (makes cosine dist computation easier)
+    #first flatten the last two dimensions of the filters, then compute norm
+    filter_magnitudes = np.linalg.norm(filters.reshape(filters.shape[0],-1),
+                                       axis=1)
+    filters = filters/filter_magnitudes[:,None,None]
+    scanning_window_area = filters.shape[1]*filters.shape[2]
+
+    #insert dummy dimensions to make shapes
+    #compatible with theano conv2d, which goes: samples x 1 x ACGT x length
+    #in 2d setup, ACGT is the 'height' axis and channel axis has dim 0
+    #"None" inserts a dummy axis of size 1
+    filters = filters[:,None,:,:]
+    #transpose is necessary to get the ACGT axis into position index 2
+    track1 = track1[:,None,:,:].transpose(0,1,3,2)
+    track2 = track2[:,None,:,:].transpose(0,1,3,2)
+
+    #set up the theano convolution 
+    fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
+    rev_comp_filters = filters
+
+    #create theano variables
+    track1_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                         broadcastable=[False]*4)("track1") 
+    track2_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                         broadcastable=[False]*4)("track2") 
+    fwd_filters_var = theano.tensor.as_tensor_variable(
+                        x=fwd_filters, name="fwd_filters")
+    rev_comp_filters_var = theano.tensor.as_tensor_variable(
+                             x=rev_comp_filters, name="rev_comp_filters")
+
+    #get variables representing the results of the convolutions,
+    #which are basically the dot products at each position
+    fwd_track1_conv_out_var = theano.tensor.nnet.conv2d(
+                         input=track1_var, filters=fwd_filters_var)
+    fwd_track2_conv_out_var = theano.tensor.nnet.conv2d(
+                         input=track2_var, filters=fwd_filters_var)
+    rev_track1_conv_out_var = theano.tensor.nnet.conv2d(
+                         input=track1_var, filters=rev_comp_filters_var)
+    rev_track2_conv_out_var = theano.tensor.nnet.conv2d(
+                         input=track2_var, filters=rev_comp_filters_var)
+
+    #cosine distance is dot product divided by magnitude; we compute
+    #per-positionmagnitude by squaring the tracks, then summing in
+    #sliding windows, then taking the square root
+    #squaring:
+    track1_squared_var = track1_var*track1_var 
+    track2_squared_var = track2_var*track2_var
+
+    #compute per-position sliding window sums using average and then
+    #scaling up by window size
+    track1_squared_sumpool_var = theano.tensor.signal.pool.pool_2d(
+                                input=track1_squared_var,
+                                ws=(filters.shape[1], track1.shape[2]),
+                                ignore_border=False,
+                                stride=(1,1),
+                                pad=(0,0),
+                                mode='average_exc_pad')*scanning_window_area
+    track2_squared_sumpool_var = theano.tensor.signal.pool.pool_2d(
+                                input=track2_squared_var,
+                                ws=(filters.shape[1], track1.shape[2]),
+                                ignore_border=False,
+                                stride=(1,1),
+                                pad=(0,0),
+                                mode='average_exc_pad')*scanning_window_area
+
+    #take square roots to get magnitudes
+    track1_magnitude_var = theano.tensor.sqrt(track1_squared_sumpool_var)
+    track2_magnitude_var = theano.tensor.sqrt(track2_squared_sumpool_var)
+
+    pseudocount=0.0000001
+    #compute product of cosine distances. Add pseudocount to avoid div by 0
+    fwd_scores_var = ((fwd_track1_conv_out_var/
+                    (track1_magnitude_var+pseudocount))
+                  *(fwd_track2_conv_out_var/
+                    (track2_magnitude_var+pseudocount)))
+    rev_scores_var = ((rev_track1_conv_out_var/
+                    (track1_magnitude_var+pseudocount))
+                  *(rev_track2_conv_out_var/
+                    (track2_magnitude_var+pseudocount))) 
+
+    #concatenate the results to take an elementwise max
+    #remember that the lenght of the row dimension is 1 after the scoring,
+    #so this is a
+    #good dimension to take advantage of for concatenation
+    concatenated_fwd_and_rev_scores_var = theano.tensor.concatenate(
+        [fwd_scores_var, rev_scores_var], axis=2) 
+    #use argmax to determine whether the fwd or rev match is stronger
+    fwd_or_rev_var = theano.tensor.argmax(concatenated_fwd_and_rev_scores_var,
+                                          axis=2, keepdims=True)
+    #final score is max of fwd and rev result
+    final_scores_var = theano.tensor.max(concatenated_fwd_and_rev_scores_var,
+                                         axis=2, keepdims=True)
+    #concatenate the score with variable determining fwd or rev
+    concatenated_score_and_orientation_var = theano.tensor.concatenate(
+        [final_scores_var,fwd_or_rev_var], axis=2)
+
+    #compile the function linking inputs and outputs
+    compiled_func = theano.function([track1_var, track2_var],
+                                    concatenated_score_and_orientation_var,
+                                    allow_input_downcast=True)
+
+    #run function in batches
+    final_scores = np.array(deeplift.util.run_function_in_batches(
+                            func=compiled_func,
+                            input_data_list=[track1, track2],
+                            batch_size=batch_size,
+                            progress_update=progress_update))
+
+    return final_scores
