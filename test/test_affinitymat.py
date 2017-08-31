@@ -7,7 +7,8 @@ import sys
 import os
 import numpy as np
 from modisco.affinitymat import (MeanNormalizer, MagnitudeNormalizer, 
-                                 MaxCrossCorrAffinityMatrixFromSeqlets) 
+                                 MaxCrossCorrAffinityMatrixFromSeqlets,
+                                 PatternCrossCorrSettings) 
 from modisco import core
 from nose.tools import raises
 
@@ -17,7 +18,7 @@ class TestNormalizers(unittest.TestCase):
     def test_normalizer(self): 
         rand_array = (np.random.random((100,10))+5.0)*10.0
         normalizer = MeanNormalizer().chain(MagnitudeNormalizer())
-        normalized = normalizer.normalize(rand_array)
+        normalized = normalizer(rand_array)
         np.testing.assert_almost_equal(np.mean(normalized), 0.0)
         np.testing.assert_almost_equal(np.linalg.norm(normalized), 1.0)
 
@@ -31,13 +32,13 @@ class TestNormalizers(unittest.TestCase):
                                    has_pos_axis=True) 
             seqlet = core.Seqlet(coor=core.SeqletCoordinates(
                            example_idx=0, start=0, end=100, revcomp=False)
-                           ).add_snippet(
-                           data_track_name="scores",
-                           snippet=snippet)
+                           ).add_snippet(data_track_name="scores",
+                                         snippet=snippet)
             seqlets.append(seqlet)
         affinitymat = MaxCrossCorrAffinityMatrixFromSeqlets(
+                   pattern_crosscorr_settings=PatternCrossCorrSettings( 
                     track_names=["scores"],
                     normalizer=MeanNormalizer().chain(MagnitudeNormalizer()),
-                    min_overlap=0.3).get_affinity_matrix(seqlets)
+                    min_overlap=0.3))(seqlets)
          
 
