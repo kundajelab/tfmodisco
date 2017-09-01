@@ -513,7 +513,7 @@ def product_of_cosine_distances(filters, track1, track2,
     """ 
     assert len(filters.shape)==3
     assert len(track1.shape)==3
-    assert len(one_hot_to_scan.shape)==3
+    assert len(track2.shape)==3
     #for DNA sequences, filters.shape[1] will be 4 (ACGT)
     assert filters.shape[1] == track1.shape[2] #channel axis has same dims
     assert filters.shape[1] == track2.shape[2]
@@ -544,10 +544,15 @@ def product_of_cosine_distances(filters, track1, track2,
     rev_comp_filters = filters
 
     #create theano variables for the inputs and filters
-    track1_var = theano.tensor.TensorType(dtype=theano.config.floatX,
-                                         broadcastable=[False]*4)("track1") 
-    track2_var = theano.tensor.TensorType(dtype=theano.config.floatX,
-                                         broadcastable=[False]*4)("track2") 
+    #set the channel axis to be broadcastable because that should come
+    #in handy when dividing the convolutions for each filter
+    #by the magnitude of the underlying track computed using average pooling
+    track1_var = theano.tensor.TensorType(
+                    dtype=theano.config.floatX,
+                    broadcastable=[False,True,False,False])("track1") 
+    track2_var = theano.tensor.TensorType(
+                  dtype=theano.config.floatX,
+                  broadcastable=[False,True,False,False])("track2") 
     fwd_filters_var = theano.tensor.as_tensor_variable(
                         x=fwd_filters, name="fwd_filters")
     rev_comp_filters_var = theano.tensor.as_tensor_variable(
