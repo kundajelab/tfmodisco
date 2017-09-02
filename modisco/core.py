@@ -160,9 +160,61 @@ class Seqlet(Pattern):
 
     def __len__(self):
         return len(self.coor)
+ 
+        
+class SeqletAndAlignment(object):
+
+    def __init__(self, seqlet, alnmt):
+        self.seqlet = seqlet
+        #alnmt is the position of the beginning of seqlet
+        #in the aggregated seqlet
+        self.alnmt = alnmt 
 
 
-class AggregatedSeqlet(object):
+class AbstractPatternAligner(object):
+
+    def __init__(self, track_names, normalizer):
+        self.track_names = track_names
+        self.normalizer = normalizer
+
+    def __call__(self, parent_pattern, child_pattern):
+        #return an alignment
+        raise NotImplementedError()     
+
+
+class CrossCorrelationPatternAligner(AbstractPatternAligner):
+
+    def __init__(self, pattern_crosscorr_settings):
+        self.pattern_crosscorr_settings = pattern_crosscorr_settings
+
+    def __call__(self, parent_pattern, child_pattern):
+        fwd_data_parent, rev_data_parent = get_2d_data_from_seqlet(
+            seqlet=parent_pattern,
+            track_names=self.pattern_crosscorr_settings.track_names,
+            normalizer=self.pattern_crosscorr_settings.normalizer) 
+        fwd_data_child, rev_data_child = get_2d_data_from_seqlet(
+            seqlet=child_pattern,
+            track_names=self.pattern_crosscorr_settings.track_names,
+            normalizer=self.pattern_crosscorr_settings.normalizer) 
+        #find optimal alignments of fwd_data_child and rev_data_child
+        #with fwd_data_parent.
+        best_crosscorr, best_crosscorr_argmax =\
+            get_best_alignment_crosscorr(
+                parent_matrix=fwd_data_parent,
+                child_matrix=fwd_data_child,
+                min_overlap=self.pattern_crosscorr_settings.min_overlap)  
+        best_crosscorr_rev, best_crosscorr_argmax_rev =\
+            get_best_alignment_crosscorr(
+                parent_matrix=fwd_data_parent,
+                child_matrix=rev_data_child,
+                min_overlap=self.pattern_crosscorr_settings.min_overlap) 
+        if (best_crosscorr_rev > best_crosscorr):
+            return (best_crosscorr_argmax_rev, True)
+        else:
+            return (best_crosscorr_argmax, False)
+
+
+class AggregatedSeqlet(Pattern):
 
     def __init__(self, seqlets_and_alnmts):
         super(AggregatedSeqlet, self).__init__()
@@ -184,7 +236,7 @@ class AggregatedSeqlet(object):
         self._initialize_track_name_to_aggregation()
         self.per_position_counts = np.zeros((self.length,))
         for seqlet_and_alnmt in self.seqlets_and_alnmts:
-            self._add_seqlet_with_valid_alnmt(seqlet_and_alnmt)
+            self._update_tracks_using_seqlet_with_valid_alnmt(seqlet_and_alnmt)
 
     def _initialize_track_name_to_aggregation(self): 
         sample_seqlet = self.seqlets_and_alnmts[0].seqlet 
@@ -192,12 +244,12 @@ class AggregatedSeqlet(object):
         self._track_name_to_agg_revcomp = OrderedDict() 
         for track_name in sample_seqlet.track_name_to_snippet:
             track_shape = tuple([self.length]
-                           +list(sample_seqlet[track_name].shape[1:]))
+                           +list(sample_seqlet[track_name].fwd.shape[1:]))
             self._track_name_to_agg[track_name] =\
                 np.zeros(track_shape).astype("float") 
             self._track_name_to_agg_revcomp[track_name] =\
                 np.zeros(track_shape).astype("float") 
-            self.track_name_to_snippet = core.Snippet(
+            self.track_name_to_snippet[track_name] = Snippet(
                 fwd=self._track_name_to_agg[track_name],
                 rev=self._track_name_to_agg_revcomp[track_name],
                 has_pos_axis=sample_seqlet[track_name].has_pos_axis) 
@@ -243,11 +295,16 @@ class AggregatedSeqlet(object):
                     extended_rev_track
 
     def add_seqlet(self, seqlet, aligner):
-        (alnmt, revcomp_match) = aligner(parent_motif=self, child_motif=seqlet)
+
+        (alnmt, revcomp_match) = aligner(parent_pattern=self,
+                                         child_pattern=seqlet)
+
         if (revcomp_match):
             seqlet = seqlet.revcomp()
         seqlet_and_alnmt = SeqletAndAlignment(seqlet=seqlet, alnmt=alnmt)
         self.seqlets_and_alnmts.append(seqlet_and_alnmt)
+
+
         if alnmt < 0:
            self._pad_before(num_zeros=abs(alnmt)) 
         end_coor_of_seqlet = (seqlet_and_alnmt.alnmt +
@@ -263,8 +320,8 @@ class AggregatedSeqlet(object):
         rev_slice_obj = slice(self.length-(alnmt+len(seqlet)),
                               self.length-alnmt)
         self.per_position_counts[slice_obj] += 1.0 
-        for track_name in self.track_name_to_agg:
-            if (self.track_name_to_snippet[track_name].has_pos_axis):
+        for track_name in self._track_name_to_agg:
+            if (self.track_name_to_snippet[track_name].has_pos_axis==False):
                 self._track_name_to_agg[track_name] +=\
                     seqlet[track_name].fwd
                 self._track_name_to_agg_revcomp[track_name] +=\
@@ -275,9 +332,11 @@ class AggregatedSeqlet(object):
                 self._track_name_to_agg_revcomp[track_name][rev_slice_obj] +=\
                     seqlet[track_name].rev
             self.track_name_to_snippet[track_name] =\
-             core.Snippet(
-              fwd=self._track_name_to_agg[track_name],
-              rev=self._track_name_to_agg_revcomp[track_name],
+             Snippet(
+              fwd=(self._track_name_to_agg[track_name]
+                   /self.per_position_counts[:,None]),
+              rev=(self._track_name_to_agg_revcomp[track_name]
+                   /self.per_position_counts[:,None]),
               has_pos_axis=self.track_name_to_snippet[track_name].has_pos_axis) 
 
     def __len__(self):
@@ -312,15 +371,16 @@ def get_2d_data_from_seqlet(seqlet, track_names, normalizer):
 def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
     assert len(np.shape(parent_matrix))==2
     assert len(np.shape(child_matrix))==2
-    assert np.shape(parent_matrix)[0] == np.shape(child_matrix)[0]
+    assert np.shape(parent_matrix)[1] == np.shape(child_matrix)[1]
 
-    padding_amt = np.ceil(np.shape(child_matrix)[0]*min_overlap)
+    padding_amt = int(np.ceil(np.shape(child_matrix)[0]*min_overlap))
     #pad the parent matrix as necessary
     parent_matrix = np.pad(array=parent_matrix,
-                           pad_width=[(padding_amt, padding_amt),(0,0)])
+                           pad_width=[(padding_amt, padding_amt),(0,0)],
+                           mode='constant')
     correlations = scipy.signal.correlate2d(
         in1=parent_matrix, in2=child_matrix, mode='valid')
-    best_crosscorr_argmax = np.argmax(correlations)
+    best_crosscorr_argmax = np.argmax(correlations)-padding_amt
     best_crosscorr = np.max(correlations)
     #subtract the padding 
     best_crosscorr = best_crosscorr - padding_amt
