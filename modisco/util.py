@@ -637,3 +637,116 @@ def product_of_cosine_distances(filters, track1, track2,
                             progress_update=progress_update))
 
     return final_scores
+
+
+def project_onto_nonzero_filters(filters, track,
+                                 batch_size=50, progress_update=1000):
+    """
+        filters: 3d array: filter_idx x ACGT x length
+        At each position, gives you a value equivalent to what you get if
+         you eliminate all positions of the filter that are 0 in the
+         underlying track, and then projected the deeplift track onto
+         the filter
+
+        track: 3-d array: samples x length x channels(ACGT)
+    """ 
+    assert len(filters.shape)==3
+    assert len(track.shape)==3
+    #for DNA sequences, filters.shape[1] will be 4 (ACGT)
+    assert filters.shape[1] == track.shape[2] #channel axis has same dims
+    scanning_window_area = filters.shape[1]*filters.shape[2]
+
+    #insert dummy dimensions to convert shapes from 1d format to
+    #the theano 2d format
+    #for input tracks:
+    #keras 1d format is: samples x length x ACGT (channels)
+    #theano conv2d wants: samples x 1 (channels) x ACGT (height) x length
+    #for filters:
+    #start with: num_filters x ACGT (channels) x filter len
+    #conv2d wants: num_filters x 1 (channels) x ACGT (height) x filter len
+    #transpose is necessary to get the ACGT into axis index 2
+    filters = filters[:,None,:,:]
+    track = track[:,None,:,:].transpose(0,1,3,2)
+
+    #prepare the forward and reverse complement filters for the conv2d call
+    fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
+    rev_comp_filters = filters
+
+    #create theano variables for the inputs and filters
+    #set the channel axis to be broadcastable because that should come
+    #in handy when dividing the convolutions for each filter
+    #by the magnitude of the underlying track computed using average pooling
+    track_var = theano.tensor.TensorType(
+                    dtype=theano.config.floatX,
+                    broadcastable=[False,True,False,False])("track") 
+    nonzeros_track_var = theano.tensor.gt(
+                          theano.tensor.abs_(track_var),0.0)*1.0
+
+    fwd_filters_var = theano.tensor.as_tensor_variable(
+                        x=fwd_filters, name="fwd_filters")
+    squared_fwd_filters_var = fwd_filters_var*fwd_filters_var
+    nonzero_fwd_filters_var = theano.tensor.gt(
+                               theano.tensor.abs_(fwd_filters_var),0.0)*1.0
+    rev_comp_filters_var = theano.tensor.as_tensor_variable(
+                             x=rev_comp_filters, name="rev_comp_filters")
+    squared_rev_comp_filters_var = rev_comp_filters_var*rev_comp_filters_var
+    nonzero_rev_filters_var = theano.tensor.gt(
+                              theano.tensor.abs_(rev_comp_filters_var),0.0)*1.0
+
+    #get variables representing the results of the convolutions,
+    #which are equal to the the dot products at each sliding window
+    fwd_track_conv_out_var = theano.tensor.nnet.conv2d(
+                         input=track_var, filters=fwd_filters_var)
+    rev_track_conv_out_var = theano.tensor.nnet.conv2d(
+                         input=track_var, filters=rev_comp_filters_var)
+    #also convolve the squared filters with the nonzeros track, to get
+    #the square of the magnitude for all the positions of the filter that
+    #are nonzero in the underlying track
+    squaredfwd_nonzerotrack_conv_out_var = theano.tensor.nnet.conv2d(
+                               input=nonzeros_track_var,
+                               filters=squared_fwd_filters_var)
+    squaredrev_nonzerotrack_conv_out_var = theano.tensor.nnet.conv2d(
+                               input=nonzeros_track_var,
+                               filters=squared_rev_comp_filters_var)
+
+    #take square roots to get magnitudes
+    fwd_nonzero_magnitude_var =\
+     theano.tensor.sqrt(squaredfwd_nonzerotrack_conv_out_var)
+    rev_nonzero_magnitude_var =\
+     theano.tensor.sqrt(squaredrev_nonzerotrack_conv_out_var)
+
+    pseudocount=0.0000001
+    #compute projection. Add pseudocount to avoid div by 0
+    fwd_scores_var = (fwd_track_conv_out_var/
+                      (fwd_nonzero_magnitude_var+pseudocount))
+    rev_scores_var = (rev_track_conv_out_var/
+                      (rev_nonzero_magnitude_var+pseudocount))
+
+    #concatenate the results to take an elementwise max
+    #The length of the height dimension becomes 1 after convolution,
+    #so this is a good dimension to take advantage of for concatenation
+    concatenated_fwd_and_rev_scores_var = theano.tensor.concatenate(
+        [fwd_scores_var, rev_scores_var], axis=2) 
+    #use argmax to determine whether the fwd or rev match is stronger
+    fwd_or_rev_var = theano.tensor.argmax(concatenated_fwd_and_rev_scores_var,
+                                          axis=2, keepdims=True)
+    #final score is max of fwd and rev result
+    final_scores_var = theano.tensor.max(concatenated_fwd_and_rev_scores_var,
+                                         axis=2, keepdims=True)
+    #concatenate the score with variable determining fwd or rev
+    concatenated_score_and_orientation_var = theano.tensor.concatenate(
+        [final_scores_var,fwd_or_rev_var], axis=2)
+
+    #compile the function linking inputs and outputs
+    compiled_func = theano.function([track_var],
+                                     concatenated_score_and_orientation_var,
+                                     allow_input_downcast=True)
+
+    #run function in batches
+    final_scores = np.array(deeplift.util.run_function_in_batches(
+                            func=compiled_func,
+                            input_data_list=[track],
+                            batch_size=batch_size,
+                            progress_update=progress_update))
+
+    return final_scores
