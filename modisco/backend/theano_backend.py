@@ -106,7 +106,6 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
         func_params_size: when compiling functions
     """
     #reverse the patterns as the func is a conv not a cross corr
-    print(filters.shape)
     filters = filters.astype("float32")[:,::-1,::-1]
     to_return = np.zeros((filters.shape[0], len(things_to_scan)))
     #compile the number of filters that result in a function with

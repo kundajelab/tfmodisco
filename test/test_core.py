@@ -34,7 +34,7 @@ class TestSeqletCoordinates(unittest.TestCase):
     def test_seqlet_coordinates_core(self):
         seqlet_coordinates = core.SeqletCoordinates(
                                 example_idx=0, start=0, end=10,
-                                revcomp=False)
+                                is_revcomp=False)
         self.assertEqual(len(seqlet_coordinates), 10)
 
 
@@ -59,24 +59,24 @@ class TestDataTrack(unittest.TestCase):
         np.testing.assert_almost_equal(
             self.data_track_has_pos_axis.get_snippet(core.SeqletCoordinates(
                                      example_idx=1, 
-                                     start=1, end=5, revcomp=False)).fwd,
+                                     start=1, end=5, is_revcomp=False)).fwd,
             self.fwd_tracks[1, 1:5])
         #snippet with pos axis
         np.testing.assert_almost_equal(
             self.data_track_has_pos_axis.get_snippet(core.SeqletCoordinates(
                                      example_idx=1, 
-                                     start=1, end=5, revcomp=True)).fwd,
+                                     start=1, end=5, is_revcomp=True)).fwd,
             -self.fwd_tracks[1, 1:5][::-1])
         #snippet without pos axis
         np.testing.assert_almost_equal(
             self.data_track_no_pos_axis.get_snippet(core.SeqletCoordinates(
                                      example_idx=1, 
-                                     start=1, end=5, revcomp=False)).fwd,
+                                     start=1, end=5, is_revcomp=False)).fwd,
             self.fwd_tracks[1])
         np.testing.assert_almost_equal(
             self.data_track_no_pos_axis.get_snippet(core.SeqletCoordinates(
                                      example_idx=1, 
-                                     start=1, end=5, revcomp=True)).fwd,
+                                     start=1, end=5, is_revcomp=True)).fwd,
             -self.fwd_tracks[1][::-1])
          
 
@@ -95,7 +95,7 @@ class TestSeqlet(unittest.TestCase):
 
     def test_seqlet_add_snippet_from_data_track_fwd(self):
         coor = core.SeqletCoordinates(example_idx=1, start=1,
-                                      end=5, revcomp=False)  
+                                      end=5, is_revcomp=False)  
         seqlet = core.Seqlet(coor=coor) 
         seqlet.add_snippet_from_data_track(
                 data_track=self.data_track_has_pos_axis)
@@ -108,7 +108,7 @@ class TestSeqlet(unittest.TestCase):
 
     def test_seqlet_add_snippet_from_data_track_rev(self):
         coor = core.SeqletCoordinates(example_idx=1, start=1,
-                                      end=5, revcomp=True)  
+                                      end=5, is_revcomp=True)  
         seqlet = core.Seqlet(coor=coor) 
         seqlet.add_snippet_from_data_track(
                 data_track=self.data_track_has_pos_axis)

@@ -18,7 +18,7 @@ class SeqletCoordsFWAP(SeqletCoordinates):
         super(SeqletCoordsFWAP, self).__init__(
             example_idx=example_idx,
             start=start, end=end,
-            revcomp=False) 
+            is_revcomp=False) 
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
