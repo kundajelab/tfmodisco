@@ -16,7 +16,7 @@ class Snippet(object):
         return len(self.fwd)
 
     def revcomp(self):
-        return Snippet(fwd=self.rev, rev=self.fwd,
+        return Snippet(fwd=np.copy(self.rev), rev=np.copy(self.fwd),
                        has_pos_axis=self.has_pos_axis)
 
 
@@ -130,6 +130,12 @@ class Pattern(object):
     def __getitem__(self, key):
         return self.track_name_to_snippet[key]
 
+    def __len__(self):
+        raise NotImplementedError()
+
+    def revcomp(self):
+        raise NotImplementedError()
+
 
 class Seqlet(Pattern):
 
@@ -189,12 +195,12 @@ class CrossCorrelationPatternAligner(AbstractPatternAligner):
         self.pattern_crosscorr_settings = pattern_crosscorr_settings
 
     def __call__(self, parent_pattern, child_pattern):
-        fwd_data_parent, rev_data_parent = get_2d_data_from_seqlet(
-            seqlet=parent_pattern,
+        fwd_data_parent, rev_data_parent = get_2d_data_from_pattern(
+            pattern=parent_pattern,
             track_names=self.pattern_crosscorr_settings.track_names,
             normalizer=self.pattern_crosscorr_settings.normalizer) 
-        fwd_data_child, rev_data_child = get_2d_data_from_seqlet(
-            seqlet=child_pattern,
+        fwd_data_child, rev_data_child = get_2d_data_from_pattern(
+            pattern=child_pattern,
             track_names=self.pattern_crosscorr_settings.track_names,
             normalizer=self.pattern_crosscorr_settings.normalizer) 
         #find optimal alignments of fwd_data_child and rev_data_child
@@ -219,18 +225,37 @@ class AggregatedSeqlet(Pattern):
 
     def __init__(self, seqlets_and_alnmts):
         super(AggregatedSeqlet, self).__init__()
-        self.length = max([x.alnmt + len(x.seqlet)
-                           for x in seqlets_and_alnmts]) 
         self.seqlets_and_alnmts = []
-        self._compute_aggregation(seqlets_and_alnmts) 
+        if (len(seqlets_and_alnmts)>0):
+            self._set_length(seqlets_and_alnmts)
+            self._compute_aggregation(seqlets_and_alnmts) 
+
+    def _set_length(self, seqlets_and_alnmts):
+        self.length = max([x.alnmt + len(x.seqlet)
+                       for x in seqlets_and_alnmts])  
 
     def revcomp(self):
-        revcomped_seqlets_and_alignments = [
+        rev_agg_seqlet = AggregatedSeqlet(seqlets_and_alnmts=[])
+        rev_agg_seqlet.per_position_counts = self.per_position_counts[::-1]
+        rev_agg_seqlet._track_name_to_agg = OrderedDict(
+         [(x, np.copy(self._track_name_to_agg_revcomp[x]))
+           for x in self._track_name_to_agg])
+        rev_agg_seqlet._track_name_to_agg_revcomp = OrderedDict(
+         [(x, np.copy(self._track_name_to_agg[x]))
+           for x in self._track_name_to_agg_revcomp])
+        rev_agg_seqlet.track_name_to_snippet = OrderedDict([
+         (x, Snippet(
+             fwd=np.copy(self.track_name_to_snippet[x].rev),
+             rev=np.copy(self.track_name_to_snippet[x].fwd),
+             has_pos_axis=self.track_name_to_snippet[x].has_pos_axis)) 
+         ]) 
+        rev_seqlets_and_alignments = [
             SeqletAndAlignment(seqlet=x.seqlet.revcomp(),
                                alnmt=self.length-(x.alnmt+len(x.seqlet)))
-            for x in self.seqlets_and_alnmts]  
-        return AggregatedSeqlet(seqlets_and_alnmts=
-                                revcomped_seqlets_and_alignments)
+            for x in self.seqlets_and_alnmts] 
+        rev_agg_seqlet._set_length(rev_seqlets_and_alignments)
+        rev_agg_seqlet.seqlets_and_alnmts = rev_seqlets_and_alignments
+        return rev_agg_seqlet 
 
     @property
     def num_seqlets(self):
@@ -246,8 +271,8 @@ class AggregatedSeqlet(Pattern):
               sample_seqlet=seqlets_and_alnmts[0].seqlet)
         self.per_position_counts = np.zeros((self.length,))
         for seqlet_and_alnmt in seqlets_and_alnmts:
-            self._add_seqlet_with_valid_alnmt(
-                    seqlet=seqlet_and_alnmt.seqlet,
+            self._add_pattern_with_valid_alnmt(
+                    pattern=seqlet_and_alnmt.seqlet,
                     alnmt=seqlet_and_alnmt.alnmt)
 
     def _initialize_track_name_to_aggregation(self, sample_seqlet): 
@@ -305,62 +330,62 @@ class AggregatedSeqlet(Pattern):
                 self._track_name_to_agg_revcomp[track_name] =\
                     extended_rev_track
 
-    def add_seqlet(self, seqlet, aligner):
+    def add_pattern(self, pattern, aligner):
 
         (alnmt, revcomp_match) = aligner(parent_pattern=self,
-                                         child_pattern=seqlet)
+                                         child_pattern=pattern)
         if (revcomp_match):
-            seqlet = seqlet.revcomp()
+            pattern = pattern.revcomp()
         if alnmt < 0:
            self._pad_before(num_zeros=abs(alnmt)) 
            alnmt=0
-        end_coor_of_seqlet = (alnmt + len(seqlet))
-        if (end_coor_of_seqlet > self.length):
-            self._pad_after(num_zeros=(end_coor_of_seqlet - self.length))
-        self._add_seqlet_with_valid_alnmt(seqlet=seqlet, alnmt=alnmt)
+        end_coor_of_pattern = (alnmt + len(pattern))
+        if (end_coor_of_pattern > self.length):
+            self._pad_after(num_zeros=(end_coor_of_pattern - self.length))
+        self._add_pattern_with_valid_alnmt(pattern=pattern, alnmt=alnmt)
 
-    def _add_seqlet_with_valid_alnmt(self, seqlet, alnmt):
+    def _add_pattern_with_valid_alnmt(self, pattern, alnmt):
         assert alnmt >= 0
-        assert alnmt + len(seqlet) <= self.length
+        assert alnmt + len(pattern) <= self.length
 
-        slice_obj = slice(alnmt, alnmt+len(seqlet))
-        rev_slice_obj = slice(self.length-(alnmt+len(seqlet)),
+        slice_obj = slice(alnmt, alnmt+len(pattern))
+        rev_slice_obj = slice(self.length-(alnmt+len(pattern)),
                               self.length-alnmt)
 
-        if hasattr(seqlet, 'seqlets_and_alnmts'):
-            for seqlet_and_alnmt in seqlet.seqlets_and_alnmts:    
+        if hasattr(pattern, 'seqlets_and_alnmts'):
+            for seqlet_and_alnmt in pattern.seqlets_and_alnmts:    
                 self.seqlets_and_alnmts.append(
                      SeqletAndAlignment(seqlet=seqlet_and_alnmt.seqlet,
                                         alnmt=alnmt+seqlet_and_alnmt.alnmt))
-            self.per_position_counts[slice_obj] += seqlet.per_position_counts
+            self.per_position_counts[slice_obj] += pattern.per_position_counts
         else:
             self.seqlets_and_alnmts.append(
-                 SeqletAndAlignment(seqlet=seqlet, alnmt=alnmt))
+                 SeqletAndAlignment(seqlet=pattern, alnmt=alnmt))
             self.per_position_counts[slice_obj] += 1.0 
 
         for track_name in self._track_name_to_agg:
             if (self.track_name_to_snippet[track_name].has_pos_axis==False):
-                if hasattr(seqlet, '_track_name_to_agg'):
+                if hasattr(pattern, '_track_name_to_agg'):
                     self._track_name_to_agg[track_name] +=\
-                        seqlet._track_name_to_agg[track_name]
+                        pattern._track_name_to_agg[track_name]
                     self._track_name_to_agg_revcomp[track_name] +=\
-                        seqlet._track_name_to_agg_revcomp[track_name]
+                        pattern._track_name_to_agg_revcomp[track_name]
                 else:
                     self._track_name_to_agg[track_name] +=\
-                        seqlet[track_name].fwd
+                        pattern[track_name].fwd
                     self._track_name_to_agg_revcomp[track_name] +=\
-                        seqlet[track_name].rev
+                        pattern[track_name].rev
             else:
-                if hasattr(seqlet, '_track_name_to_agg'):
+                if hasattr(pattern, '_track_name_to_agg'):
                     self._track_name_to_agg[track_name][slice_obj] +=\
-                        seqlet._track_name_to_agg[track_name]
+                        pattern._track_name_to_agg[track_name]
                     self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
-                         += seqlet._track_name_to_agg_revcomp[track_name]
+                         += pattern._track_name_to_agg_revcomp[track_name]
                 else:
                     self._track_name_to_agg[track_name][slice_obj] +=\
-                        seqlet[track_name].fwd 
+                        pattern[track_name].fwd 
                     self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
-                         += seqlet[track_name].rev
+                         += pattern[track_name].rev
             self.track_name_to_snippet[track_name] =\
              Snippet(
               fwd=(self._track_name_to_agg[track_name]
@@ -373,12 +398,12 @@ class AggregatedSeqlet(Pattern):
         return self.length
 
 
-def get_2d_data_from_seqlets(seqlets, track_names, normalizer):
+def get_2d_data_from_patterns(patterns, track_names, normalizer):
     all_fwd_data = []
     all_rev_data = []
-    for seqlet in seqlets:
-        fwd_data, rev_data = get_2d_data_from_seqlet(
-            seqlet=seqlet, track_names=track_names,
+    for pattern in patterns:
+        fwd_data, rev_data = get_2d_data_from_pattern(
+            pattern=pattern, track_names=track_names,
             normalizer=normalizer) 
         all_fwd_data.append(fwd_data)
         all_rev_data.append(rev_data)
@@ -386,8 +411,8 @@ def get_2d_data_from_seqlets(seqlets, track_names, normalizer):
             np.array(all_rev_data))
 
 
-def get_2d_data_from_seqlet(seqlet, track_names, normalizer): 
-    snippets = [seqlet[track_name]
+def get_2d_data_from_pattern(pattern, track_names, normalizer): 
+    snippets = [pattern[track_name]
                  for track_name in track_names] 
     fwd_data = np.concatenate([normalizer(
              np.reshape(snippet.fwd, (len(snippet.fwd), -1)))

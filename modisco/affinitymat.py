@@ -63,8 +63,8 @@ class MaxCrossCorrAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
 
     def __call__(self, seqlets):
         (all_fwd_data, all_rev_data) =\
-            core.get_2d_data_from_seqlets(
-                seqlets=seqlets,
+            core.get_2d_data_from_patterns(
+                patterns=seqlets,
                 track_names=self.pattern_crosscorr_settings.track_names,
                 normalizer=self.pattern_crosscorr_settings.normalizer)
 

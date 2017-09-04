@@ -1,4 +1,6 @@
 **/*.pyc
 **/*.swp
 **/*.npy
+**/*.hdf5
+**/*.h5
 **/*.ipynb_checkpoints
