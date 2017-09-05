@@ -18,7 +18,7 @@ class TestJaccardify(unittest.TestCase):
         
     def test_jaccardify(self): 
         rand_mat = np.random.random((100,100)) 
-        answer = modisco.util.jaccardify_dist_mat(rand_mat, power=2) 
+        answer = modisco.util.jaccardify_sim_mat(rand_mat, power=2) 
         t1 = time.time()
         parallel_answer = modisco.util.gpu_jaccardify(rand_mat, power=2,
                                                       func_params_size=1000)

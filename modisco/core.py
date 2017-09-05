@@ -96,10 +96,6 @@ class TrackSet(object):
         return seqlet
 
 
-SeqletCoordinates = namedtuple("SeqletCoords",
-                               ['example_idx', 'start', 'end', 'revcomp'])
-
-
 class SeqletCoordinates(object):
 
     def __init__(self, example_idx, start, end, is_revcomp):

@@ -76,7 +76,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             for example_idx,argmax in enumerate(argmax_coords):
                 #need to be able to expand without going off the edge
                 if ((argmax >= self.flank) and
-                    (argmax <= (summed_score_track.shape[1]
+                    (argmax <= (score_track.shape[1]
                                 -(self.sliding+self.flank)))): 
                     chunk_height = summed_score_track[example_idx][argmax]
                     #only include chunk that are at least a certain
