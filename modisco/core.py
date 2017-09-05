@@ -56,7 +56,7 @@ class DataTrack(object):
                          (self.track_length-coor.end):
                          (self.track_length-coor.start)],
                     has_pos_axis=self.has_pos_axis)
-        if (coor.revcomp):
+        if (coor.is_revcomp):
             snippet = snippet.revcomp()
         return snippet
 
