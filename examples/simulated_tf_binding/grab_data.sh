@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-FILE="talgata_task0_positives_multipliers.npy"
+FILE="talgata_task0_positives_multipliers.hdf5"
 if [ ! -f "$FILE" ]
 then
-    wget https://github.com/AvantiShri/model_storage/blob/006ca533757587031766fe8685df1a3c7eb82b1b/modisco/talgata_task0_positives_multipliers.npy
+    wget https://github.com/AvantiShri/model_storage/raw/master/modisco/talgata_task0_positives_multipliers.hdf5
 else
-    echo "File talgata_task0_positives_multipliers.npy exists already"
+    echo "File talgata_task0_positives_multipliers.hdf5 exists already"
 fi
 
-FILE="talgata_task0_positives_scores.npy"
+FILE="talgata_task0_positives_scores.hdf5"
 if [ ! -f "$FILE" ]
 then
-    wget https://github.com/AvantiShri/model_storage/blob/006ca533757587031766fe8685df1a3c7eb82b1b/modisco/talgata_task0_positives_scores.npy
+    wget https://github.com/AvantiShri/model_storage/raw/master/modisco/talgata_task0_positives_scores.hdf5
 else
-    echo "File talgata_task0_positives_scores.npy exists already"
+    echo "File talgata_task0_positives_scores.hdf5 exists already"
 fi
