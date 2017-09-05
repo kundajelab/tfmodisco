@@ -167,6 +167,11 @@ class Seqlet(Pattern):
 
     def __len__(self):
         return len(self.coor)
+
+    @property
+    def exidx_start_end_string(self):
+        return (str(self.coor.example_idx)+"_"
+                +str(self.coor.start)+"_"+str(self.coor.end))
  
         
 class SeqletAndAlignment(object):
@@ -221,41 +226,57 @@ class CrossCorrelationPatternAligner(AbstractPatternAligner):
             return (best_crosscorr_argmax, False)
 
 
+#implements the array interface but also tracks the
+#unique seqlets for quick membership testing
+class SeqletsAndAlignments(object):
+
+    def __init__(self):
+        self.arr = []
+        self.unique_seqlets = {} 
+
+    def __len__(self):
+        return len(self.arr)
+
+    def __iter__(self):
+        return self.arr.__iter__()
+
+    def __getitem__(self, idx):
+        return self.arr[idx]
+
+    def __contains__(self, seqlet):
+        return (seqlet.exidx_start_end_string in self.unique_seqlets)
+
+    def append(self, seqlet_and_alnmt):
+        seqlet = seqlet_and_alnmt.seqlet
+        if (seqlet.exidx_start_end_string in self.unique_seqlets):
+            raise RuntimeError("Seqlet "
+             +seqlet.exidx_start_end_string
+             +" is already in SeqletsAndAlignments array")
+        self.arr.append(seqlet_and_alnmt)
+        self.unique_seqlets[seqlet.exidx_start_end_string] = seqlet
+
+
 class AggregatedSeqlet(Pattern):
 
-    def __init__(self, seqlets_and_alnmts):
+    def __init__(self, seqlets_and_alnmts_arr):
         super(AggregatedSeqlet, self).__init__()
-        self.seqlets_and_alnmts = []
-        if (len(seqlets_and_alnmts)>0):
-            self._set_length(seqlets_and_alnmts)
-            self._compute_aggregation(seqlets_and_alnmts) 
+        self._seqlets_and_alnmts = SeqletsAndAlignments()
+        if (len(seqlets_and_alnmts_arr)>0):
+            self._set_length(seqlets_and_alnmts_arr)
+            self._compute_aggregation(seqlets_and_alnmts_arr) 
 
-    def _set_length(self, seqlets_and_alnmts):
+    def _set_length(self, seqlets_and_alnmts_arr):
         self.length = max([x.alnmt + len(x.seqlet)
-                       for x in seqlets_and_alnmts])  
+                       for x in seqlets_and_alnmts_arr])  
 
-    def revcomp(self):
-        rev_agg_seqlet = AggregatedSeqlet(seqlets_and_alnmts=[])
-        rev_agg_seqlet.per_position_counts = self.per_position_counts[::-1]
-        rev_agg_seqlet._track_name_to_agg = OrderedDict(
-         [(x, np.copy(self._track_name_to_agg_revcomp[x]))
-           for x in self._track_name_to_agg])
-        rev_agg_seqlet._track_name_to_agg_revcomp = OrderedDict(
-         [(x, np.copy(self._track_name_to_agg[x]))
-           for x in self._track_name_to_agg_revcomp])
-        rev_agg_seqlet.track_name_to_snippet = OrderedDict([
-         (x, Snippet(
-             fwd=np.copy(self.track_name_to_snippet[x].rev),
-             rev=np.copy(self.track_name_to_snippet[x].fwd),
-             has_pos_axis=self.track_name_to_snippet[x].has_pos_axis)) 
-         ]) 
-        rev_seqlets_and_alignments = [
-            SeqletAndAlignment(seqlet=x.seqlet.revcomp(),
-                               alnmt=self.length-(x.alnmt+len(x.seqlet)))
-            for x in self.seqlets_and_alnmts] 
-        rev_agg_seqlet._set_length(rev_seqlets_and_alignments)
-        rev_agg_seqlet.seqlets_and_alnmts = rev_seqlets_and_alignments
-        return rev_agg_seqlet 
+    @property
+    def seqlets_and_alnmts(self):
+        return self._seqlets_and_alnmts
+
+    @seqlets_and_alnmts.setter
+    def seqlets_and_alnmts(self, val):
+        assert type(val).__name__ == "SeqletsAndAlignments"
+        self._seqlets_and_alnmts = val
 
     @property
     def num_seqlets(self):
@@ -263,14 +284,14 @@ class AggregatedSeqlet(Pattern):
 
     @staticmethod 
     def from_seqlet(seqlet):
-        return AggregatedSeqlet(seqlets_and_alnmts=
+        return AggregatedSeqlet(seqlets_and_alnmts_arr=
                                 [SeqletAndAlignment(seqlet,0)])
 
-    def _compute_aggregation(self,seqlets_and_alnmts):
+    def _compute_aggregation(self,seqlets_and_alnmts_arr):
         self._initialize_track_name_to_aggregation(
-              sample_seqlet=seqlets_and_alnmts[0].seqlet)
+              sample_seqlet=seqlets_and_alnmts_arr[0].seqlet)
         self.per_position_counts = np.zeros((self.length,))
-        for seqlet_and_alnmt in seqlets_and_alnmts:
+        for seqlet_and_alnmt in seqlets_and_alnmts_arr:
             self._add_pattern_with_valid_alnmt(
                     pattern=seqlet_and_alnmt.seqlet,
                     alnmt=seqlet_and_alnmt.alnmt)
@@ -330,6 +351,14 @@ class AggregatedSeqlet(Pattern):
                 self._track_name_to_agg_revcomp[track_name] =\
                     extended_rev_track
 
+    def merge_aggregated_seqlet(self, agg_seqlet, aligner):
+        #only merge those seqlets in agg_seqlet that are not already
+        #in the current seqlet
+        for seqlet_and_alnmt in agg_seqlet.seqlets_and_alnmts:
+            if seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts: 
+                self.add_pattern(pattern=seqlet_and_alnmt.seqlet,
+                                 aligner=aligner) 
+        
     def add_pattern(self, pattern, aligner):
 
         (alnmt, revcomp_match) = aligner(parent_pattern=self,
@@ -352,40 +381,21 @@ class AggregatedSeqlet(Pattern):
         rev_slice_obj = slice(self.length-(alnmt+len(pattern)),
                               self.length-alnmt)
 
-        if hasattr(pattern, 'seqlets_and_alnmts'):
-            for seqlet_and_alnmt in pattern.seqlets_and_alnmts:    
-                self.seqlets_and_alnmts.append(
-                     SeqletAndAlignment(seqlet=seqlet_and_alnmt.seqlet,
-                                        alnmt=alnmt+seqlet_and_alnmt.alnmt))
-            self.per_position_counts[slice_obj] += pattern.per_position_counts
-        else:
-            self.seqlets_and_alnmts.append(
-                 SeqletAndAlignment(seqlet=pattern, alnmt=alnmt))
-            self.per_position_counts[slice_obj] += 1.0 
+        self.seqlets_and_alnmts.append(
+             SeqletAndAlignment(seqlet=pattern, alnmt=alnmt))
+        self.per_position_counts[slice_obj] += 1.0 
 
         for track_name in self._track_name_to_agg:
             if (self.track_name_to_snippet[track_name].has_pos_axis==False):
-                if hasattr(pattern, '_track_name_to_agg'):
-                    self._track_name_to_agg[track_name] +=\
-                        pattern._track_name_to_agg[track_name]
-                    self._track_name_to_agg_revcomp[track_name] +=\
-                        pattern._track_name_to_agg_revcomp[track_name]
-                else:
-                    self._track_name_to_agg[track_name] +=\
-                        pattern[track_name].fwd
-                    self._track_name_to_agg_revcomp[track_name] +=\
-                        pattern[track_name].rev
+                self._track_name_to_agg[track_name] +=\
+                    pattern[track_name].fwd
+                self._track_name_to_agg_revcomp[track_name] +=\
+                    pattern[track_name].rev
             else:
-                if hasattr(pattern, '_track_name_to_agg'):
-                    self._track_name_to_agg[track_name][slice_obj] +=\
-                        pattern._track_name_to_agg[track_name]
-                    self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
-                         += pattern._track_name_to_agg_revcomp[track_name]
-                else:
-                    self._track_name_to_agg[track_name][slice_obj] +=\
-                        pattern[track_name].fwd 
-                    self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
-                         += pattern[track_name].rev
+                self._track_name_to_agg[track_name][slice_obj] +=\
+                    pattern[track_name].fwd 
+                self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
+                     += pattern[track_name].rev
             self.track_name_to_snippet[track_name] =\
              Snippet(
               fwd=(self._track_name_to_agg[track_name]
@@ -396,6 +406,37 @@ class AggregatedSeqlet(Pattern):
 
     def __len__(self):
         return self.length
+
+    def revcomp(self):
+        rev_agg_seqlet = AggregatedSeqlet(seqlets_and_alnmts_arr=[])
+        rev_agg_seqlet.per_position_counts = self.per_position_counts[::-1]
+        rev_agg_seqlet._track_name_to_agg = OrderedDict(
+         [(x, np.copy(self._track_name_to_agg_revcomp[x]))
+           for x in self._track_name_to_agg])
+        rev_agg_seqlet._track_name_to_agg_revcomp = OrderedDict(
+         [(x, np.copy(self._track_name_to_agg[x]))
+           for x in self._track_name_to_agg_revcomp])
+        rev_agg_seqlet.track_name_to_snippet = OrderedDict([
+         (x, Snippet(
+             fwd=np.copy(self.track_name_to_snippet[x].rev),
+             rev=np.copy(self.track_name_to_snippet[x].fwd),
+             has_pos_axis=self.track_name_to_snippet[x].has_pos_axis)) 
+         ]) 
+        rev_seqlets_and_alignments_arr = [
+            SeqletAndAlignment(seqlet=x.seqlet.revcomp(),
+                               alnmt=self.length-(x.alnmt+len(x.seqlet)))
+            for x in self.seqlets_and_alnmts] 
+        rev_agg_seqlet._set_length(rev_seqlets_and_alignments_arr)
+        for seqlet_and_alnmt in rev_seqlets_and_alignments_arr:
+            rev_agg_seqlet.seqlets_and_alnmts.append(seqlet_and_alnmt)
+        return rev_agg_seqlet 
+
+    def get_seqlet_centers(self):
+        return [x.alnmt + 0.5*(len(x.seqlet)) for x in self.seqlets_and_alnmts] 
+
+    def viz_seqlet_centers(self):
+        from matplotlib import pyplot as plt
+        plt.hist(self.get_seqlet_centers(), bins=len(self))
 
 
 def get_2d_data_from_patterns(patterns, track_names, normalizer):

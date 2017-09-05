@@ -46,8 +46,8 @@ class HierarchicalSeqletAggregator(object):
                 else:
                     parent_agg_seqlet = aggregated_seqlet_i
                     child_agg_seqlet = aggregated_seqlet_j
-                parent_agg_seqlet.add_pattern(
-                    pattern=child_agg_seqlet,
+                parent_agg_seqlet.merge_aggregated_seqlet(
+                    agg_seqlet=child_agg_seqlet,
                     aligner=self.pattern_aligner)
                 aggregated_seqlets[i] = parent_agg_seqlet 
                 aggregated_seqlets[j] = parent_agg_seqlet
