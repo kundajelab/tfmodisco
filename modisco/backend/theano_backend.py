@@ -1,3 +1,4 @@
+from __future__ import division, print_function
 import theano
 from theano import tensor as T
 import numpy as np

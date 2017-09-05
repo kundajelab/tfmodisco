@@ -31,7 +31,7 @@ class TestNormalizers(unittest.TestCase):
             snippet = core.Snippet(fwd=arr, rev=arr[::-1,::-1],
                                    has_pos_axis=True) 
             seqlet = core.Seqlet(coor=core.SeqletCoordinates(
-                           example_idx=0, start=0, end=100, revcomp=False)
+                           example_idx=0, start=0, end=100, is_revcomp=False)
                            ).add_snippet(data_track_name="scores",
                                          snippet=snippet)
             seqlets.append(seqlet)

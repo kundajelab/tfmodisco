@@ -266,13 +266,13 @@ class AggregatedSeqlet(Pattern):
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
-    def trim_to_positions_with_percent_support_of_peak(self, percent):
+    def trim_to_positions_with_frac_support_of_peak(self, frac):
         max_support = max(self.per_position_counts)
         left_idx = 0
-        while self.per_position_counts[left_idx] < percent*max_support:
+        while self.per_position_counts[left_idx] < frac*max_support:
             left_idx += 1
         right_idx = len(self.per_position_counts)
-        while self.per_position_counts[right_idx-1] < percent*max_support:
+        while self.per_position_counts[right_idx-1] < frac*max_support:
             right_idx -= 1
         trimmed_seqlets_and_alnmts_arr = []
         for seqlet_and_alnmt in self.seqlets_and_alnmts:

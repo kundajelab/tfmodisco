@@ -35,12 +35,12 @@ class TestFixedWindowAroundChunks(unittest.TestCase):
         self.assertEqual(coords[0].example_idx,0)
         self.assertEqual(coords[0].start,3)
         self.assertEqual(coords[0].end,8)
-        self.assertEqual(coords[0].revcomp,False)
+        self.assertEqual(coords[0].is_revcomp,False)
 
         self.assertEqual(coords[1].example_idx,0)
         self.assertEqual(coords[1].start,5)
         self.assertEqual(coords[1].end,10)
-        self.assertEqual(coords[1].revcomp,False)
+        self.assertEqual(coords[1].is_revcomp,False)
 
         self.assertEqual(len(coords),2)
 
@@ -55,17 +55,17 @@ class TestFixedWindowAroundChunks(unittest.TestCase):
         self.assertEqual(coords[0].example_idx,0)
         self.assertEqual(coords[0].start,3)
         self.assertEqual(coords[0].end,8)
-        self.assertEqual(coords[0].revcomp,False)
+        self.assertEqual(coords[0].is_revcomp,False)
 
         self.assertEqual(coords[1].example_idx,0)
         self.assertEqual(coords[1].start,5)
         self.assertEqual(coords[1].end,10)
-        self.assertEqual(coords[1].revcomp,False)
+        self.assertEqual(coords[1].is_revcomp,False)
 
         self.assertEqual(coords[2].example_idx,0)
         self.assertEqual(coords[2].start,1)
         self.assertEqual(coords[2].end,6)
-        self.assertEqual(coords[2].revcomp,False)
+        self.assertEqual(coords[2].is_revcomp,False)
 
         self.assertEqual(len(coords),3)
 
@@ -80,12 +80,12 @@ class TestFixedWindowAroundChunks(unittest.TestCase):
         self.assertEqual(coords[0].example_idx,0)
         self.assertEqual(coords[0].start,3)
         self.assertEqual(coords[0].end,8)
-        self.assertEqual(coords[0].revcomp,False)
+        self.assertEqual(coords[0].is_revcomp,False)
 
         self.assertEqual(coords[1].example_idx,0)
         self.assertEqual(coords[1].start,2)
         self.assertEqual(coords[1].end,7)
-        self.assertEqual(coords[1].revcomp,False)
+        self.assertEqual(coords[1].is_revcomp,False)
 
         self.assertEqual(len(coords),2)
 
@@ -105,15 +105,15 @@ class TestFixedWindowAroundChunks(unittest.TestCase):
         self.assertEqual(coords[0].example_idx,1)
         self.assertEqual(coords[0].start,0)
         self.assertEqual(coords[0].end,8)
-        self.assertEqual(coords[0].revcomp,False)
+        self.assertEqual(coords[0].is_revcomp,False)
 
         self.assertEqual(coords[1].example_idx,2)
         self.assertEqual(coords[1].start,1)
         self.assertEqual(coords[1].end,9)
-        self.assertEqual(coords[1].revcomp,False)
+        self.assertEqual(coords[1].is_revcomp,False)
 
         self.assertEqual(coords[2].example_idx,3)
         self.assertEqual(coords[2].start,2)
         self.assertEqual(coords[2].end,10)
-        self.assertEqual(coords[2].revcomp,False)
+        self.assertEqual(coords[2].is_revcomp,False)
 
