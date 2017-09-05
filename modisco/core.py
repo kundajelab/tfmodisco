@@ -265,6 +265,39 @@ class AggregatedSeqlet(Pattern):
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
+    def trim_to_positions_with_percent_support_of_peak(self, percent):
+        max_support = max(self.per_position_counts)
+        left_idx = 0
+        while self.per_position_counts[left_idx] < percent*max_support:
+            left_idx += 1
+        right_idx = len(self.per_position_counts)
+        while self.per_position_counts[right_idx-1] < percent*max_support:
+            right_idx -= 1
+        trimmed_seqlets_and_alnmts_arr = []
+        for seqlet_and_alnmt in self.seqlets_and_alnmts:
+            #if the seqlet will fit within the trimmed pattern
+            if ((seqlet_and_alnmt.alnmt >= left_idx) and
+                (seqlet_and_alnmt.alnmt+len(seqlet_and_alnmt.seqlet)
+                 <= right_idx)):
+                alnmt = seqlet_and_alnmt.alnmt - left_idx
+                trimmed_seqlets_and_alnmts_arr.append(
+                 SeqletAndAlignment(seqlet=seqlet_and_alnmt.seqlet,
+                                    alnmt=alnmt))
+        return AggregatedSeqlet(seqlets_and_alnmts_arr=
+                                trimmed_seqlets_and_alnmts_arr) 
+
+    def plot_per_position_counts(self, figsize=(20,2)):
+        from matplotlib import pyplot as plt
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+        self.plot_per_position_counts_given_ax(ax=ax)
+        plt.show()
+
+    def plot_per_position_counts_given_ax(self, ax):
+        ax.plot(self.per_position_counts)
+        ax.set_ylim((0,max(self.per_position_counts)*1.1))
+        ax.set_xlim((0, len(self)))
+
     def _set_length(self, seqlets_and_alnmts_arr):
         self.length = max([x.alnmt + len(x.seqlet)
                        for x in seqlets_and_alnmts_arr])  
