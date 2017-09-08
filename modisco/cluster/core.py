@@ -9,10 +9,10 @@ class ClusterResults(object):
         self.cluster_indices = cluster_indices 
 
 
-class PhenographClusterResults(ClusterResults):
+class LouvainClusterResults(ClusterResults):
 
     def __init__(self, cluster_indices, hierarchy, Q):
-        super(PhenographClusterResults, self).__init__(
+        super(LouvainClusterResults, self).__init__(
          cluster_indices=cluster_indices)
         self.hierarchy = hierarchy
         self.Q = Q
@@ -47,9 +47,29 @@ class PhenographCluster(AbstractClusterer):
             n_jobs=self.n_jobs, q_tol=self.q_tol,
             louvain_time_limit=self.louvain_time_limit,
             nn_method=self.nn_method)
-        return PhenographClusterResults(
+        return LouvainClusterResults(
                 cluster_indices=communities,
                 hierarchy=hierarchy,
                 Q=Q)
         
+
+
+class LouvainCluster(AbstractClusterer):
+
+    def __init__(self, min_cluster_size=10,
+                       q_tol=1e-3, louvain_time_limit=2000):
+        self.min_cluster_size = min_cluster_size
+        self.q_tol = q_tol
+        self.louvain_time_limit = louvain_time_limit
+    
+    def cluster(self, affinity_mat):
+        communities, graph, Q, hierarchy = ph.cluster.runlouvain_given_graph(
+            graph=affinity_mat,
+            min_cluster_size=self.min_cluster_size,
+            q_tol=self.q_tol,
+            louvain_time_limit=self.louvain_time_limit)
+        return LouvainClusterResults(
+                cluster_indices=communities,
+                hierarchy=hierarchy,
+                Q=Q)
  
