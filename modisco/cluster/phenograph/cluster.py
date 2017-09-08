@@ -111,12 +111,22 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
             sg = graph.multiply(graph.transpose())
         # retain lower triangle (for efficiency)
         graph = sp.tril(sg, -1)
+    return runlouvain_given_graph(graph,
+            q_tol=q_tol, louvain_time_limit=louvain_time_limit,
+            min_cluster_size=min_cluster_size, tic=tic)
+
+
+def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
+                           min_cluster_size, tic=None):
+    if (not sp.issparse(graph)):
+        graph = sp.coo_matrix(graph) 
     # write to file with unique id
     uid = uuid.uuid1().hex
     graph2binary(uid, graph)
     communities, Q, hierarchy =\
      runlouvain(uid, tol=q_tol, time_limit=louvain_time_limit)
-    print("PhenoGraph complete in {} seconds".format(time.time() - tic))
+    if (tic is not None):
+        print("PhenoGraph complete in {} seconds".format(time.time() - tic))
     communities = sort_by_size(communities, min_cluster_size)
     # clean up
     for f in os.listdir(os.getcwd()):
