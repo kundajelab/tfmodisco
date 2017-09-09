@@ -79,6 +79,12 @@ class AdhocAffMatPostProcessor(AbstractAffMatPostProcessor):
         return self.func(affinity_mat)
 
 
+class SimilarityToDistance(AbstractAffMatPostProcessor):
+
+    def __call__(self, affinity_mat):
+        return np.max(affinity_mat)-affinity_mat
+
+
 class PerNodeThresholdBinarizer(AbstractAffMatPostProcessor):
 
     def __init__(self, thresholder, verbose=True):
