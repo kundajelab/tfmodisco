@@ -19,8 +19,9 @@ def scatter_plot(xycoords, clusters=None,
             colors = [frac_to_rainbow_colour(x/float(max_label+1))
                         if x > 0 else frac_to_rainbow_colour(0)
                         for x in range(max_label+1)]
-            print("No colors supplied, so autogen'd as:\n"+
-                    "\n".join(str(x) for x in list(enumerate(colors))))
+            print("No colors supplied, so autogen'd as:\nIDX: R,G,B\n"+
+                    "\n".join(str(x[0])+": "+(",".join("%0.03f"%y for y in x[1]))
+                              for x in enumerate(colors)))
         plt.scatter(xycoords[:,0], xycoords[:,1],
                     c=[colors[x] for x in clusters])
     plt.xlabel(xlabel)
