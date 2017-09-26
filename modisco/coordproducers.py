@@ -24,18 +24,20 @@ class SeqletCoordsFWAP(SeqletCoordinates):
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
 
-    def __init__(self, sliding,
-                       flank,
-                       suppress,
-                       min_ratio,
-                       max_seqlets_per_seq,
+    def __init__(self, sliding=11,
+                       flank=10,
+                       suppress=20,
+                       max_seqlets_per_seq=5,
+                       min_ratio_top_peak=0.0,
+                       min_ratio_over_bg=0.0,
                        batch_size=50,
                        progress_update=5000,
                        verbose=True):
         self.sliding = sliding
         self.flank = flank
         self.suppress = suppress
-        self.min_ratio = min_ratio
+        self.min_ratio_top_peak = min_ratio_top_peak
+        self.min_ratio_over_bg = min_ratio_over_bg
         self.max_seqlets_per_seq = max_seqlets_per_seq
         self.batch_size = batch_size
         self.progress_update = progress_update
@@ -57,6 +59,11 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             batch_size=self.batch_size,
             progress_update=
              (self.progress_update if self.verbose else None))).astype("float") 
+
+        #As we extract seqlets, we will zero out the values at those positions
+        #so that the mean of the background can be updated to exclude
+        #the seqlets (which are likely to be outliers)
+        zerod_out_summed_score_track = np.copy(summed_score_track)
          
         if (self.verbose):
             print("Identifying seqlet coordinates") 
@@ -69,11 +76,24 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                                 batch_size=self.batch_size,
                                 progress_update=(self.progress_update
                                                  if self.verbose else None)) 
+            unsuppressed_per_track = np.sum(summed_score_track > -np.inf,
+                                            axis=1)
+            bg_avg_per_track = np.sum(zerod_out_summed_score_track, axis=1)/\
+                                     (unsuppressed_per_track)
+            
             if (max_per_seq is None):
                 max_per_seq = summed_score_track[
                                list(range(len(summed_score_track))),
                                argmax_coords]
-            for example_idx,argmax in enumerate(argmax_coords):
+            for example_idx,(argmax,bg_avg) in\
+                enumerate(zip(argmax_coords, bg_avg_per_track)):
+
+
+                #suppress the chunks within +- self.suppress
+                left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),0))
+                right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
+                                     len(summed_score_track[0])))
+
                 #need to be able to expand without going off the edge
                 if ((argmax >= self.flank) and
                     (argmax <= (score_track.shape[1]
@@ -81,21 +101,22 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                     chunk_height = summed_score_track[example_idx][argmax]
                     #only include chunk that are at least a certain
                     #fraction of the max chunk
-                    if (chunk_height >=
-                        max_per_seq[example_idx]*self.min_ratio):
+                    if ((chunk_height >=
+                        max_per_seq[example_idx]*self.min_ratio_top_peak)
+                        and (chunk_height >= bg_avg*self.min_ratio_over_bg)):
                         coord = SeqletCoordsFWAP(
                             example_idx=example_idx,
                             start=argmax-self.flank,
                             end=argmax+self.sliding+self.flank,
                             score=chunk_height) 
                         coords.append(coord)
-                #suppress the chunks within +- self.suppress
+                    #only zero out if the region was included, so that we
+                    #don't zero out sequences that do not pass the conditions
+                    zerod_out_summed_score_track[
+                        example_idx,
+                        left_supp_idx:right_supp_idx] = 0.0
                 summed_score_track[
-                    example_idx,
-                    int(max(np.floor(argmax+0.5-self.suppress),0)):
-                    int(min(np.ceil(argmax+0.5+self.suppress),
-                        len(summed_score_track[0])))]\
-                    = -np.inf 
+                    example_idx, left_supp_idx:right_supp_idx] = -np.inf 
         return coords
 
 
