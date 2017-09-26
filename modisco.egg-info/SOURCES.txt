@@ -1,8 +1,8 @@
 modisco/__init__.py
 modisco/affinitymat.py
+modisco/aggregator.py
 modisco/coordproducers.py
 modisco/core.py
-modisco/sketch_workflow.py
 modisco/util.py
 modisco.egg-info/PKG-INFO
 modisco.egg-info/SOURCES.txt
@@ -12,7 +12,10 @@ modisco.egg-info/top_level.txt
 modisco/cluster/__init__.py
 modisco/cluster/core.py
 modisco/visualization/__init__.py
+modisco/visualization/matplotlibhelpers.py
+modisco/visualization/tsne.py
 modisco/visualization/viz_sequence.py
+test/test_affinitymat.py
 test/test_cluster.py
 test/test_coordproducers.py
 test/test_core.py

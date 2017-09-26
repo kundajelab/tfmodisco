@@ -117,9 +117,11 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
     filter_idx = 0 
     while filter_idx < filters.shape[0]:
         if (verbose):
-            print("On filters",filter_idx,"to",(filter_idx+filter_batch_size))
+            print("On filters",filter_idx,"to",
+                  min((filter_idx+filter_batch_size),len(filters)))
 
-        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
+        filter_batch = filters[filter_idx:
+                              min((filter_idx+filter_batch_size),len(filters))]
 
         padding_amount = int((filter_length)*(1-min_overlap))
         padded_input = [np.pad(array=x,
@@ -130,7 +132,7 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
         input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                              broadcastable=[False]*3)("input")
         theano_filters = theano.tensor.as_tensor_variable(
-                   x=filters, name="filters")
+                   x=filter_batch, name="filters")
         conv_out = theano.tensor.nnet.conv.conv2d(
                     input=input_var[:,None,:,:],
                     filters=theano_filters[:,None,::-1,::-1],
@@ -149,7 +151,7 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
                                              progress_update)))
         assert len(max_cross_corrs.shape)==2, max_cross_corrs.shape
         to_return[filter_idx:
-                  (filter_idx+filter_batch_size),:] =\
+                  min((filter_idx+filter_batch_size),len(filters)),:] =\
                   np.transpose(max_cross_corrs)
         filter_idx += filter_batch_size
         

@@ -63,7 +63,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         #As we extract seqlets, we will zero out the values at those positions
         #so that the mean of the background can be updated to exclude
         #the seqlets (which are likely to be outliers)
-        zerod_out_summed_score_track = np.copy(summed_score_track)
+        zerod_out_summed_score_track = np.copy(np.abs(summed_score_track))
          
         if (self.verbose):
             print("Identifying seqlet coordinates") 
@@ -85,9 +85,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 max_per_seq = summed_score_track[
                                list(range(len(summed_score_track))),
                                argmax_coords]
-            for example_idx,(argmax,bg_avg) in\
-                enumerate(zip(argmax_coords, bg_avg_per_track)):
-
+            for example_idx,argmax in enumerate(argmax_coords):
 
                 #suppress the chunks within +- self.suppress
                 left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),0))
@@ -103,7 +101,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                     #fraction of the max chunk
                     if ((chunk_height >=
                         max_per_seq[example_idx]*self.min_ratio_top_peak)
-                        and (chunk_height >= bg_avg*self.min_ratio_over_bg)):
+                        and (chunk_height >=
+                             bg_avg_per_track[example_idx]
+                             *self.min_ratio_over_bg)):
                         coord = SeqletCoordsFWAP(
                             example_idx=example_idx,
                             start=argmax-self.flank,

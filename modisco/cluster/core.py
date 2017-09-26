@@ -50,13 +50,16 @@ class CurvatureChangeAfterMax(AbstractThresholder):
         #get midpoints for hist_x
         hist_x = 0.5*(hist_x[:-1] + hist_x[1:])
         firstd_x, firstd_y = firstd(hist_x, hist_y)
-        secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y)
-        (x_first_neg_firstd, y_first_neg_firstd) =\
-            next(x for x in zip(firstd_x, firstd_y) if x[1] < 0)
-        (x_second_cross_0, y_secondd_cross_0) =\
-            next(x for x in zip(secondd_x, secondd_y)
-                 if x[0] > x_first_neg_firstd and x[1] >= 0)
-        return x_second_cross_0
+        secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y) 
+        try:
+            (x_first_neg_firstd, y_first_neg_firstd) =\
+                next(x for x in zip(firstd_x, firstd_y) if x[1] < 0)
+            (x_second_cross_0, y_secondd_cross_0) =\
+                next(x for x in zip(secondd_x, secondd_y)
+                     if x[0] > x_first_neg_firstd and x[1] >= 0)
+            return x_second_cross_0
+        except StopIteration:
+            return 0 
 
 
 class AbstractAffMatPostProcessor(object):
@@ -95,8 +98,13 @@ class PerNodeThresholdBinarizer(AbstractAffMatPostProcessor):
         if (self.verbose):
             print("Starting thresholding preprocessing")
         start = time.time()
-        thresholds = np.array([self.thresholder(x) for x in affinity_mat])
-        to_return = (affinity_mat > thresholds[:,None]).astype("int") 
+        #ignore affinity to self
+        affinity_mat_zero_d = affinity_mat*(1-np.eye(len(affinity_mat)))
+        thresholds = np.array([self.thresholder(x)
+                               for x in affinity_mat_zero_d])
+        to_return = (affinity_mat <= thresholds[:,None]).astype("int") 
+        #each node is attached to itself
+        to_return = np.maximum(to_return, np.eye(len(affinity_mat)))
         if (self.verbose):
             print("Thresholding preproc took "+str(time.time()-start)+" s")
         return to_return
@@ -163,24 +171,47 @@ class PhenographCluster(AbstractClusterer):
 class LouvainCluster(AbstractClusterer):
 
     def __init__(self, affmat_preprocessor=None, min_cluster_size=10,
-                       q_tol=1e-3, louvain_time_limit=2000, verbose=True):
+                       q_tol=1e-3, louvain_time_limit=2000,
+                       verbose=True, min_nonneg=15, max_nonneg=1000):
         self.affmat_preprocessor = affmat_preprocessor
         self.min_cluster_size = min_cluster_size
         self.q_tol = q_tol
         self.louvain_time_limit = louvain_time_limit
         self.verbose = verbose
+        self.min_nonneg = min_nonneg
+        self.max_nonneg = max_nonneg
     
     def cluster(self, affinity_mat):
+
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
         all_start = time.time()
         if (self.affmat_preprocessor is not None):
             affinity_mat = self.affmat_preprocessor(affinity_mat)
-        communities, graph, Q, hierarchy = ph.cluster.runlouvain_given_graph(
-            graph=affinity_mat,
-            min_cluster_size=self.min_cluster_size,
-            q_tol=self.q_tol,
-            louvain_time_limit=self.louvain_time_limit)
+
+        #subset the affinity mat to rows that have at least
+        #self.min_nonneg nonnegative connections; the ones that don't pass
+        #this filter as are assigned a cluster of -1        
+        #the -1 is to discount the self-connection
+        num_connected_neighbors = np.sum(affinity_mat > 0, axis=1)-1
+        filtered_mask = ((num_connected_neighbors >= self.min_nonneg)*
+                         (num_connected_neighbors <= self.max_nonneg))
+        subsetted_affmat = affinity_mat[filtered_mask]
+        subsetted_affmat = subsetted_affmat[:,filtered_mask]
+        if (self.verbose):
+            print(str(len(subsetted_affmat))+" points remain after subsetting")
+
+        subset_communities, graph, Q, hierarchy =\
+            ph.cluster.runlouvain_given_graph(
+                graph=subsetted_affmat,
+                min_cluster_size=self.min_cluster_size,
+                q_tol=self.q_tol,
+                louvain_time_limit=self.louvain_time_limit)
+
+        #fill in the communities that are -1
+        communities = (np.ones(len(affinity_mat))*-1).astype("int")
+        communities[filtered_mask] = subset_communities
+
         cluster_results = LouvainClusterResults(
                 cluster_indices=communities,
                 hierarchy=hierarchy,
