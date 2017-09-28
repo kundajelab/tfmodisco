@@ -40,26 +40,48 @@ def firstd(x_values, y_values):
     return x_midpoints, rise_over_run
 
 
-class CurvatureChangeAfterMax(AbstractThresholder):
+class CurvatureBasedThreshold(AbstractThresholder):
 
     def __init__(self, bins):
         self.bins = bins
 
     def __call__(self, values):
-        hist_y, hist_x = np.histogram(values, bins=self.bins)
+        droppped_zeros = [x for x in values if x != 0]
+        hist_y, hist_x = np.histogram(droppped_zeros, bins=self.bins)
+        cumsum = np.cumsum(hist_y)
         #get midpoints for hist_x
         hist_x = 0.5*(hist_x[:-1] + hist_x[1:])
+        median_x = next(hist_x[i] for i in range(len(hist_x)) if
+                        (cumsum[i] > len(values)*0.5)) 
         firstd_x, firstd_y = firstd(hist_x, hist_y)
         secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y) 
         try:
+
+            #look at the fastest curvature change for the secondd vals
+            #below the median
+            secondd_vals_below_median = [x for x in zip(secondd_x, secondd_y)
+                                         if x[0] < median_x]
+            fastest_secondd_threshold =\
+                max(secondd_vals_below_median, key=lambda x: x[1])[0]
+
+            #if the median is concentrated at the first bar, this if condition
+            #will be triggered
+            if (len(secondd_vals_below_median)==0):
+                return 0
+
+            #find the first curvature change after the max
             (x_first_neg_firstd, y_first_neg_firstd) =\
                 next(x for x in zip(firstd_x, firstd_y) if x[1] < 0)
             (x_second_cross_0, y_secondd_cross_0) =\
                 next(x for x in zip(secondd_x, secondd_y)
-                     if x[0] > x_first_neg_firstd and x[1] >= 0)
-            return x_second_cross_0
+                     if x[0] > x_first_neg_firstd and x[1] >= 0
+                     and x[0] < median_x)
+
+            #return the more conservative threshold
+            return min(x_second_cross_0, fastest_secondd_threshold)
+
         except StopIteration:
-            return 0 
+            return fastest_secondd_threshold 
 
 
 class AbstractAffMatPostProcessor(object):
@@ -139,6 +161,15 @@ class JaccardSimCPU(AbstractAffMatPostProcessor):
         return jaccard_sim
 
 
+class MinVal(AbstractAffMatPostProcessor):
+
+    def __init__(self, min_val):
+        self.min_val = min_val
+
+    def __call__(self, affinity_mat):
+        return affinity_mat*(affinity_mat >= self.min_val)
+
+
 class PhenographCluster(AbstractClusterer):
 
     def __init__(self, k=30, min_cluster_size=10, jaccard=True,
@@ -172,7 +203,8 @@ class LouvainCluster(AbstractClusterer):
 
     def __init__(self, affmat_preprocessor=None, min_cluster_size=10,
                        q_tol=1e-3, louvain_time_limit=2000,
-                       verbose=True, min_nonneg=15, max_nonneg=1000):
+                       verbose=True, min_nonneg=0, max_nonneg=np.inf,
+                       second_preprocessor = None):
         self.affmat_preprocessor = affmat_preprocessor
         self.min_cluster_size = min_cluster_size
         self.q_tol = q_tol
@@ -180,14 +212,17 @@ class LouvainCluster(AbstractClusterer):
         self.verbose = verbose
         self.min_nonneg = min_nonneg
         self.max_nonneg = max_nonneg
+        self.second_preprocessor = second_preprocessor
     
-    def cluster(self, affinity_mat):
+    def cluster(self, orig_affinity_mat):
 
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
         all_start = time.time()
         if (self.affmat_preprocessor is not None):
-            affinity_mat = self.affmat_preprocessor(affinity_mat)
+            affinity_mat = self.affmat_preprocessor(orig_affinity_mat)
+        else:
+            affinity_mat = orig_affinity_mat
 
         #subset the affinity mat to rows that have at least
         #self.min_nonneg nonnegative connections; the ones that don't pass
@@ -196,10 +231,19 @@ class LouvainCluster(AbstractClusterer):
         num_connected_neighbors = np.sum(affinity_mat > 0, axis=1)-1
         filtered_mask = ((num_connected_neighbors >= self.min_nonneg)*
                          (num_connected_neighbors <= self.max_nonneg))
-        subsetted_affmat = affinity_mat[filtered_mask]
-        subsetted_affmat = subsetted_affmat[:,filtered_mask]
+
         if (self.verbose):
-            print(str(len(subsetted_affmat))+" points remain after subsetting")
+            print(str(sum(filtered_mask))+" points remain after subsetting")
+
+        if (self.second_preprocessor is not None):
+            if (self.verbose):
+                print("Beginning second round preprocessing")
+            subsetted_affmat = orig_affinity_mat[filtered_mask]
+            subsetted_affmat = subsetted_affmat[:,filtered_mask]
+            subsetted_affmat = self.second_preprocessor(subsetted_affmat)
+        else:
+            subsetted_affmat = affinity_mat[filtered_mask]
+            subsetted_affmat = subsetted_affmat[:,filtered_mask]
 
         subset_communities, graph, Q, hierarchy =\
             ph.cluster.runlouvain_given_graph(
