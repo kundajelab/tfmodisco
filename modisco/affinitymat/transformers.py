@@ -204,10 +204,6 @@ class TsneJointProbs(AbstractAffMatTransformer):
         P = sklearn.manifold.t_sne._joint_probabilities_nn(
                                     distances_nn, neighbors_nn,
                                     self.perplexity, self.verbose)
-
-        P = scipy.spatial.distance.squareform(P) 
-        P = P + P.T + np.eye(len(P))
-
-        return P
+        return np.array(P.todense())
 
 

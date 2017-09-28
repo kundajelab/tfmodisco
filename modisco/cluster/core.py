@@ -59,7 +59,7 @@ class LouvainCluster(AbstractClusterer):
 
     def __init__(self, affmat_transformer=None, min_cluster_size=10,
                        q_tol=1e-3, louvain_time_limit=2000,
-                       verbose=True, min_nonneg=0, max_nonneg=np.inf,
+                       verbose=True, min_nonneg=0, max_nonneg=None,
                        second_transformer = None):
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
@@ -72,6 +72,7 @@ class LouvainCluster(AbstractClusterer):
     
     def cluster(self, orig_affinity_mat):
 
+        self.max_nonneg = len(orig_affinity_mat)
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
         all_start = time.time()
