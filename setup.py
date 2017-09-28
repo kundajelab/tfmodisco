@@ -7,8 +7,8 @@ if __name__== '__main__':
           download_url='NA',
           version='0.1',
           packages=['modisco', 'modisco.cluster',
-                    'modisco.visualization'],
+                    'modisco.visualization', 'modisco.affinitymat'],
           setup_requires=[],
-          install_requires=['numpy>=1.9', 'theano>=0.8'],
+          install_requires=['numpy>=1.9', 'theano>=0.9'],
           scripts=[],
           name='modisco')

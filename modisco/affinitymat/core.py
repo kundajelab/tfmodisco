@@ -1,7 +1,7 @@
 from __future__ import division, print_function, absolute_import
-from . import backend as B
+from .. import backend as B
 import numpy as np
-from . import core
+from .. import core
 
 class AbstractNormalizer(object):
 

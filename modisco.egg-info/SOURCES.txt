@@ -1,5 +1,4 @@
 modisco/__init__.py
-modisco/affinitymat.py
 modisco/aggregator.py
 modisco/coordproducers.py
 modisco/core.py
@@ -9,6 +8,9 @@ modisco.egg-info/SOURCES.txt
 modisco.egg-info/dependency_links.txt
 modisco.egg-info/requires.txt
 modisco.egg-info/top_level.txt
+modisco/affinitymat/__init__.py
+modisco/affinitymat/core.py
+modisco/affinitymat/transformers.py
 modisco/cluster/__init__.py
 modisco/cluster/core.py
 modisco/visualization/__init__.py
