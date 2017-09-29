@@ -263,36 +263,47 @@ class AggregatedSeqlet(Pattern):
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
     def trim_to_positions_with_frac_support_of_peak(self, frac):
-        max_support = max(self.per_position_counts)
+        per_position_center_counts =\
+            self.get_per_position_seqlet_center_counts()
+        max_support = max(per_position_center_counts)
         left_idx = 0
-        while self.per_position_counts[left_idx] < frac*max_support:
+        while per_position_center_counts[left_idx] < frac*max_support:
             left_idx += 1
-        right_idx = len(self.per_position_counts)
-        while self.per_position_counts[right_idx-1] < frac*max_support:
+        right_idx = len(per_position_center_counts)
+        while per_position_center_counts[right_idx-1] < frac*max_support:
             right_idx -= 1
-        trimmed_seqlets_and_alnmts_arr = []
-        for seqlet_and_alnmt in self.seqlets_and_alnmts:
-            #if the seqlet will fit within the trimmed pattern
-            if ((seqlet_and_alnmt.alnmt >= left_idx) and
-                (seqlet_and_alnmt.alnmt+len(seqlet_and_alnmt.seqlet)
-                 <= right_idx)):
-                alnmt = seqlet_and_alnmt.alnmt - left_idx
-                trimmed_seqlets_and_alnmts_arr.append(
-                 SeqletAndAlignment(seqlet=seqlet_and_alnmt.seqlet,
-                                    alnmt=alnmt))
-        return AggregatedSeqlet(seqlets_and_alnmts_arr=
-                                trimmed_seqlets_and_alnmts_arr) 
 
-    def plot_per_position_counts(self, figsize=(20,2)):
+        retained_seqlets_and_alnmts = []
+        for seqlet_and_alnmt in self.seqlets_and_alnmts:
+            seqlet_center = (
+                seqlet_and_alnmt.alnmt+0.5*len(seqlet_and_alnmt.seqlet))
+            #if the seqlet will fit within the trimmed pattern
+            if ((seqlet_center >= left_idx) and
+                (seqlet_center <= right_idx)):
+                retained_seqlets_and_alnmts.append(seqlet_and_alnmt)
+        new_start_idx = min([x.alnmt for x in retained_seqlets_and_alnmts])
+        new_seqlets_and_alnmnts = [SeqletAndAlignment(seqlet=x.seqlet,
+                                    alnmt=x.alnmt-new_start_idx) for x in
+                                    retained_seqlets_and_alnmts] 
+        return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
+
+    def get_per_position_seqlet_center_counts(self):
+        per_position_center_counts = np.zeros(len(self.per_position_counts))
+        for seqlet_and_alnmt in self._seqlets_and_alnmts:
+            center = seqlet_and_alnmt.alnmt + len(seqlet_and_alnmt.seqlet)*0.5 
+            per_position_center_counts[center] += 1
+        return per_position_center_counts
+
+    def plot_counts(self, counts, figsize=(20,2)):
         from matplotlib import pyplot as plt
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111)
-        self.plot_per_position_counts_given_ax(ax=ax)
+        self.plot_counts_given_ax(ax=ax, counts=counts)
         plt.show()
 
-    def plot_per_position_counts_given_ax(self, ax):
-        ax.plot(self.per_position_counts)
-        ax.set_ylim((0,max(self.per_position_counts)*1.1))
+    def plot_counts_given_ax(self, ax, counts):
+        ax.plot(counts)
+        ax.set_ylim((0,max(counts)*1.1))
         ax.set_xlim((0, len(self)))
 
     def _set_length(self, seqlets_and_alnmts_arr):
