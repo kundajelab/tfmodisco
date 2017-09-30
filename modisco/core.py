@@ -80,20 +80,28 @@ class TrackSet(object):
         return self
 
     def create_seqlets(self, coords, track_names=None):
-        if (track_names is None):
-            track_names=self.track_name_to_data_track.keys()
         seqlets = []
         for coor in coords:
-            seqlet = Seqlet(coor=coor)
-            self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
-            seqlets.append(seqlet)
+            seqlets.append(self.create_seqlet(coor=coor,
+                                              track_names=track_names))
         return seqlets
+
+    def create_seqlet(self, coor, track_names=None):
+        if (track_names is None):
+            track_names=self.track_name_to_data_track.keys()
+        seqlet = Seqlet(coor=coor)
+        self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
+        return seqlet
 
     def augment_seqlet(self, seqlet, track_names):
         for track_name in track_names:
             seqlet.add_snippet_from_data_track(
                 data_track=self.track_name_to_data_track[track_name])
         return seqlet
+
+    @property
+    def track_length(self):
+        return self.track_name_to_data_track.values()[0].track_length
 
 
 class SeqletCoordinates(object):
@@ -218,9 +226,9 @@ class CrossCorrelationPatternAligner(AbstractPatternAligner):
                 child_matrix=rev_data_child,
                 min_overlap=self.pattern_crosscorr_settings.min_overlap) 
         if (best_crosscorr_rev > best_crosscorr):
-            return (best_crosscorr_argmax_rev, True)
+            return (best_crosscorr_argmax_rev, True, best_crosscorr)
         else:
-            return (best_crosscorr_argmax, False)
+            return (best_crosscorr_argmax, False, best_crosscorr_rev)
 
 
 #implements the array interface but also tracks the
@@ -259,6 +267,10 @@ class AggregatedSeqlet(Pattern):
         super(AggregatedSeqlet, self).__init__()
         self._seqlets_and_alnmts = SeqletsAndAlignments()
         if (len(seqlets_and_alnmts_arr)>0):
+            #make sure the start is 0
+            start_idx = min([x.alnmt for x in seqlets_and_alnmts_arr])
+            seqlets_and_alnmts_arr = [SeqletAndAlignment(seqlet=x.seqlet,
+                alnmt=x.alnmt-start_idx) for x in seqlets_and_alnmts_arr] 
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
@@ -290,7 +302,8 @@ class AggregatedSeqlet(Pattern):
     def get_per_position_seqlet_center_counts(self):
         per_position_center_counts = np.zeros(len(self.per_position_counts))
         for seqlet_and_alnmt in self._seqlets_and_alnmts:
-            center = seqlet_and_alnmt.alnmt + len(seqlet_and_alnmt.seqlet)*0.5 
+            center = seqlet_and_alnmt.alnmt +\
+                      int(len(seqlet_and_alnmt.seqlet)*0.5)
             per_position_center_counts[center] += 1
         return per_position_center_counts
 
@@ -402,8 +415,8 @@ class AggregatedSeqlet(Pattern):
         
     def add_pattern(self, pattern, aligner):
 
-        (alnmt, revcomp_match) = aligner(parent_pattern=self,
-                                         child_pattern=pattern)
+        (alnmt, revcomp_match, alnmt_score) = aligner(parent_pattern=self,
+                                                      child_pattern=pattern)
         if (revcomp_match):
             pattern = pattern.revcomp()
         if alnmt < 0:
@@ -472,13 +485,14 @@ class AggregatedSeqlet(Pattern):
             rev_agg_seqlet.seqlets_and_alnmts.append(seqlet_and_alnmt)
         return rev_agg_seqlet 
 
-    def get_seqlet_centers(self):
-        return [x.alnmt + int(0.5*(len(x.seqlet)))
+    def get_seqlet_coor_centers(self):
+        return [x.seqlet.coor.start + 0.5*(len(x.seqlet))
                 for x in self.seqlets_and_alnmts] 
 
-    def viz_seqlet_centers(self):
+    def viz_positional_distribution(self, bins=None):
         from matplotlib import pyplot as plt
-        plt.hist(self.get_seqlet_centers(), bins=len(self))
+        plt.hist(self.get_seqlet_coor_centers(), bins=bins)
+        plt.show()
 
 
 def get_2d_data_from_patterns(patterns, track_names, normalizer):

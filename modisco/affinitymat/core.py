@@ -3,6 +3,7 @@ from .. import backend as B
 import numpy as np
 from .. import core
 
+
 class AbstractNormalizer(object):
 
     def __call__(self, inp):
