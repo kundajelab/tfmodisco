@@ -473,7 +473,8 @@ class AggregatedSeqlet(Pattern):
         return rev_agg_seqlet 
 
     def get_seqlet_centers(self):
-        return [x.alnmt + 0.5*(len(x.seqlet)) for x in self.seqlets_and_alnmts] 
+        return [x.alnmt + int(0.5*(len(x.seqlet)))
+                for x in self.seqlets_and_alnmts] 
 
     def viz_seqlet_centers(self):
         from matplotlib import pyplot as plt

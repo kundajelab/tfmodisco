@@ -10,6 +10,32 @@ import h5py
 import traceback
 
 
+def identify_peaks(arr):
+    #use a state machine to identify peaks
+    #"peaks" as defined by larger than neighbours
+    #for tied region, take the middle of the tie.
+    #return tuples of idx + peak val
+    previous_val = None
+    potential_peak_start_idx = None
+    found_peaks = []
+    for idx, val in enumerate(arr):
+        if (previous_val is not None):
+            if (val > previous_val):
+                potential_peak_start_idx = idx
+            elif (val < previous_val):
+                if (potential_peak_start_idx is not None):
+                    #peak found!
+                    found_peaks.append(
+        (int(0.5*(potential_peak_start_idx+(idx-1))), previous_val))
+                potential_peak_start_idx = None
+                potential_peak_start_val = None
+            else:
+                #tie...don't change anything.
+                pass
+        previous_val = val
+    return found_peaks
+
+
 def create_detector_from_subset_of_sequential_layers(sequential_container,
                                                     idx_of_layer_of_interest,
                                                     channel_indices,
