@@ -219,7 +219,7 @@ class HierarchicalSeqletAggregator(object):
                 aggregated_seqlets[j] = parent_agg_seqlet
 
         initial_aggregated = list(set(aggregated_seqlets))
-        assert len(initial_aggregated)==1
+        assert len(initial_aggregated)==1,str(len(initial_aggregated))+" "+str(initial_aggregated)
         
         to_return = initial_aggregated
         if (self.postprocessor is not None):
@@ -232,10 +232,14 @@ class HierarchicalSeqletAggregator(object):
 
 class SimilarPatternsCollapser(object):
 
-    def __init__(self, pattern_aligner, merging_threshold, verbose=True):
+    def __init__(self, pattern_aligner,
+                       merging_threshold,
+                       postprocessor,
+                       verbose=True):
         self.pattern_aligner = pattern_aligner
         self.merging_threshold = merging_threshold
         self.verbose=verbose
+        self.postprocessor = postprocessor
 
     def __call__(self, name_to_pattern):
         #make a copy of the dictionary
@@ -280,7 +284,8 @@ class SimilarPatternsCollapser(object):
             (name, new_name_to_idx[name_to_new_name[name]]) for
              name in name_to_new_name.keys()]) 
         new_cluster_idx_to_new_pattern = OrderedDict([
-            (name_to_new_cluster_idx[name], name_to_new_pattern[name])
+            (name_to_new_cluster_idx[name],
+             self.postprocessor([name_to_new_pattern[name]]))
             for name in name_to_new_name.keys()
         ])
                         

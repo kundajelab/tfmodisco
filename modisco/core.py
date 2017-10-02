@@ -462,14 +462,13 @@ class AggregatedSeqlet(Pattern):
         #only merge those seqlets in agg_seqlet that are not already
         #in the current seqlet
         for seqlet_and_alnmt in agg_seqlet.seqlets_and_alnmts:
-            if seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts: 
+            if (seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts): 
                 self.add_pattern(pattern=seqlet_and_alnmt.seqlet,
                                  aligner=aligner) 
         
     def add_pattern(self, pattern, aligner):
-
-        (alnmt, revcomp_match, alnmt_score) = aligner(parent_pattern=self,
-                                                      child_pattern=pattern)
+        (alnmt, revcomp_match, alnmt_score) =\
+            aligner(parent_pattern=self, child_pattern=pattern)
         if (revcomp_match):
             pattern = pattern.revcomp()
         if alnmt < 0:

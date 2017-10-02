@@ -10,6 +10,11 @@ class ClusterResults(object):
     def __init__(self, cluster_indices):
         self.cluster_indices = cluster_indices 
 
+    def remap(self, mapping):
+        return ClusterResults(cluster_indices=
+                np.array([mapping[x] if x in mapping else x
+                 for x in self.cluster_indices]))
+
 
 class LouvainClusterResults(ClusterResults):
 
