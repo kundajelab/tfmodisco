@@ -253,9 +253,9 @@ class CrossCorrelationPatternAligner(AbstractPatternAligner):
                 child_matrix=rev_data_child,
                 min_overlap=self.pattern_crosscorr_settings.min_overlap) 
         if (best_crosscorr_rev > best_crosscorr):
-            return (best_crosscorr_argmax_rev, True, best_crosscorr)
+            return (best_crosscorr_argmax_rev, True, best_crosscorr_rev)
         else:
-            return (best_crosscorr_argmax, False, best_crosscorr_rev)
+            return (best_crosscorr_argmax, False, best_crosscorr)
 
 
 #implements the array interface but also tracks the
@@ -300,6 +300,10 @@ class AggregatedSeqlet(Pattern):
                 alnmt=x.alnmt-start_idx) for x in seqlets_and_alnmts_arr] 
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
+
+    def copy(self):
+        return AggregatedSeqlet(seqlets_and_alnmts_arr=
+                                self._seqlets_and_alnmts)
 
     def trim_to_positions_with_frac_support_of_peak(self, frac):
         per_position_center_counts =\
@@ -583,8 +587,6 @@ def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
         in1=parent_matrix, in2=child_matrix, mode='valid')
     best_crosscorr_argmax = np.argmax(correlations)-padding_amt
     best_crosscorr = np.max(correlations)
-    #subtract the padding 
-    best_crosscorr = best_crosscorr - padding_amt
     return (best_crosscorr, best_crosscorr_argmax)
 
 

@@ -3,6 +3,7 @@ import numpy as np
 from . import affinitymat
 from . import core
 from . import util
+from collections import OrderedDict
 
 
 class AbstractAggSeqletPostprocessor(object):
@@ -228,3 +229,59 @@ class HierarchicalSeqletAggregator(object):
         return sorted(to_return,
                       key=lambda x: -x.num_seqlets)
 
+
+class SimilarPatternsCollapser(object):
+
+    def __init__(self, pattern_aligner, merging_threshold, verbose=True):
+        self.pattern_aligner = pattern_aligner
+        self.merging_threshold = merging_threshold
+        self.verbose=verbose
+
+    def __call__(self, name_to_pattern):
+        #make a copy of the dictionary
+        name_to_new_pattern = OrderedDict([(x[0], x[1].copy()) for 
+                                       x in name_to_pattern.items()])
+        name_to_new_name = OrderedDict(
+            zip(name_to_pattern.keys(),
+            [set([x]) for x in name_to_pattern.keys()]))
+        for i,name1 in enumerate(name_to_pattern.keys()):
+            for j,name2 in enumerate(name_to_pattern.keys()):
+                pattern1 = name_to_new_pattern[name1]
+                pattern2 = name_to_new_pattern[name2]
+                if (pattern1 != pattern2): #if not the same object
+                    if (pattern1.num_seqlets < pattern2.num_seqlets):
+                        parent_pattern, child_pattern = pattern2, pattern1
+                    else:
+                        parent_pattern, child_pattern = pattern1, pattern2
+                    (best_crosscorr_argmax, is_revcomp, best_crosscorr) =\
+                        self.pattern_aligner(parent_pattern=parent_pattern,
+                                             child_pattern=child_pattern)  
+                    if (best_crosscorr > self.merging_threshold): 
+                        if (self.verbose):
+                            print("Collapsing "+str(name1)+" & "+str(name2)) 
+                        parent_pattern.merge_aggregated_seqlet(
+                            agg_seqlet=child_pattern,
+                            aligner=self.pattern_aligner) 
+                        name_to_new_pattern[name1] = parent_pattern
+                        name_to_new_pattern[name2] = parent_pattern
+                        name_to_new_name[name1].update(
+                                                 name_to_new_name[name2])
+                        name_to_new_name[name2] = name_to_new_name[name1]
+
+        #convert the sets into strings, find num unique new clusters
+        name_to_new_name = OrderedDict([
+            (name,
+             "_".join([str(x) for x in sorted(list(new_name_contents))]))
+            for (name, new_name_contents) in name_to_new_name.items()]) 
+        new_names_list = sorted(list(set(name_to_new_name.values())))
+        new_name_to_idx = OrderedDict([(x[1], x[0]) for x in
+                                       enumerate(new_names_list)])
+        name_to_new_cluster_idx = OrderedDict([
+            (name, new_name_to_idx[name_to_new_name[name]]) for
+             name in name_to_new_name.keys()]) 
+        new_cluster_idx_to_new_pattern = OrderedDict([
+            (name_to_new_cluster_idx[name], name_to_new_pattern[name])
+            for name in name_to_new_name.keys()
+        ])
+                        
+        return new_cluster_idx_to_new_pattern, name_to_new_cluster_idx
