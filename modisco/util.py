@@ -10,6 +10,21 @@ import h5py
 import traceback
 
 
+def cpu_sliding_window_sum(arr, window_size):
+    assert len(arr) >= window_size, str(len(arr))+" "+str(window_size)
+    to_return = np.zeros(len(arr)-window_size+1)
+    current_sum = np.sum(arr[0:window_size])
+    to_return[0] = current_sum
+    idx_to_include = window_size
+    idx_to_exclude = 0
+    while idx_to_include < len(arr):
+        current_sum += (arr[idx_to_include] - arr[idx_to_exclude]) 
+        to_return[idx_to_exclude+1] = current_sum
+        idx_to_include += 1
+        idx_to_exclude += 1
+    return to_return
+
+
 def identify_peaks(arr):
     #use a state machine to identify peaks
     #"peaks" as defined by larger than neighbours

@@ -13,6 +13,14 @@ class Snippet(object):
         self.rev = rev
         self.has_pos_axis = has_pos_axis
 
+    def trim(self, start_idx, end_idx):
+        assert end_idx <= len(self)
+        assert start_idx >= 0
+        new_fwd = self.fwd[start_idx:end_idx]
+        new_rev = self.rev[len(self)-end_idx:len(self)-start_idx]
+        return Snippet(fwd=new_fwd, rev=new_rev,
+                       has_pos_axis=self.has_pos_axis)
+
     def __len__(self):
         return len(self.fwd)
 
@@ -170,6 +178,25 @@ class Seqlet(Pattern):
                 snippet=self.track_name_to_snippet[track_name].revcomp()) 
         return seqlet
 
+    def trim(self, start_idx, end_idx):
+        if (self.coor.is_revcomp == False):
+            new_coor_start = self.coor.start+start_idx 
+            new_coor_end = self.coor.end-(len(self)-end_idx) 
+        else:
+            new_coor_start = self.coor.start + (len(self)-end_idx)
+            new_coor_end = self.coor.end-start_idx
+        new_coor = SeqletCoordinates(
+                    start=new_coor_start,
+                    end=new_coor_end,
+                    example_idx=self.coor.example_idx,
+                    is_revcomp=self.coor.is_revcomp) 
+        new_seqlet = Seqlet(coor=new_coor)  
+        for data_track_name in self.track_name_to_snippet:
+            new_seqlet.add_snippet(
+                data_track_name=data_track_name,
+                snippet=self[data_track_name].trim(start_idx, end_idx))
+        return new_seqlet
+
     def __len__(self):
         return len(self.coor)
 
@@ -298,6 +325,28 @@ class AggregatedSeqlet(Pattern):
                                     alnmt=x.alnmt-new_start_idx) for x in
                                     retained_seqlets_and_alnmts] 
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
+
+    def trim_to_start_and_end_idx(self, start_idx, end_idx):
+        new_seqlets_and_alnmnts = [] 
+        for seqlet_and_alnmt in self._seqlets_and_alnmts:
+            if seqlet_and_alnmt.alnmt > start_idx:
+                seqlet_start_idx_trim = 0 
+                new_alnmt = seqlet_and_alnmt.alnmt-start_idx
+            else:
+                seqlet_start_idx_trim = start_idx - seqlet_and_alnmt.alnmt 
+                new_alnmt = 0
+            if (seqlet_and_alnmt.alnmt+len(seqlet_and_alnmt.seqlet)
+                < end_idx):
+                seqlet_end_idx_trim = len(seqlet_and_alnmt.seqlet)
+            else:
+                seqlet_end_idx_trim = end_idx - seqlet_and_alnmt.alnmt
+            new_seqlet = seqlet_and_alnmt.seqlet.trim(
+                            start_idx=seqlet_start_idx_trim,
+                            end_idx=seqlet_end_idx_trim)
+            new_seqlets_and_alnmnts.append(
+                SeqletAndAlignment(seqlet=new_seqlet,
+                                   alnmt=new_alnmt)) 
+        return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts)
 
     def get_per_position_seqlet_center_counts(self):
         per_position_center_counts = np.zeros(len(self.per_position_counts))

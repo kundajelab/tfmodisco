@@ -24,7 +24,7 @@ class AdhocAggSeqletPostprocessor(AbstractAggSeqletPostprocessor):
         return self.func(aggregated_seqlets)
 
 
-class Trim(AbstractAggSeqletPostprocessor):
+class TrimToFracSupport(AbstractAggSeqletPostprocessor):
 
     def __init__(self, frac):
         self.frac = frac
@@ -32,6 +32,26 @@ class Trim(AbstractAggSeqletPostprocessor):
     def __call__(self, aggregated_seqlets):
         return [x.trim_to_positions_with_frac_support_of_peak(
                   frac=self.frac) for x in aggregated_seqlets]
+
+
+class TrimToBestWindow(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, window_size, track_name):
+        self.window_size = window_size
+        self.track_name = track_name
+
+    def __call__(self, aggregated_seqlets):
+        trimmed_agg_seqlets = []
+        for aggregated_seqlet in aggregated_seqlets:
+            start_idx = np.argmax(util.cpu_sliding_window_sum(
+                arr=np.sum(np.abs(aggregated_seqlet[self.track_name].fwd
+                                  .reshape(len(aggregated_seqlet),-1)),axis=1),
+                window_size=self.window_size))
+            end_idx = start_idx + self.window_size
+            trimmed_agg_seqlets.append(
+                aggregated_seqlet.trim_to_start_and_end_idx(
+                    start_idx=start_idx, end_idx=end_idx)) 
+        return trimmed_agg_seqlets
 
 
 class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
@@ -54,8 +74,12 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
                 left_expansion = alnmt+self.flank_to_add 
                 right_expansion = (len(aggregated_seqlet) -
                                     (alnmt+len(seqlet)))+self.flank_to_add
-                start = seqlet.coor.start - left_expansion
-                end = seqlet.coor.end + right_expansion
+                if (seqlet.coor.is_revcomp == False):
+                    start = seqlet.coor.start - left_expansion
+                    end = seqlet.coor.end + right_expansion
+                else:
+                    start = seqlet.coor.start - right_expansion
+                    end = seqlet.coor.end + left_expansion
                 if (start >= 0 and end <= self.track_set.track_length):
                     seqlet = self.track_set.create_seqlet(
                         coor=core.SeqletCoordinates(

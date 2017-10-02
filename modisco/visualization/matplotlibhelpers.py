@@ -3,16 +3,27 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def scatter_plot(xycoords, clusters=None,
-                 colors=None, figsize=(5,5), xlabel="", ylabel=""):
+def scatter_plot(coords, clusters=None,
+                 colors=None, figsize=(5,5),
+                 xlabel="", ylabel="", zlabel="", **kwargs):
     """
         If clusters is not none, will assign colors using
             points evenly sampled from
             Blue -> Violet -> Red -> Yellow -> Green
     """
-    plt.figure(figsize=figsize)
+    assert coords.shape[1]==2 or coords.shape[1]==3
+    fig = plt.figure(figsize=figsize)
+    if (coords.shape[1]==2):
+        ax = fig.add_subplot(111) 
+    else:
+        ax = fig.add_subplot(111, projection='3d')
+
     if (clusters is None):
-        plt.scatter(xycoords[:,0], xycoords[:,1])
+        if (coords.shape[1]==2):
+            ax.scatter(coords[:,0], coords[:,1], **kwargs)
+        else:
+            ax.scatter(coords[:,0], coords[:,1], **kwargs)
+            
     else:
         if (colors is None):
             max_label = np.max(clusters)
@@ -22,10 +33,16 @@ def scatter_plot(xycoords, clusters=None,
             print("No colors supplied, so autogen'd as:\nIDX: R,G,B\n"+
                     "\n".join(str(x[0])+": "+(",".join("%0.03f"%y for y in x[1]))
                               for x in enumerate(colors)))
-        plt.scatter(xycoords[:,0], xycoords[:,1],
-                    c=[colors[x] for x in clusters])
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+        if (coords.shape[1]==2):
+            ax.scatter(coords[:,0], coords[:,1],
+                        c=[colors[x] for x in clusters], **kwargs)
+        else:
+            ax.scatter(coords[:,0], coords[:,1], coords[:,2],
+                       c=[colors[x] for x in clusters], **kwargs)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if (coords.shape[1]==3):
+        ax.set_zlabel(zlabel)
     plt.show()
 
 
