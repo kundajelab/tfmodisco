@@ -25,13 +25,13 @@ class LouvainClusterResults(ClusterResults):
         self.Q = Q
 
 
-class AbstractClusterer(object):
+class AbstractAffinityMatClusterer(object):
 
     def cluster(self, affinity_mat):
         raise NotImplementedError()
 
 
-class PhenographCluster(AbstractClusterer):
+class PhenographCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, k=30, min_cluster_size=10, jaccard=True,
                        primary_metric='euclidean',
@@ -60,7 +60,7 @@ class PhenographCluster(AbstractClusterer):
                 Q=Q)
         
 
-class LouvainCluster(AbstractClusterer):
+class LouvainCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, affmat_transformer=None, min_cluster_size=10,
                        q_tol=1e-3, louvain_time_limit=2000,

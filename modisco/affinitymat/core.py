@@ -1,10 +1,10 @@
 from __future__ import division, print_function, absolute_import
 from .. import backend as B
 import numpy as np
-from .. import core
+from .. import core as modiscocore
 
 
-class AbstractNormalizer(object):
+class AbstractTrackTransformer(object):
 
     def __call__(self, inp):
         """
@@ -13,12 +13,12 @@ class AbstractNormalizer(object):
         raise NotImplementedError() 
 
     def chain(self, other_normalizer):        
-        return AdhocNormalizer(
+        return AdhocTrackTransformer(
                 func=(lambda x: other_normalizer(
                                 self(x))))
 
 
-class AdhocNormalizer(AbstractNormalizer):
+class AdhocTrackTransformer(AbstractTrackTransformer):
     def __init__(self, func):
         self.func = func
 
@@ -26,23 +26,23 @@ class AdhocNormalizer(AbstractNormalizer):
         return self.func(inp)
 
 
-class MeanNormalizer(AbstractNormalizer):
+class MeanNormalizer(AbstractTrackTransformer):
 
     def __call__(self, inp):
         return inp - np.mean(inp)
 
 
-class MagnitudeNormalizer(AbstractNormalizer):
+class MagnitudeNormalizer(AbstractTrackTransformer):
 
     def __call__(self, inp):
         return (inp / (np.linalg.norm(inp.ravel())+0.0000001))
 
 
 class PatternCrossCorrSettings(object):
-    def __init__(self, track_names, normalizer, min_overlap):
+    def __init__(self, track_names, track_transformer, min_overlap):
         assert hasattr(track_names, '__iter__')
         self.track_names = track_names
-        self.normalizer = normalizer
+        self.track_transformer = track_transformer
         self.min_overlap = min_overlap
 
 
@@ -65,10 +65,11 @@ class MaxCrossCorrAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
 
     def __call__(self, seqlets):
         (all_fwd_data, all_rev_data) =\
-            core.get_2d_data_from_patterns(
+            modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
                 track_names=self.pattern_crosscorr_settings.track_names,
-                normalizer=self.pattern_crosscorr_settings.normalizer)
+                track_transformer=
+                    self.pattern_crosscorr_settings.track_transformer)
 
         #do cross correlations
         cross_corrs_fwd = B.max_cross_corrs(

@@ -79,3 +79,25 @@ def frac_to_rainbow_colour(frac):
         #yellow to green
         to_return = (0.5 - 0.5*interp, 0.5 + 0.5*interp, 0)
     return to_return
+
+
+def plot_heatmap(data, log_transform=False, zero_center=False,
+                      cmap=plt.cm.coolwarm, figsize=(15,15)):
+    fig, ax = plt.subplots(figsize=figsize)
+    plot_heatmap_given_ax(ax, data , log_transform=log_transform,
+                                zero_center=zero_center,
+                                cmap=cmap)
+    plt.show()
+    return plt
+
+
+def plot_heatmap_given_ax(ax, data, log_transform=False,
+                          zero_center=False, cmap=plt.cm.coolwarm):
+    if log_transform:
+        data = np.log(np.abs(data)+1)*np.sign(data)
+    if (zero_center):
+        data = data*((data<0)/(1 if np.min(data)==0
+                else np.abs(np.min(data))) + (data>0)/np.max(data))
+    ax.pcolor(data, cmap=cmap)
+    return ax
+

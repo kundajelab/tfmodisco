@@ -235,11 +235,13 @@ class CrossCorrelationPatternAligner(AbstractPatternAligner):
         fwd_data_parent, rev_data_parent = get_2d_data_from_pattern(
             pattern=parent_pattern,
             track_names=self.pattern_crosscorr_settings.track_names,
-            normalizer=self.pattern_crosscorr_settings.normalizer) 
+            track_transformer=
+             self.pattern_crosscorr_settings.track_transformer) 
         fwd_data_child, rev_data_child = get_2d_data_from_pattern(
             pattern=child_pattern,
             track_names=self.pattern_crosscorr_settings.track_names,
-            normalizer=self.pattern_crosscorr_settings.normalizer) 
+            track_transformer=
+             self.pattern_crosscorr_settings.track_transformer) 
         #find optimal alignments of fwd_data_child and rev_data_child
         #with fwd_data_parent.
         best_crosscorr, best_crosscorr_argmax =\
@@ -304,6 +306,14 @@ class AggregatedSeqlet(Pattern):
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=
                                 self._seqlets_and_alnmts)
+
+    def get_fwd_seqlet_data(self, track_names, track_transformer):
+        to_return = []
+        for seqlet in [x.seqlet for x in self._seqlets_and_alnmts]:
+            to_return.append(get_2d_data_from_pattern(pattern=seqlet,
+                                track_names=track_names, 
+                                track_transformer=track_transformer)[0])
+        return np.array(to_return) 
 
     def trim_to_positions_with_frac_support_of_peak(self, frac):
         per_position_center_counts =\
@@ -547,26 +557,26 @@ class AggregatedSeqlet(Pattern):
         plt.show()
 
 
-def get_2d_data_from_patterns(patterns, track_names, normalizer):
+def get_2d_data_from_patterns(patterns, track_names, track_transformer):
     all_fwd_data = []
     all_rev_data = []
     for pattern in patterns:
         fwd_data, rev_data = get_2d_data_from_pattern(
             pattern=pattern, track_names=track_names,
-            normalizer=normalizer) 
+            track_transformer=track_transformer) 
         all_fwd_data.append(fwd_data)
         all_rev_data.append(rev_data)
     return (np.array(all_fwd_data),
             np.array(all_rev_data))
 
 
-def get_2d_data_from_pattern(pattern, track_names, normalizer): 
+def get_2d_data_from_pattern(pattern, track_names, track_transformer): 
     snippets = [pattern[track_name]
                  for track_name in track_names] 
-    fwd_data = np.concatenate([normalizer(
+    fwd_data = np.concatenate([track_transformer(
              np.reshape(snippet.fwd, (len(snippet.fwd), -1)))
             for snippet in snippets], axis=1)
-    rev_data = np.concatenate([normalizer(
+    rev_data = np.concatenate([track_transformer(
             np.reshape(snippet.rev, (len(snippet.rev), -1)))
             for snippet in snippets], axis=1)
     return fwd_data, rev_data
