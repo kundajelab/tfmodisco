@@ -108,8 +108,9 @@ class AbstractTwoDMatSubclusterer(object):
 
 class RecursiveKmeans(AbstractTwoDMatSubclusterer):
 
-    def __init__(self, threshold, verbose=True):
+    def __init__(self, threshold, min_before_split, verbose=True):
         self.threshold = threshold
+        self.min_before_split = min_before_split
         self.verbose = verbose
 
     def __call__(self, twod_mat):
@@ -124,11 +125,14 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
                        np.linalg.norm(cluster1_mean)
                        *np.linalg.norm(cluster2_mean))
 
-        if (cosine_dist > self.threshold):
-            print("No split; similarity is "+str(cosine_dist))
+        if (cosine_dist > self.threshold or
+             (len(twod_mat) < self.min_before_split)):
+            print("No split; similarity is "+str(cosine_dist)+" and "
+                  "cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
         else:
-            print("Split detected; similarity is "+str(cosine_dist))
+            print("Split detected; similarity is "+str(cosine_dist)+" and "
+                  "cluster size is "+str(len(twod_mat)))
             for i in range(2):
                 max_cluster_idx = np.max(cluster_indices)
                 mask_for_this_cluster = (cluster_indices==i)
@@ -143,31 +147,31 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
 class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
 
     def __init__(self, track_names, track_transformer,
-                       clustering_method, verbose=True):
+                       subclusters_detector, verbose=True):
         self.verbose = verbose
         self.track_names = track_names
         self.track_transformer = track_transformer
-        self.clustering_method = clustering_method
+        self.subclusters_detector = subclusters_detector
 
     def __call__(self, aggregated_seqlets):
         to_return = []
         for agg_seq_idx, aggregated_seqlet in enumerate(aggregated_seqlets):
-            assert set(len(x.seqlet) for x in
-                      aggregated_seqlet._seqlets_and_alnmts)==1,\
+            assert len(set(len(x.seqlet) for x in
+                       aggregated_seqlet._seqlets_and_alnmts))==1,\
                 ("all seqlets should be same length; use "+
                  "ExpandSeqletsToFillPattern to equalize lengths")
             fwd_seqlet_data = aggregated_seqlet.get_fwd_seqlet_data(
                                 track_names=self.track_names,
                                 track_transformer=self.track_transformer)
             sum_per_position = np.sum(np.abs(fwd_seqlet_data),axis=-1)
-            subcluster_indices, num_subclusters =\
-                self.subclusters_detector(sum_per_position)
+            subcluster_indices = self.subclusters_detector(sum_per_position)
+            num_subclusters = np.max(subcluster_indices)+1
             if (num_subclusters > 1):
                 for i in range(num_subclusters):
                     seqlets_and_alnmts_for_subcluster = [x[0] for x in
                         zip(aggregated_seqlet._seqlets_and_alnmts,
                             subcluster_indices) if x[1]==i]
-                    to_return.append(AggregatedSeqlet(
+                    to_return.append(core.AggregatedSeqlet(
                      seqlets_and_alnmts_arr=seqlets_and_alnmts_for_subcluster))
             else:
                 to_return.append(aggregated_seqlet)
