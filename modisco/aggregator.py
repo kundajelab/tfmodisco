@@ -99,11 +99,87 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
         return new_aggregated_seqlets 
 
 
+class AbstractTwoDMatSubclusterer(object):
+
+    def __call__(self, twod_mat):
+        #return subcluster_indices, num_subclusters
+        raise NotImplementedError()
+
+
+class RecursiveKmeans(AbstractTwoDMatSubclusterer):
+
+    def __init__(self, threshold, verbose=True):
+        self.threshold = threshold
+        self.verbose = verbose
+
+    def __call__(self, twod_mat):
+        import sklearn.cluster
+
+        cluster_indices = sklearn.cluster.KMeans(n_clusters=2).\
+                               fit_predict(twod_mat)
+
+        cluster1_mean = np.mean(twod_mat[cluster_indices==0], axis=0)
+        cluster2_mean = np.mean(twod_mat[cluster_indices==1], axis=0)
+        cosine_dist = np.sum(cluster1_mean*cluster2_mean)/(
+                       np.linalg.norm(cluster1_mean)
+                       *np.linalg.norm(cluster2_mean))
+
+        if (cosine_dist > self.threshold):
+            print("No split; similarity is "+str(cosine_dist))
+            return np.zeros(len(twod_mat))
+        else:
+            print("Split detected; similarity is "+str(cosine_dist))
+            for i in range(2):
+                max_cluster_idx = np.max(cluster_indices)
+                mask_for_this_cluster = (cluster_indices==i)
+                subcluster_indices = self(twod_mat[mask_for_this_cluster])
+                subcluster_indices = np.array(
+                    [i if x==0 else x+max_cluster_idx
+                     for x in subcluster_indices])
+                cluster_indices[mask_for_this_cluster]=subcluster_indices
+            return cluster_indices 
+
+
+class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, track_names, track_transformer,
+                       clustering_method, verbose=True):
+        self.verbose = verbose
+        self.track_names = track_names
+        self.track_transformer = track_transformer
+        self.clustering_method = clustering_method
+
+    def __call__(self, aggregated_seqlets):
+        to_return = []
+        for agg_seq_idx, aggregated_seqlet in enumerate(aggregated_seqlets):
+            assert set(len(x.seqlet) for x in
+                      aggregated_seqlet._seqlets_and_alnmts)==1,\
+                ("all seqlets should be same length; use "+
+                 "ExpandSeqletsToFillPattern to equalize lengths")
+            fwd_seqlet_data = aggregated_seqlet.get_fwd_seqlet_data(
+                                track_names=self.track_names,
+                                track_transformer=self.track_transformer)
+            sum_per_position = np.sum(np.abs(fwd_seqlet_data),axis=-1)
+            subcluster_indices, num_subclusters =\
+                self.subclusters_detector(sum_per_position)
+            if (num_subclusters > 1):
+                for i in range(num_subclusters):
+                    seqlets_and_alnmts_for_subcluster = [x[0] for x in
+                        zip(aggregated_seqlet._seqlets_and_alnmts,
+                            subcluster_indices) if x[1]==i]
+                    to_return.append(AggregatedSeqlet(
+                     seqlets_and_alnmts_arr=seqlets_and_alnmts_for_subcluster))
+            else:
+                to_return.append(aggregated_seqlet)
+        return to_return
+
+
 class SeparateOnSeqletCenterPeaks(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, min_support, verbose=True):
+    def __init__(self, min_support, pattern_aligner, verbose=True):
         self.verbose = verbose
         self.min_support = min_support
+        self.pattern_aligner = pattern_aligner
 
     def __call__(self, aggregated_seqlets):
         to_return = []
@@ -133,37 +209,36 @@ class SeparateOnSeqletCenterPeaks(AbstractAggSeqletPostprocessor):
                     separated_seqlets_and_alnmts[closest_peak_idx]\
                         .append(seqlet_and_alnmt)
 
-                #now create aggregated seqlets for the set of seqlets
-                #assigned to each peak 
+                ##now create aggregated seqlets for the set of seqlets
+                ##assigned to each peak 
                 proposed_new_patterns = [
                     core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
                     for x in separated_seqlets_and_alnmts]
-                to_return.extend(proposed_new_patterns)
+                #to_return.extend(proposed_new_patterns)
 
-                ##comment: this didn't work as expected; still got bimodal back
-                ##having formulated the proposed new patterns, go back
-                ##and figure out which pattern each seqlet best aligns to
-                #final_separated_seqlets_and_alnmnts =\
-                #    [list() for x in proposed_new_patterns]
-                #for seqlet_and_alnmt in seqlets_and_alnmts:
-                #    best_pattern_idx, (alnmt, revcomp_match, score) =\
-                #        max([(idx, self.pattern_aligner(parent_pattern=x,
-                #                child_pattern=seqlet_and_alnmt.seqlet))
-                #            for idx,x in enumerate(proposed_new_patterns)],
-                #        key=lambda x: x[1][2])
-                #    if (revcomp_match):
-                #        seqlet = seqlet_and_alnmt.seqlet.revcomp() 
-                #    else:
-                #        seqlet = seqlet_and_alnmt.seqlet
-                #    final_separated_seqlets_and_alnmnts[best_pattern_idx]\
-                #        .append(core.SeqletAndAlignment(seqlet=seqlet,
-                #                                        alnmt=alnmt))
+                #having formulated the proposed new patterns, go back
+                #and figure out which pattern each seqlet best aligns to
+                final_separated_seqlets_and_alnmnts =\
+                    [list() for x in proposed_new_patterns]
+                for seqlet_and_alnmt in seqlets_and_alnmts:
+                    best_pattern_idx, (alnmt, revcomp_match, score) =\
+                        max([(idx, self.pattern_aligner(parent_pattern=x,
+                                child_pattern=seqlet_and_alnmt.seqlet))
+                            for idx,x in enumerate(proposed_new_patterns)],
+                        key=lambda x: x[1][2])
+                    if (revcomp_match):
+                        seqlet = seqlet_and_alnmt.seqlet.revcomp() 
+                    else:
+                        seqlet = seqlet_and_alnmt.seqlet
+                    final_separated_seqlets_and_alnmnts[best_pattern_idx]\
+                        .append(core.SeqletAndAlignment(seqlet=seqlet,
+                                                        alnmt=alnmt))
 
-                ##get the final patterns from the final seqlet assignment 
-                #final_new_patterns = [
-                #    core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
-                #    for x in final_separated_seqlets_and_alnmnts]
-                #to_return.extend(final_new_patterns) 
+                #get the final patterns from the final seqlet assignment 
+                final_new_patterns = [
+                    core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
+                    for x in final_separated_seqlets_and_alnmnts]
+                to_return.extend(final_new_patterns) 
 
         return to_return
 
