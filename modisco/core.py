@@ -409,9 +409,10 @@ class AggregatedSeqlet(Pattern):
               sample_seqlet=seqlets_and_alnmts_arr[0].seqlet)
         self.per_position_counts = np.zeros((self.length,))
         for seqlet_and_alnmt in seqlets_and_alnmts_arr:
-            self._add_pattern_with_valid_alnmt(
-                    pattern=seqlet_and_alnmt.seqlet,
-                    alnmt=seqlet_and_alnmt.alnmt)
+            if (seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts): 
+                self._add_pattern_with_valid_alnmt(
+                        pattern=seqlet_and_alnmt.seqlet,
+                        alnmt=seqlet_and_alnmt.alnmt)
 
     def _initialize_track_name_to_aggregation(self, sample_seqlet): 
         self._track_name_to_agg = OrderedDict() 

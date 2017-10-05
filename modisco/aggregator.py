@@ -320,17 +320,11 @@ class SimilarPatternsCollapser(object):
         self.verbose=verbose
         self.postprocessor = postprocessor
 
-    def __call__(self, name_to_pattern):
-        #make a copy of the dictionary
-        name_to_new_pattern = OrderedDict([(x[0], x[1].copy()) for 
-                                       x in name_to_pattern.items()])
-        name_to_new_name = OrderedDict(
-            zip(name_to_pattern.keys(),
-            [set([x]) for x in name_to_pattern.keys()]))
-        for i,name1 in enumerate(name_to_pattern.keys()):
-            for j,name2 in enumerate(name_to_pattern.keys()):
-                pattern1 = name_to_new_pattern[name1]
-                pattern2 = name_to_new_pattern[name2]
+    def __call__(self, original_patterns):
+        #make a copy of the patterns
+        original_patterns = [x.copy() for x in original_patterns]
+        for i,pattern1 in enumerate(original_patterns):
+            for j,pattern2 in enumerate(original_patterns[i:]):
                 if (pattern1 != pattern2): #if not the same object
                     if (pattern1.num_seqlets < pattern2.num_seqlets):
                         parent_pattern, child_pattern = pattern2, pattern1
@@ -341,31 +335,23 @@ class SimilarPatternsCollapser(object):
                                              child_pattern=child_pattern)  
                     if (best_crosscorr > self.merging_threshold): 
                         if (self.verbose):
-                            print("Collapsing "+str(name1)+" & "+str(name2)) 
+                            print("Collapsing "+str(i)+" & "+str(j+i)
+                                 +" with similarity "+str(best_crosscorr)) 
                         parent_pattern.merge_aggregated_seqlet(
                             agg_seqlet=child_pattern,
                             aligner=self.pattern_aligner) 
-                        name_to_new_pattern[name1] = parent_pattern
-                        name_to_new_pattern[name2] = parent_pattern
-                        name_to_new_name[name1].update(
-                                                 name_to_new_name[name2])
-                        name_to_new_name[name2] = name_to_new_name[name1]
+                        new_parent_pattern =\
+                            self.postprocessor([parent_pattern])
+                        assert len(new_parent_pattern)==1
+                        new_parent_pattern = new_parent_pattern[0]
+                        for k in range(len(original_patterns)):
+                            if (original_patterns[k]==parent_pattern or
+                                original_patterns[k]==child_pattern):
+                                original_patterns[k]=new_parent_pattern
+                    else:
+                        if (self.verbose):
+                            print("Not collapsing "+str(i)+" & "+str(j+i)
+                                 +" with similarity "+str(best_crosscorr)) 
 
-        #convert the sets into strings, find num unique new clusters
-        name_to_new_name = OrderedDict([
-            (name,
-             "_".join([str(x) for x in sorted(list(new_name_contents))]))
-            for (name, new_name_contents) in name_to_new_name.items()]) 
-        new_names_list = sorted(list(set(name_to_new_name.values())))
-        new_name_to_idx = OrderedDict([(x[1], x[0]) for x in
-                                       enumerate(new_names_list)])
-        name_to_new_cluster_idx = OrderedDict([
-            (name, new_name_to_idx[name_to_new_name[name]]) for
-             name in name_to_new_name.keys()]) 
-        new_cluster_idx_to_new_pattern = OrderedDict([
-            (name_to_new_cluster_idx[name],
-             self.postprocessor([name_to_new_pattern[name]]))
-            for name in name_to_new_name.keys()
-        ])
-                        
-        return new_cluster_idx_to_new_pattern, name_to_new_cluster_idx
+        return sorted(self.postprocessor(list(set(original_patterns))),
+                      key=lambda x: -x.num_seqlets)
