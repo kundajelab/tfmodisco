@@ -98,6 +98,16 @@ class FoldOverPerSeqBg(AbstractAttributeProvider):
         return fold_over_bg*sign
 
 
+class MaxAttributeProvider(AbstractAttributeProvider):
+
+    def __init__(self, attribute_providers):
+        self.attribute_providers = attribute_providers
+
+    def get_attribute(self, coor):
+        return max([attribute_provider[coor] for attribute_provider
+                    in self.attribute_providers])
+
+
 class TrackSet(object):
 
     def __init__(self, data_tracks=[], attribute_providers=[]):
@@ -183,12 +193,12 @@ class Pattern(object):
         self.attribute_name_to_attribute = OrderedDict()
 
     def __getitem__(self, key):
-        if (key in self.track_name_to_snippet)
+        if (key in self.track_name_to_snippet):
             return self.track_name_to_snippet[key]
         elif (key in self.track_name_to_attribute):
             return self.track_name_to_attribute[key]
         else:
-            raise RuntimeError("No key "+str(key)"; snippet keys are: "
+            raise RuntimeError("No key "+str(key)+"; snippet keys are: "
                 +str(self.track_name_to_snippet.keys())+" and "
                 +" attribute keys are "
                 +str(self.track_name_to_attribute.keys()))
