@@ -69,12 +69,45 @@ class DataTrack(object):
         return snippet
 
 
+class AbstractAttributeProvider(object):
+
+    def __init__(self, name):
+        self.name = name
+
+    def get_attribute(self, coor):
+        raise NotImplementedError()
+
+
+class FoldOverPerSeqBg(AbstractAttributeProvider):
+
+    def __init__(self, name, data_track, window_around_center):
+        super(FoldOverBg, self).__init__(name=name) 
+        assert len(data_track).shape==2
+        self.data_track = data_track 
+        self.window_around_center = window_around_center
+        self.abs_mean_per_seq = np.abs(np.mean(data_track, axis=1))
+
+    def get_attribute(self, coor):
+        center = 0.5*(coor.start_idx+coor.end_idx)
+        start_idx = int(center-0.5*window_around_center)
+        end_idx = int(center+0.5*window_around_center)
+        coor_region = data_track[coor.example_idx, start_idx:end_idx]
+        fold_over_bg = np.abs(np.mean(coor_region))/\
+                        (self.abs_mean_per_seq[coor.example_idx] + 0.0000001)
+        sign = 1 if np.mean(coor_region) > 0 else -1
+        return fold_over_bg*sign
+
+
 class TrackSet(object):
 
-    def __init__(self, data_tracks=[]):
+    def __init__(self, data_tracks=[], attribute_providers=[]):
         self.track_name_to_data_track = OrderedDict()
+        self.attribute_name_to_attribute_provider = OrderedDict()
         for data_track in data_tracks:
             self.add_track(data_track)
+        for attribute_provider in attribute_providers:
+            self.attribute_name_to_attribute_provider[attribute_provider.name]\
+                = attribute_provider 
 
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
@@ -87,24 +120,32 @@ class TrackSet(object):
         self.track_name_to_data_track[data_track.name] = data_track
         return self
 
-    def create_seqlets(self, coords, track_names=None):
+    def create_seqlets(self, coords, track_names=None, attribute_names=None):
         seqlets = []
         for coor in coords:
             seqlets.append(self.create_seqlet(coor=coor,
-                                              track_names=track_names))
+                                              track_names=track_names,
+                                              attribute_names=attribute_names))
         return seqlets
 
-    def create_seqlet(self, coor, track_names=None):
+    def create_seqlet(self, coor, track_names=None, attribute_names=None):
         if (track_names is None):
             track_names=self.track_name_to_data_track.keys()
+        if (attribute_names is None):
+            attribute_names=self.attribute_name_to_attribute_provider.keys()
         seqlet = Seqlet(coor=coor)
-        self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
+        self.augment_seqlet(seqlet=seqlet, track_names=track_names,
+                            attribute_names=attribute_names) 
         return seqlet
 
-    def augment_seqlet(self, seqlet, track_names):
+    def augment_seqlet(self, seqlet, track_names, attribute_names):
         for track_name in track_names:
             seqlet.add_snippet_from_data_track(
                 data_track=self.track_name_to_data_track[track_name])
+        for attribute_name in attribute_names:
+            seqlet.add_attribute_from_attribute_provider(
+                attribute_provider=\
+                 self.attribute_name_to_attribute_provider[attribute_name])
         return seqlet
 
     @property
@@ -139,9 +180,18 @@ class Pattern(object):
 
     def __init__(self):
         self.track_name_to_snippet = OrderedDict()
+        self.attribute_name_to_attribute = OrderedDict()
 
     def __getitem__(self, key):
-        return self.track_name_to_snippet[key]
+        if (key in self.track_name_to_snippet)
+            return self.track_name_to_snippet[key]
+        elif (key in self.track_name_to_attribute):
+            return self.track_name_to_attribute[key]
+        else:
+            raise RuntimeError("No key "+str(key)"; snippet keys are: "
+                +str(self.track_name_to_snippet.keys())+" and "
+                +" attribute keys are "
+                +str(self.track_name_to_attribute.keys()))
 
     def __len__(self):
         raise NotImplementedError()
@@ -160,6 +210,11 @@ class Seqlet(Pattern):
         snippet = data_track.get_snippet(coor=self.coor)
         return self.add_snippet(data_track_name=data_track.name,
                                 snippet=snippet)
+
+    def add_attribute_from_attribute_provider(self, attribute_provider):
+        attribute = attribute_provider.get_attribute(coor=self.coor)
+        self.add_attribute(attribute_name=attribute_provider.name,
+                           attribute=attribute)
         
     def add_snippet(self, data_track_name, snippet):
         if (snippet.has_pos_axis):
@@ -170,12 +225,19 @@ class Seqlet(Pattern):
         self.track_name_to_snippet[data_track_name] = snippet 
         return self
 
+    def add_attribute(self, attribute_name, attribute):
+        self.track_name_to_attribute[data_track_name] = attribute
+
     def revcomp(self):
         seqlet = Seqlet(coor=self.coor.revcomp())
         for track_name in self.track_name_to_snippet:
             seqlet.add_snippet(
                 data_track_name=track_name,
                 snippet=self.track_name_to_snippet[track_name].revcomp()) 
+        for attribute_name in self.track_name_to_attribute:
+            seqlet.add_attribute(
+                attribute_name=attribute_name,
+                attribute=self.attribute_name_to_attribute[attribute_name])
         return seqlet
 
     def trim(self, start_idx, end_idx):

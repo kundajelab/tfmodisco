@@ -3,7 +3,9 @@ import numpy as np
 from . import affinitymat
 from . import core
 from . import util
+from . import backend as B
 from collections import OrderedDict
+import itertools
 
 
 class AbstractAggSeqletPostprocessor(object):
@@ -178,6 +180,73 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         return to_return
 
 
+#reassign seqlets to best match motif
+class ReassignSeqletsByBestCrossCorr(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, pattern_crosscorr_settings,
+                       verbose=True, batch_size=50, progress_update=1000,
+                       func_params_size=1000000):
+
+        self.pattern_crosscorr_settings = pattern_crosscorr_settings
+        self.pattern_aligner = core.CrossCorrelationPatternAligner(
+                        pattern_crosscorr_settings=pattern_crosscorr_settings)
+        self.verbose = verbose
+        self.batch_size = batch_size
+        self.progress_update = progress_update
+        self.func_params_size = func_params_size
+
+    def __call__(self, patterns, seqlets_to_assign):
+
+        (pattern_fwd_data, pattern_rev_data) =\
+            core.get_2d_data_from_patterns(
+                patterns=patterns,
+                track_names=self.pattern_crosscorr_settings.track_names,
+                track_transformer=
+                    self.pattern_crosscorr_settings.track_transformer)
+        (seqlet_fwd_data, seqlet_rev_data) =\
+            core.get_2d_data_from_patterns(
+                patterns=seqlets_to_assign,
+                track_names=self.pattern_crosscorr_settings.track_names,
+                track_transformer=
+                    self.pattern_crosscorr_settings.track_transformer)
+
+        cross_corrs_fwd = B.max_cross_corrs(
+                     filters=pattern_fwd_data,
+                     things_to_scan=seqlet_fwd_data,
+                     min_overlap=self.pattern_crosscorr_settings.min_overlap,
+                     batch_size=self.batch_size,
+                     func_params_size=self.func_params_size,
+                     progress_update=self.progress_update) 
+        cross_corrs_rev = B.max_cross_corrs(
+                     filters=pattern_fwd_data,
+                     things_to_scan=seqlet_rev_data,
+                     min_overlap=self.pattern_crosscorr_settings.min_overlap,
+                     batch_size=self.batch_size,
+                     func_params_size=self.func_params_size,
+                     progress_update=self.progress_update) 
+        cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
+        assert cross_corrs.shape == (len(patterns), len(seqlets_to_assign))
+        seqlet_assignments = np.argmax(cross_corrs, axis=0) 
+
+        seqlet_and_alnmnt_grps = [[] for x in patterns]
+        for seqlet_idx, assignment in enumerate(seqlet_assignments):
+            alnmt, revcomp_match, score = self.pattern_aligner(
+                parent_pattern=patterns[assignment],
+                child_pattern=seqlets_to_assign[seqlet_idx]) 
+            if (revcomp_match):
+                seqlet = seqlets_to_assign[seqlet_idx].revcomp()
+            else:
+                seqlet = seqlets_to_assign[seqlet_idx]
+            seqlet_and_alnmnt_grps[assignment].append(
+                core.SeqletAndAlignment(seqlet=seqlets_to_assign[seqlet_idx],
+                                        alnmt=alnmt))
+
+        new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
+            for x in seqlet_and_alnmnt_grps]
+
+        return new_patterns, seqlet_assignments
+
+
 class SeparateOnSeqletCenterPeaks(AbstractAggSeqletPostprocessor):
 
     def __init__(self, min_support, pattern_aligner, verbose=True):
@@ -323,8 +392,10 @@ class SimilarPatternsCollapser(object):
     def __call__(self, original_patterns):
         #make a copy of the patterns
         original_patterns = [x.copy() for x in original_patterns]
-        for i,pattern1 in enumerate(original_patterns):
-            for j,pattern2 in enumerate(original_patterns[i:]):
+        for i in range(len(original_patterns)):
+            for j in range(len(original_patterns[i:])):
+                pattern1 = original_patterns[i]
+                pattern2 = original_patterns[j]
                 if (pattern1 != pattern2): #if not the same object
                     if (pattern1.num_seqlets < pattern2.num_seqlets):
                         parent_pattern, child_pattern = pattern2, pattern1
