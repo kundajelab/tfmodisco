@@ -74,24 +74,24 @@ class AbstractAttributeProvider(object):
     def __init__(self, name):
         self.name = name
 
-    def get_attribute(self, coor):
+    def __call__(self, coor):
         raise NotImplementedError()
 
 
 class FoldOverPerSeqBg(AbstractAttributeProvider):
 
     def __init__(self, name, data_track, window_around_center):
-        super(FoldOverBg, self).__init__(name=name) 
-        assert len(data_track).shape==2
+        super(FoldOverPerSeqBg, self).__init__(name=name) 
+        assert len(data_track.shape)==2
         self.data_track = data_track 
         self.window_around_center = window_around_center
         self.abs_mean_per_seq = np.abs(np.mean(data_track, axis=1))
 
-    def get_attribute(self, coor):
-        center = 0.5*(coor.start_idx+coor.end_idx)
-        start_idx = int(center-0.5*window_around_center)
-        end_idx = int(center+0.5*window_around_center)
-        coor_region = data_track[coor.example_idx, start_idx:end_idx]
+    def __call__(self, coor):
+        center = 0.5*(coor.start+coor.end)
+        start_idx = int(center-0.5*self.window_around_center)
+        end_idx = int(center+0.5*self.window_around_center)
+        coor_region = self.data_track[coor.example_idx, start_idx:end_idx]
         fold_over_bg = np.abs(np.mean(coor_region))/\
                         (self.abs_mean_per_seq[coor.example_idx] + 0.0000001)
         sign = 1 if np.mean(coor_region) > 0 else -1
@@ -100,11 +100,12 @@ class FoldOverPerSeqBg(AbstractAttributeProvider):
 
 class MaxAttributeProvider(AbstractAttributeProvider):
 
-    def __init__(self, attribute_providers):
+    def __init__(self, name, attribute_providers):
+        super(MaxAttributeProvider, self).__init__(name=name) 
         self.attribute_providers = attribute_providers
 
-    def get_attribute(self, coor):
-        return max([attribute_provider[coor] for attribute_provider
+    def __call__(self, coor):
+        return max([attribute_provider(coor) for attribute_provider
                     in self.attribute_providers])
 
 
@@ -195,13 +196,13 @@ class Pattern(object):
     def __getitem__(self, key):
         if (key in self.track_name_to_snippet):
             return self.track_name_to_snippet[key]
-        elif (key in self.track_name_to_attribute):
-            return self.track_name_to_attribute[key]
+        elif (key in self.attribute_name_to_attribute):
+            return self.attribute_name_to_attribute[key]
         else:
             raise RuntimeError("No key "+str(key)+"; snippet keys are: "
                 +str(self.track_name_to_snippet.keys())+" and "
                 +" attribute keys are "
-                +str(self.track_name_to_attribute.keys()))
+                +str(self.attribute_name_to_attribute.keys()))
 
     def __len__(self):
         raise NotImplementedError()
@@ -222,7 +223,7 @@ class Seqlet(Pattern):
                                 snippet=snippet)
 
     def add_attribute_from_attribute_provider(self, attribute_provider):
-        attribute = attribute_provider.get_attribute(coor=self.coor)
+        attribute = attribute_provider(coor=self.coor)
         self.add_attribute(attribute_name=attribute_provider.name,
                            attribute=attribute)
         
@@ -236,7 +237,7 @@ class Seqlet(Pattern):
         return self
 
     def add_attribute(self, attribute_name, attribute):
-        self.track_name_to_attribute[data_track_name] = attribute
+        self.attribute_name_to_attribute[attribute_name] = attribute
 
     def revcomp(self):
         seqlet = Seqlet(coor=self.coor.revcomp())
@@ -244,7 +245,7 @@ class Seqlet(Pattern):
             seqlet.add_snippet(
                 data_track_name=track_name,
                 snippet=self.track_name_to_snippet[track_name].revcomp()) 
-        for attribute_name in self.track_name_to_attribute:
+        for attribute_name in self.attribute_name_to_attribute:
             seqlet.add_attribute(
                 attribute_name=attribute_name,
                 attribute=self.attribute_name_to_attribute[attribute_name])
@@ -631,6 +632,14 @@ class AggregatedSeqlet(Pattern):
         from matplotlib import pyplot as plt
         plt.hist(self.get_seqlet_coor_centers(), bins=bins)
         plt.show()
+
+
+def get_1d_data_from_patterns(patterns, attribute_names):
+    to_return = []
+    for pattern in patterns:
+        to_return.append([pattern[attribute_name] for attribute_name
+                          in attribute_names])
+    return np.array(to_return)
 
 
 def get_2d_data_from_patterns(patterns, track_names, track_transformer):

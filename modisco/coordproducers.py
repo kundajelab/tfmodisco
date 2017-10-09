@@ -27,18 +27,18 @@ class SeqletCoordsFWAP(SeqletCoordinates):
 class CoordOverlapDetector(object):
 
     def __init__(self, min_overlap_fraction):
-        self.min_overlap_fraction
+        self.min_overlap_fraction = min_overlap_fraction
 
     def __call__(self, coord1, coord2):
         if (coord1.example_idx != coord2.example_idx):
             return False
         min_overlap = self.min_overlap_fraction*min(len(coord1), len(coord2))
-        overlap_amt = (min(coord1.end_idx, coord2.end_idx)-
-                       max(coord1.start_idx, coord2.start_idx))
+        overlap_amt = (min(coord1.end, coord2.end)-
+                       max(coord1.start, coord2.start))
         return (overlap_amt >= min_overlap)
 
 
-class AbstractCoordComparator(object):
+class CoordComparator(object):
 
     def __init__(self, attribute_provider):
         self.attribute_provider = attribute_provider
@@ -52,7 +52,7 @@ class AbstractCoordComparator(object):
                            self.attribute_provider(coord2)) else coord2)
 
 
-class MultitaskCoordProducer(AbstractCoordProducer):
+class ResolveOverlapsCoordProducer(AbstractCoordProducer):
 
     def __init__(self, coord_producer, overlap_detector, coord_comparator):
         self.coord_producer = coord_producer
@@ -64,16 +64,20 @@ class MultitaskCoordProducer(AbstractCoordProducer):
                        kwargset in kwargsets]
         example_idx_to_coords = defaultdict(list)  
         for coord in itertools.chain(*coord_sets):
-            example_idx_to_coords.append(coords)
+            example_idx_to_coords[coord.example_idx].append(coord)
         for example_idx, coords in example_idx_to_coords.items():
             final_coords_set = set(coords)
             for i in range(len(coords)):
                 coord1 = coords[i]
                 for coord2 in coords[i+1:]:
-                    if (self.overlap_detector(coord1, coord2)):
+                    if (coord1 not in final_coords_set):
+                        break
+                    if ((coord2 in final_coords_set)
+                         and self.overlap_detector(coord1, coord2)):
                         final_coords_set.remove(
                          self.coord_comparator.get_smaller(coord1, coord2)) 
             example_idx_to_coords[example_idx] = list(final_coords_set)
+        return list(itertools.chain(*example_idx_to_coords.values()))
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -98,7 +102,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.verbose = verbose
 
     def __call__(self, score_track):
-      
+     
+        assert len(score_track.shape)==2 
         if (self.verbose):
             print("Compiling functions") 
         window_sum_function = B.get_window_sum_function(

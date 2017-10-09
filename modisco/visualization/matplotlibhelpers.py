@@ -1,6 +1,8 @@
 from __future__ import print_function, division, absolute_import
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import OrderedDict
+import itertools
 
 
 def scatter_plot(coords, clusters=None,
@@ -101,3 +103,18 @@ def plot_heatmap_given_ax(ax, data, log_transform=False,
     ax.pcolor(data, cmap=cmap)
     return ax
 
+
+def plot_cluster_heatmap(data, clustering_func, **kwargs):
+    cluster_indices=clustering_func(data) 
+    data = reorganize_rows_by_clusters(data, cluster_indices)
+    plot_heatmap(data=data, **kwargs) 
+
+
+def reorganize_rows_by_clusters(rows, cluster_indices):
+    unique_clusters = sorted(set(cluster_indices))
+    cluster_idx_to_row_indices =\
+        OrderedDict([(idx, []) for idx in unique_clusters])
+    for row_idx, cluster_idx in zip(range(len(rows)), cluster_indices):
+        cluster_idx_to_row_indices[cluster_idx].append(row_idx)
+    new_indices = list(itertools.chain(*cluster_idx_to_row_indices.values()))
+    return rows[new_indices]
