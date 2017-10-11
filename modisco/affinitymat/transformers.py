@@ -1,20 +1,13 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
 import time
+from modisco import util
 
 
 class AbstractThresholder(object):
 
     def __call__(self, values):
         raise NotImplementedError()
-
-
-def firstd(x_values, y_values):
-    x_differences = x_values[1:] - x_values[:-1]
-    x_midpoints = 0.5*(x_values[1:] + x_values[:-1])
-    y_differences = y_values[1:] - y_values[:-1]
-    rise_over_run = y_differences/x_differences
-    return x_midpoints, rise_over_run
 
 
 class CurvatureBasedThreshold(AbstractThresholder):
@@ -30,8 +23,9 @@ class CurvatureBasedThreshold(AbstractThresholder):
         hist_x = 0.5*(hist_x[:-1] + hist_x[1:])
         median_x = next(hist_x[i] for i in range(len(hist_x)) if
                         (cumsum[i] > len(values)*0.5)) 
-        firstd_x, firstd_y = firstd(hist_x, hist_y)
-        secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y) 
+        firstd_x, firstd_y = util.firstd(hist_x, hist_y)
+        secondd_x, secondd_y = util.firstd(x_values=firstd_x,
+                                           y_values=firstd_y) 
         try:
 
             #look at the fastest curvature change for the secondd vals

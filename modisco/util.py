@@ -8,6 +8,41 @@ import theano
 import theano.tensor.signal.conv
 import h5py
 import traceback
+from sklearn.neighbors.kde import KernelDensity
+
+
+def first_curvature_max(values, bins, bandwidth):
+    kde = KernelDensity(kernel="gaussian", bandwidth=bandwidth).fit(
+                [[x,0] for x in values])
+    midpoints = np.min(values)+((np.arange(bins)+0.5)
+                                *(np.max(values)-np.min(values))/bins)
+    densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
+    global_max_x = max(zip(densities,midpoints), key=lambda x: x[0])[1]
+    firstd_x, firstd_y = firstd(x_values=midpoints, y_values=densities) 
+    secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y)
+    thirdd_x, thirdd_y = firstd(x_values=secondd_x, y_values=secondd_y)
+    #find curvature maxima i.e. points where thirdd crosses 0
+    maxima_x = [0.5*(prev_x+after_x) for (prev_x, after_x),(prev_y,after_y)
+                  in zip(zip(thirdd_x[0:-1], thirdd_x[1:]),
+                         zip(thirdd_y[0:-1], thirdd_y[1:]))
+                  if (prev_y > 0 and after_y < 0)
+                  and 0.5*(prev_x+after_x)]
+    maxima_x_after_global_max = [x for x in maxima_x if x > global_max_x]
+    maxima_x_before_global_max = [x for x in maxima_x if x < global_max_x]
+    threshold_before = maxima_x_before_global_max[-1] if\
+                        len(maxima_x_before_global_max) > 0 else global_max_x
+    threshold_after = maxima_x_after_global_max[0] if\
+                        len(maxima_x_after_global_max) > 0 else global_max_x
+    return threshold_before, threshold_after
+    
+
+
+def firstd(x_values, y_values):
+    x_differences = x_values[1:] - x_values[:-1]
+    x_midpoints = 0.5*(x_values[1:] + x_values[:-1])
+    y_differences = y_values[1:] - y_values[:-1]
+    rise_over_run = y_differences/x_differences
+    return x_midpoints, rise_over_run
 
 
 def cpu_sliding_window_sum(arr, window_size):
