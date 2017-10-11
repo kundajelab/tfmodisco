@@ -505,6 +505,26 @@ class AggregatedSeqlet(Pattern):
                 rev=self._track_name_to_agg_revcomp[track_name],
                 has_pos_axis=sample_seqlet[track_name].has_pos_axis) 
 
+    def get_nonzero_average(self, track_name):
+        fwd_nonzero_count = np.zeros_like(self[track_name].fwd)
+        rev_nonzero_count = np.zeros_like(self[track_name].rev)
+        has_pos_axis = self[track_name].has_pos_axis
+        for seqlet_and_alnmt in self.seqlets_and_alnmts:
+            alnmt = seqlet_and_alnmt.alnmt
+            seqlet_length = len(seqlet_and_alnmt.seqlet)
+            motif_length = len(rev_nonzero_count)
+            fwd_nonzero_count[alnmt:(alnmt+seqlet_length)] +=\
+                (np.abs(seqlet_and_alnmt.seqlet[track_name].fwd) > 0.0)
+            rev_nonzero_count[motif_length-(alnmt+seqlet_length):
+                              motif_length-alnmt] +=\
+                (np.abs(seqlet_and_alnmt.seqlet[track_name].rev) > 0.0)
+        return Snippet(fwd=self._track_name_to_agg[track_name]
+                           /(fwd_nonzero_count+(fwd_nonzero_count==0)),
+                       rev=self._track_name_to_agg_revcomp[track_name]
+                           /(rev_nonzero_count+(rev_nonzero_count==0)),
+                       has_pos_axis=has_pos_axis)
+
+
     def _pad_before(self, num_zeros):
         assert num_zeros > 0
         self.length += num_zeros

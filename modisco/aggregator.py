@@ -180,16 +180,36 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         return to_return
 
 
+#distribute seqlets from smaller clusters to the larger clusters
+class ReassignSeqletsToLargerClusters(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, seqlet_assigner, min_cluster_size):
+        self.seqlet_assigner = seqlet_assigner
+        self.min_cluster_size = min_cluster_size
+
+    def __call__(self, patterns):
+        all_seqlets = list(itertools.chain(
+            *[[x.seqlet for x in pattern._seqlets_and_alnmts]
+              for pattern in patterns]))
+        filtered_patterns = [x for x in patterns
+                             if x.num_seqlets >= self.min_cluster_size]
+        to_return = self.seqlet_assigner(patterns=filtered_patterns,
+                                    seqlets_to_assign=all_seqlets)[0]
+
+        return [x for x in to_return if x.num_seqlets >= self.min_cluster_size]
+
 #reassign seqlets to best match motif
-class ReassignSeqletsByBestCrossCorr(AbstractAggSeqletPostprocessor):
+class AssignSeqletsByBestCrossCorr(object):
 
     def __init__(self, pattern_crosscorr_settings,
+                       min_similarity=0.0,
                        verbose=True, batch_size=50, progress_update=1000,
                        func_params_size=1000000):
 
         self.pattern_crosscorr_settings = pattern_crosscorr_settings
         self.pattern_aligner = core.CrossCorrelationPatternAligner(
                         pattern_crosscorr_settings=pattern_crosscorr_settings)
+        self.min_similarity = min_similarity
         self.verbose = verbose
         self.batch_size = batch_size
         self.progress_update = progress_update
@@ -227,22 +247,34 @@ class ReassignSeqletsByBestCrossCorr(AbstractAggSeqletPostprocessor):
         cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
         assert cross_corrs.shape == (len(patterns), len(seqlets_to_assign))
         seqlet_assignments = np.argmax(cross_corrs, axis=0) 
+        seqlet_assignment_scores = np.max(cross_corrs, axis=0)
 
         seqlet_and_alnmnt_grps = [[] for x in patterns]
-        for seqlet_idx, assignment in enumerate(seqlet_assignments):
-            alnmt, revcomp_match, score = self.pattern_aligner(
-                parent_pattern=patterns[assignment],
-                child_pattern=seqlets_to_assign[seqlet_idx]) 
-            if (revcomp_match):
-                seqlet = seqlets_to_assign[seqlet_idx].revcomp()
+        discarded_seqlets = 0
+        for seqlet_idx, (assignment, score)\
+            in enumerate(zip(seqlet_assignments, seqlet_assignment_scores)):
+            if (score >= self.min_similarity):
+                alnmt, revcomp_match, score = self.pattern_aligner(
+                    parent_pattern=patterns[assignment],
+                    child_pattern=seqlets_to_assign[seqlet_idx]) 
+                if (revcomp_match):
+                    seqlet = seqlets_to_assign[seqlet_idx].revcomp()
+                else:
+                    seqlet = seqlets_to_assign[seqlet_idx]
+                seqlet_and_alnmnt_grps[assignment].append(
+                    core.SeqletAndAlignment(
+                        seqlet=seqlets_to_assign[seqlet_idx],
+                        alnmt=alnmt))
             else:
-                seqlet = seqlets_to_assign[seqlet_idx]
-            seqlet_and_alnmnt_grps[assignment].append(
-                core.SeqletAndAlignment(seqlet=seqlets_to_assign[seqlet_idx],
-                                        alnmt=alnmt))
+                seqlet_assignments[seqlet_idx] = -1
+                discarded_seqlets += 1
+
+        if (self.verbose):
+            if discarded_seqlets > 0:
+                print("Discarded "+str(discarded_seqlets)+" seqlets") 
 
         new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
-            for x in seqlet_and_alnmnt_grps]
+            for x in seqlet_and_alnmnt_grps if len(x) > 0]
 
         return new_patterns, seqlet_assignments
 
