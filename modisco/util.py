@@ -17,6 +17,7 @@ def first_curvature_max(values, bins, bandwidth):
     midpoints = np.min(values)+((np.arange(bins)+0.5)
                                 *(np.max(values)-np.min(values))/bins)
     densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
+
     global_max_x = max(zip(densities,midpoints), key=lambda x: x[0])[1]
     firstd_x, firstd_y = firstd(x_values=midpoints, y_values=densities) 
     secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y)
@@ -33,6 +34,15 @@ def first_curvature_max(values, bins, bandwidth):
                         len(maxima_x_before_global_max) > 0 else global_max_x
     threshold_after = maxima_x_after_global_max[0] if\
                         len(maxima_x_after_global_max) > 0 else global_max_x
+
+    from matplotlib import pyplot as plt
+    hist_y, _, _ = plt.hist(values, bins=100)
+    max_y = np.max(hist_y)
+    plt.plot(midpoints, densities*(max_y/np.max(densities)))
+    plt.plot([threshold_before, threshold_before], [0, max_y])
+    plt.plot([threshold_after, threshold_after], [0, max_y])
+    plt.show()
+
     return threshold_before, threshold_after
 
 

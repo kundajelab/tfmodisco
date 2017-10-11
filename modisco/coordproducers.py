@@ -1,9 +1,11 @@
 from __future__ import division, print_function, absolute_import
 from .core import SeqletCoordinates
 from modisco import backend as B 
+from modisco import util
 import numpy as np
 from collections import defaultdict
 import itertools
+from sklearn.neighbors.kde import KernelDensity
 
 
 class AbstractCoordProducer(object):
@@ -80,23 +82,72 @@ class ResolveOverlapsCoordProducer(AbstractCoordProducer):
         return list(itertools.chain(*example_idx_to_coords.values()))
 
 
+class MaxCurvatureThreshold(object):
+
+    def __init__(self, bins, bandwidth, num_to_consider, verbose):
+        self.bins = bins
+        self.bandwidth = bandwidth
+        self.num_to_consider = num_to_consider
+        self.verbose = verbose
+
+    def __call__(self, values):
+        assert np.min(values) >= 0
+
+        hist_y, hist_x = np.histogram(values, bins=self.bins*2)
+        hist_x = 0.5*(hist_x[:-1]+hist_x[1:])
+        global_max_x = max(zip(hist_y,hist_x), key=lambda x: x[0])[1]
+        #create a symmetric reflection around global_max_x so kde does not
+        #get confused
+        new_values = np.array([x for x in values if x >= global_max_x])
+        new_values = np.concatenate([new_values, -(new_values-global_max_x)
+                                                  + global_max_x])
+        kde = KernelDensity(kernel="gaussian", bandwidth=self.bandwidth).fit(
+                    [[x,0] for x in new_values])
+        midpoints = np.min(values)+((np.arange(self.bins)+0.5)
+                                    *(np.max(values)-np.min(values))/self.bins)
+        densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
+
+        firstd_x, firstd_y = util.firstd(x_values=midpoints, y_values=densities) 
+        secondd_x, secondd_y = util.firstd(x_values=firstd_x, y_values=firstd_y)
+        #find point of maximum curvature
+        maximum_c_x = max(zip(secondd_x, secondd_y), key=lambda x:x[1])[0]
+
+        if (self.verbose):
+            from matplotlib import pyplot as plt
+            hist_y, _, _ = plt.hist(new_values, bins=self.bins)
+            max_y = np.max(hist_y)
+            plt.plot(midpoints, densities*(max_y/np.max(densities)))
+            plt.plot([maximum_c_x, maximum_c_x], [0, max_y])
+            plt.show()
+            plt.plot(secondd_x, secondd_y)
+            plt.show()
+
+        return maximum_c_x
+
+
 class FixedWindowAroundChunks(AbstractCoordProducer):
 
     def __init__(self, sliding=11,
                        flank=10,
                        suppress=20,
                        max_seqlets_per_seq=5,
+                       thresholding_function=MaxCurvatureThreshold(
+                            bins=200, bandwidth=0.1,
+                            num_to_consider=1000000, verbose=True),
                        min_ratio_top_peak=0.0,
                        min_ratio_over_bg=0.0,
+                       max_seqlets_total=10000,
                        batch_size=50,
                        progress_update=5000,
                        verbose=True):
         self.sliding = sliding
         self.flank = flank
         self.suppress = suppress
+        self.max_seqlets_per_seq = max_seqlets_per_seq
+        self.thresholding_function = thresholding_function
         self.min_ratio_top_peak = min_ratio_top_peak
         self.min_ratio_over_bg = min_ratio_over_bg
-        self.max_seqlets_per_seq = max_seqlets_per_seq
+        self.max_seqlets_total = max_seqlets_total
         self.batch_size = batch_size
         self.progress_update = progress_update
         self.verbose = verbose
@@ -159,7 +210,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                     #only include chunk that are at least a certain
                     #fraction of the max chunk
                     if ((chunk_height >=
-                        max_per_seq[example_idx]*self.min_ratio_top_peak)
+                         max_per_seq[example_idx]*self.min_ratio_top_peak)
                         and (np.abs(chunk_height) >=
                              np.abs(bg_avg_per_track[example_idx])
                              *self.min_ratio_over_bg)):
@@ -176,6 +227,32 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                         left_supp_idx:right_supp_idx] = 0.0
                 summed_score_track[
                     example_idx, left_supp_idx:right_supp_idx] = -np.inf 
+
+        if (self.verbose):
+            print("Got "+str(len(coords))+" coords")
+
+        vals_to_threshold = np.array([np.abs(x.score) for x in coords])
+        if (self.thresholding_function is not None):
+            if (self.verbose):
+                print("Computing thresholds")
+            threshold = self.thresholding_function(vals_to_threshold) 
+        else:
+            threshold = 0.0
+        if (self.verbose):
+            percentile = np.sum(vals_to_threshold<threshold)/\
+                                float(len(vals_to_threshold))
+            print("threshold is "+str(threshold)
+                  +" with percentile "+str(percentile))
+
+        coords = [x for x in coords if x.score >= threshold]
+        if (self.verbose):
+            print(str(len(coords))+" coords remaining after thresholding")
+
+        if (len(coords) > self.max_seqlets_total):
+            if (self.verbose):
+                print("Limiting to top "+str(self.max_seqlets_total))
+            coords = sorted(coords, key=lambda x: -x.score)\
+                               [:self.max_seqlets_total]
         return coords
 
 
