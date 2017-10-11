@@ -34,7 +34,6 @@ def first_curvature_max(values, bins, bandwidth):
     threshold_after = maxima_x_after_global_max[0] if\
                         len(maxima_x_after_global_max) > 0 else global_max_x
     return threshold_before, threshold_after
-    
 
 
 def firstd(x_values, y_values):
