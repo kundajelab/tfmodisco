@@ -19,7 +19,7 @@ def first_curvature_max(values, bins, bandwidth):
     densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
 
     global_max_x = max(zip(densities,midpoints), key=lambda x: x[0])[1]
-    firstd_x, firstd_y = firstd(x_values=midpoints, y_values=densities) 
+    firstd_x, firstd_y = angle_firstd(x_values=midpoints, y_values=densities) 
     secondd_x, secondd_y = firstd(x_values=firstd_x, y_values=firstd_y)
     thirdd_x, thirdd_y = firstd(x_values=secondd_x, y_values=secondd_y)
     #find curvature maxima i.e. points where thirdd crosses 0
@@ -44,6 +44,22 @@ def first_curvature_max(values, bins, bandwidth):
     plt.show()
 
     return threshold_before, threshold_after
+
+
+def cosine_firstd(x_values, y_values):
+    x_differences = x_values[1:] - x_values[:-1]
+    x_midpoints = 0.5*(x_values[1:] + x_values[:-1])
+    y_differences = y_values[1:] - y_values[:-1]
+    hypotenueses = np.sqrt(np.square(y_differences) + np.square(x_differences))
+    cosine_first_d = x_differences/hypotenueses 
+    return x_midpoints, cosine_first_d
+
+
+def angle_firstd(x_values, y_values):
+    x_differences = x_values[1:] - x_values[:-1]
+    x_midpoints = 0.5*(x_values[1:] + x_values[:-1])
+    y_differences = y_values[1:] - y_values[:-1]
+    return x_midpoints, np.arctan2(y_differences, x_differences)
 
 
 def firstd(x_values, y_values):

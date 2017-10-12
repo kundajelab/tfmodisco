@@ -1,8 +1,10 @@
 from __future__ import division, print_function, absolute_import
 from collections import OrderedDict
 from collections import namedtuple
+from collections import defaultdict
 import numpy as np
 import scipy
+import itertools
 
 
 class Snippet(object):
@@ -69,46 +71,6 @@ class DataTrack(object):
         return snippet
 
 
-class AbstractAttributeProvider(object):
-
-    def __init__(self, name):
-        self.name = name
-
-    def __call__(self, coor):
-        raise NotImplementedError()
-
-
-class FoldOverPerSeqBg(AbstractAttributeProvider):
-
-    def __init__(self, name, data_track, window_around_center):
-        super(FoldOverPerSeqBg, self).__init__(name=name) 
-        assert len(data_track.shape)==2
-        self.data_track = data_track 
-        self.window_around_center = window_around_center
-        self.abs_mean_per_seq = np.abs(np.mean(data_track, axis=1))
-
-    def __call__(self, coor):
-        center = 0.5*(coor.start+coor.end)
-        start_idx = int(center-0.5*self.window_around_center)
-        end_idx = int(center+0.5*self.window_around_center)
-        coor_region = self.data_track[coor.example_idx, start_idx:end_idx]
-        fold_over_bg = np.abs(np.mean(coor_region))/\
-                        (self.abs_mean_per_seq[coor.example_idx] + 0.0000001)
-        sign = 1 if np.mean(coor_region) > 0 else -1
-        return fold_over_bg*sign
-
-
-class MaxAttributeProvider(AbstractAttributeProvider):
-
-    def __init__(self, name, attribute_providers):
-        super(MaxAttributeProvider, self).__init__(name=name) 
-        self.attribute_providers = attribute_providers
-
-    def __call__(self, coor):
-        return max([attribute_provider(coor) for attribute_provider
-                    in self.attribute_providers])
-
-
 class TrackSet(object):
 
     def __init__(self, data_tracks=[], attribute_providers=[]):
@@ -154,7 +116,7 @@ class TrackSet(object):
             seqlet.add_snippet_from_data_track(
                 data_track=self.track_name_to_data_track[track_name])
         for attribute_name in attribute_names:
-            seqlet.add_attribute_from_attribute_provider(
+            seqlet.set_attribute(
                 attribute_provider=\
                  self.attribute_name_to_attribute_provider[attribute_name])
         return seqlet
@@ -164,6 +126,159 @@ class TrackSet(object):
         return self.track_name_to_data_track.values()[0].track_length
 
 
+class CoordOverlapDetector(object):
+
+    def __init__(self, min_overlap_fraction):
+        self.min_overlap_fraction = min_overlap_fraction
+
+    def __call__(self, coord1, coord2):
+        if (coord1.example_idx != coord2.example_idx):
+            return False
+        min_overlap = self.min_overlap_fraction*min(len(coord1), len(coord2))
+        overlap_amt = (min(coord1.end, coord2.end)-
+                       max(coord1.start, coord2.start))
+        return (overlap_amt >= min_overlap)
+
+
+class SeqletComparator(object):
+
+    def __init__(self, value_provider):
+        self.value_provider = value_provider
+
+    def get_larger(self, seqlet1, seqlet2):
+        return (seqlet1 if (self.value_provider(seqlet1) >=
+                            self.value_provider(seqlet2)) else seqlet2)
+
+    def get_smaller(self, seqlet1, seqlet2):
+        return (seqlet1 if (self.value_provider(seqlet1) <=
+                            self.value_provider(seqlet2)) else seqlet2)
+
+
+class SeqletsOverlapResolver(object):
+
+    def __init__(self, overlap_detector,
+                       seqlet_comparator):
+        self.overlap_detector = overlap_detector
+        self.seqlet_comparator = seqlet_comparator
+
+    def __call__(self, all_seqlets):
+        example_idx_to_seqlets = defaultdict(list)  
+        for seqlet in all_seqlets:
+            example_idx_to_seqlets[seqlet.coor.example_idx].append(seqlet)
+        for example_idx, seqlets in example_idx_to_seqlets.items():
+            final_seqlets_set = set(seqlets)
+            for i in range(len(seqlets)):
+                seqlet1 = seqlets[i]
+                for seqlet2 in seqlets[i+1:]:
+                    if (seqlet1 not in final_seqlets_set):
+                        break
+                    if ((seqlet2 in final_seqlets_set)
+                         and self.overlap_detector(seqlet1.coor, seqlet2.coor)):
+                        final_seqlets_set.remove(
+                         self.seqlet_comparator.get_smaller(seqlet1, seqlet2)) 
+            example_idx_to_seqlets[example_idx] = list(final_seqlets_set)
+        return list(itertools.chain(*example_idx_to_seqlets.values())) 
+
+
+class AbstractAttributeProvider(object):
+
+    def __init__(self, name):
+        self.name = name
+
+    def annotate(self, seqlets):
+        for seqlet in seqlets:
+            seqlet.set_attribute(self)
+
+    def __call__(self, seqlet):
+        raise NotImplementedError()
+
+
+class AbstractLabeler(AbstractAttributeProvider):
+
+    def __init__(self, name):
+        super(AbstractLabeler, self).__init__(name=name)
+
+    def fit(self, seqlets):
+        raise NotImplementedError()
+
+    def __call__(self, seqlet): #provide the label
+        raise NotImplementedError()
+
+
+class AbstractThresholdLabeler(AbstractLabeler):
+
+    def __init__(self, name):
+        super(AbstractThresholdLabeler, self).__init__(name=name)
+        self.threshold = None
+
+    def get_val(self, seqlet):
+        raise NotImplementedError()
+
+    def determine_threshold_from_vals(self, vals):
+        raise NotImplementedError()
+
+    def get_label_given_threshold_and_val(self, threshold, val):
+        raise NotImplementedError()
+
+    def fit(self, seqlets):
+        self.threshold = self.determine_threshold_from_vals(
+                            [self.get_val(x) for x in seqlets])
+
+    def __call__(self, seqlet):
+        if (self.threshold is None):
+            raise RuntimeError("Set threshold by calling fit()")
+        return self.get_label_given_threshold_and_val(
+                    threshold=self.threshold,
+                    val=self.get_val(seqlet))
+
+
+class SignedAbsContribThresholdLabeler(AbstractThresholdLabeler):
+
+    def __init__(self, name, track_name):
+        super(SignedAbsContribThresholdLabeler, self).__init__(name=name)
+        self.track_name = track_name
+
+    def get_val(self, seqlet):
+        track_values = seqlet[self.track_name].fwd
+        return np.sum(np.abs(track_values))*np.sign(np.sum(track_values))
+
+    def determine_threshold_from_vals(self, vals):
+        return np.min(np.abs(vals))
+
+    def get_label_given_threshold_and_val(self, threshold, val):
+        return (threshold <= np.abs(val))*np.sign(val)
+
+
+class MultiTaskSeqletCreation(object):
+
+    def __init__(self, coord_producer,
+                       track_set,
+                       overlap_resolver, verbose=True):
+        self.coord_producer = coord_producer
+        self.track_set = track_set
+        self.overlap_resolver = overlap_resolver
+        self.verbose=verbose
+
+    def __call__(self, task_name_to_score_track,
+                       task_name_to_labeler):
+        task_name_to_seqlets = {}
+        for task_name in task_name_to_score_track:
+            print("On task",task_name)
+            score_track = task_name_to_score_track[task_name]
+            seqlets = self.track_set.create_seqlets(
+                        coords=self.coord_producer(score_track=score_track)) 
+            task_name_to_labeler[task_name].fit(seqlets)
+            task_name_to_seqlets[task_name] = seqlets
+        final_seqlets = self.overlap_resolver(
+            itertools.chain(*task_name_to_seqlets.values()))
+        if (self.verbose):
+            print("After resolving overlaps, got "
+                  +str(len(final_seqlets))+" seqlets")
+        for labeler in task_name_to_labeler.values():
+            labeler.annotate(final_seqlets)
+        return final_seqlets 
+
+            
 class SeqletCoordinates(object):
 
     def __init__(self, example_idx, start, end, is_revcomp):
@@ -204,6 +319,15 @@ class Pattern(object):
                 +" attribute keys are "
                 +str(self.attribute_name_to_attribute.keys()))
 
+    def __setitem__(self, key, value):
+        assert key not in self.track_name_to_snippet,\
+            "Don't use setitem to set keys that are in track_name_to_snippet;"\
+            +" use add_snippet_from_data_track"
+        self.attribute_name_to_attribute[key] = value
+
+    def set_attribute(self, attribute_provider):
+        self[attribute_provider.name] = attribute_provider(self)
+
     def __len__(self):
         raise NotImplementedError()
 
@@ -222,11 +346,6 @@ class Seqlet(Pattern):
         return self.add_snippet(data_track_name=data_track.name,
                                 snippet=snippet)
 
-    def add_attribute_from_attribute_provider(self, attribute_provider):
-        attribute = attribute_provider(coor=self.coor)
-        self.add_attribute(attribute_name=attribute_provider.name,
-                           attribute=attribute)
-        
     def add_snippet(self, data_track_name, snippet):
         if (snippet.has_pos_axis):
             assert len(snippet)==len(self),\

@@ -32,13 +32,13 @@ class CurvatureBasedThreshold(AbstractThresholder):
             #below the median
             secondd_vals_below_median = [x for x in zip(secondd_x, secondd_y)
                                          if x[0] < median_x]
-            fastest_secondd_threshold =\
-                max(secondd_vals_below_median, key=lambda x: x[1])[0]
-
             #if the median is concentrated at the first bar, this if condition
             #will be triggered
             if (len(secondd_vals_below_median)==0):
                 return 0
+
+            fastest_secondd_threshold =\
+                max(secondd_vals_below_median, key=lambda x: x[1])[0]
 
             #find the first curvature change after the max
             (x_first_neg_firstd, y_first_neg_firstd) =\

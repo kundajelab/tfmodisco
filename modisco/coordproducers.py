@@ -26,62 +26,6 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
-class CoordOverlapDetector(object):
-
-    def __init__(self, min_overlap_fraction):
-        self.min_overlap_fraction = min_overlap_fraction
-
-    def __call__(self, coord1, coord2):
-        if (coord1.example_idx != coord2.example_idx):
-            return False
-        min_overlap = self.min_overlap_fraction*min(len(coord1), len(coord2))
-        overlap_amt = (min(coord1.end, coord2.end)-
-                       max(coord1.start, coord2.start))
-        return (overlap_amt >= min_overlap)
-
-
-class CoordComparator(object):
-
-    def __init__(self, attribute_provider):
-        self.attribute_provider = attribute_provider
-
-    def get_larger(self, coord1, coord2):
-        return (coord1 if (self.attribute_provider(coord1) >=
-                           self.attribute_provider(coord2)) else coord2)
-
-    def get_smaller(self, coord1, coord2):
-        return (coord1 if (self.attribute_provider(coord1) <=
-                           self.attribute_provider(coord2)) else coord2)
-
-
-class ResolveOverlapsCoordProducer(AbstractCoordProducer):
-
-    def __init__(self, coord_producer, overlap_detector, coord_comparator):
-        self.coord_producer = coord_producer
-        self.overlap_detector = overlap_detector
-        self.coord_comparator = coord_comparator
-
-    def __call__(self, kwargsets):
-        coord_sets = [self.coord_producer(**kwargset) for
-                       kwargset in kwargsets]
-        example_idx_to_coords = defaultdict(list)  
-        for coord in itertools.chain(*coord_sets):
-            example_idx_to_coords[coord.example_idx].append(coord)
-        for example_idx, coords in example_idx_to_coords.items():
-            final_coords_set = set(coords)
-            for i in range(len(coords)):
-                coord1 = coords[i]
-                for coord2 in coords[i+1:]:
-                    if (coord1 not in final_coords_set):
-                        break
-                    if ((coord2 in final_coords_set)
-                         and self.overlap_detector(coord1, coord2)):
-                        final_coords_set.remove(
-                         self.coord_comparator.get_smaller(coord1, coord2)) 
-            example_idx_to_coords[example_idx] = list(final_coords_set)
-        return list(itertools.chain(*example_idx_to_coords.values()))
-
-
 class MaxCurvatureThreshold(object):
 
     def __init__(self, bins, bandwidth, num_to_consider, verbose):
@@ -107,19 +51,21 @@ class MaxCurvatureThreshold(object):
                                     *(np.max(values)-np.min(values))/self.bins)
         densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
 
-        firstd_x, firstd_y = util.firstd(x_values=midpoints, y_values=densities) 
-        secondd_x, secondd_y = util.firstd(x_values=firstd_x, y_values=firstd_y)
+        firstd_x, firstd_y = util.angle_firstd(x_values=midpoints,
+                                                y_values=densities) 
+        secondd_x, secondd_y = util.firstd(x_values=firstd_x,
+                                           y_values=firstd_y)
         #find point of maximum curvature
-        maximum_c_x = max(zip(secondd_x, secondd_y), key=lambda x:x[1])[0]
+        maximum_c_x = max([x for x in zip(secondd_x, secondd_y)
+                           if x[0] > global_max_x], key=lambda x:x[1])[0]
 
         if (self.verbose):
             from matplotlib import pyplot as plt
-            hist_y, _, _ = plt.hist(new_values, bins=self.bins)
+            hist_y, _, _ = plt.hist(values, bins=self.bins)
             max_y = np.max(hist_y)
             plt.plot(midpoints, densities*(max_y/np.max(densities)))
+            #plt.plot(secondd_x, (secondd_y>0)*secondd_y*(max_y/np.max(secondd_y)))
             plt.plot([maximum_c_x, maximum_c_x], [0, max_y])
-            plt.show()
-            plt.plot(secondd_x, secondd_y)
             plt.show()
 
         return maximum_c_x
@@ -130,9 +76,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
     def __init__(self, sliding=11,
                        flank=10,
                        suppress=20,
-                       max_seqlets_per_seq=5,
+                       max_seqlets_per_seq=10,
                        thresholding_function=MaxCurvatureThreshold(
-                            bins=200, bandwidth=0.1,
+                            bins=100, bandwidth=0.1,
                             num_to_consider=1000000, verbose=True),
                        min_ratio_top_peak=0.0,
                        min_ratio_over_bg=0.0,
@@ -238,11 +184,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             threshold = self.thresholding_function(vals_to_threshold) 
         else:
             threshold = 0.0
-        if (self.verbose):
-            percentile = np.sum(vals_to_threshold<threshold)/\
-                                float(len(vals_to_threshold))
-            print("threshold is "+str(threshold)
-                  +" with percentile "+str(percentile))
 
         coords = [x for x in coords if x.score >= threshold]
         if (self.verbose):
