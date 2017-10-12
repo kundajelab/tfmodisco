@@ -39,16 +39,19 @@ class TrimToFracSupport(AbstractAggSeqletPostprocessor):
 
 class TrimToBestWindow(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, window_size, track_name):
+    def __init__(self, window_size, track_names):
         self.window_size = window_size
-        self.track_name = track_name
+        self.track_names = track_names
 
     def __call__(self, aggregated_seqlets):
         trimmed_agg_seqlets = []
         for aggregated_seqlet in aggregated_seqlets:
             start_idx = np.argmax(util.cpu_sliding_window_sum(
-                arr=np.sum(np.abs(aggregated_seqlet[self.track_name].fwd
-                                  .reshape(len(aggregated_seqlet),-1)),axis=1),
+                arr=np.sum(np.abs(
+                    np.concatenate(
+                    [aggregated_seqlet[track_name].fwd
+                      .reshape(len(aggregated_seqlet),-1) for
+                     track_name in self.track_names], axis=0)),axis=1),
                 window_size=self.window_size))
             end_idx = start_idx + self.window_size
             trimmed_agg_seqlets.append(
@@ -110,9 +113,9 @@ class AbstractTwoDMatSubclusterer(object):
 
 class RecursiveKmeans(AbstractTwoDMatSubclusterer):
 
-    def __init__(self, threshold, min_before_split, verbose=True):
+    def __init__(self, threshold, minimum_size_for_splitting, verbose=True):
         self.threshold = threshold
-        self.min_before_split = min_before_split
+        self.minimum_size_for_splitting = minimum_size_for_splitting
         self.verbose = verbose
 
     def __call__(self, twod_mat):
@@ -128,7 +131,7 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
                        *np.linalg.norm(cluster2_mean))
 
         if (cosine_dist > self.threshold or
-             (len(twod_mat) < self.min_before_split)):
+             (len(twod_mat) < self.minimum_size_for_splitting)):
             print("No split; similarity is "+str(cosine_dist)+" and "
                   "cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
@@ -183,9 +186,10 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
 #distribute seqlets from smaller clusters to the larger clusters
 class ReassignSeqletsToLargerClusters(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, seqlet_assigner, min_cluster_size):
+    def __init__(self, seqlet_assigner, min_cluster_size, postprocessor):
         self.seqlet_assigner = seqlet_assigner
         self.min_cluster_size = min_cluster_size
+        self.postprocessor = postprocessor
 
     def __call__(self, patterns):
         all_seqlets = list(itertools.chain(
@@ -196,7 +200,8 @@ class ReassignSeqletsToLargerClusters(AbstractAggSeqletPostprocessor):
         to_return = self.seqlet_assigner(patterns=filtered_patterns,
                                     seqlets_to_assign=all_seqlets)[0]
 
-        return [x for x in to_return if x.num_seqlets >= self.min_cluster_size]
+        return self.postprocessor([x for x in to_return
+                if x.num_seqlets >= self.min_cluster_size])
 
 #reassign seqlets to best match motif
 class AssignSeqletsByBestCrossCorr(object):
@@ -451,10 +456,6 @@ class SimilarPatternsCollapser(object):
                             if (original_patterns[k]==parent_pattern or
                                 original_patterns[k]==child_pattern):
                                 original_patterns[k]=new_parent_pattern
-                    else:
-                        if (self.verbose):
-                            print("Not collapsing "+str(i)+" & "+str(j+i)
-                                 +" with similarity "+str(best_crosscorr)) 
 
         return sorted(self.postprocessor(list(set(original_patterns))),
                       key=lambda x: -x.num_seqlets)

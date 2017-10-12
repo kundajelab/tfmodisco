@@ -64,20 +64,15 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, affmat_transformer=None, min_cluster_size=10,
                        q_tol=1e-3, louvain_time_limit=2000,
-                       verbose=True, min_nonneg=0, max_nonneg=None,
-                       second_transformer = None):
+                       verbose=True):
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
         self.q_tol = q_tol
         self.louvain_time_limit = louvain_time_limit
         self.verbose = verbose
-        self.min_nonneg = min_nonneg
-        self.max_nonneg = max_nonneg
-        self.second_transformer = second_transformer
     
     def cluster(self, orig_affinity_mat):
 
-        self.max_nonneg = len(orig_affinity_mat)
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
         all_start = time.time()
@@ -86,42 +81,18 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         else:
             affinity_mat = orig_affinity_mat
 
-        #subset the affinity mat to rows that have at least
-        #self.min_nonneg nonnegative connections; the ones that don't pass
-        #this filter as are assigned a cluster of -2 
-        #the -2 is to discount the self-connection
-        num_connected_neighbors = np.sum(affinity_mat > 0, axis=1)-1
-        filtered_mask = ((num_connected_neighbors >= self.min_nonneg)*
-                         (num_connected_neighbors <= self.max_nonneg))
-
-        if (self.verbose):
-            print(str(sum(filtered_mask))+" points remain after subsetting")
-
-        if (self.second_transformer is not None):
-            if (self.verbose):
-                print("Beginning second round preprocessing")
-            subsetted_affmat = orig_affinity_mat[filtered_mask]
-            subsetted_affmat = subsetted_affmat[:,filtered_mask]
-            subsetted_affmat = self.second_transformer(subsetted_affmat)
-        else:
-            subsetted_affmat = affinity_mat[filtered_mask]
-            subsetted_affmat = subsetted_affmat[:,filtered_mask]
-
-        subset_communities, graph, Q, hierarchy =\
+        communities, graph, Q, hierarchy =\
             ph.cluster.runlouvain_given_graph(
-                graph=subsetted_affmat,
+                graph=affinity_mat,
                 min_cluster_size=self.min_cluster_size,
                 q_tol=self.q_tol,
                 louvain_time_limit=self.louvain_time_limit)
-
-        #fill in the communities that are -2
-        communities = (np.ones(len(affinity_mat))*-2).astype("int")
-        communities[filtered_mask] = subset_communities
 
         cluster_results = LouvainClusterResults(
                 cluster_indices=communities,
                 hierarchy=hierarchy,
                 Q=Q)
+
         if (self.verbose):
             print("Preproc + Louvain took "+str(time.time()-all_start)+" s")
         return cluster_results
