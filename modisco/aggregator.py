@@ -51,7 +51,7 @@ class TrimToBestWindow(AbstractAggSeqletPostprocessor):
                     np.concatenate(
                     [aggregated_seqlet[track_name].fwd
                       .reshape(len(aggregated_seqlet),-1) for
-                     track_name in self.track_names], axis=0)),axis=1),
+                     track_name in self.track_names], axis=1)),axis=1),
                 window_size=self.window_size))
             end_idx = start_idx + self.window_size
             trimmed_agg_seqlets.append(
@@ -99,8 +99,9 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
                     skipped_seqlets += 1 
             if self.verbose and (skipped_seqlets > 0):
                 print("Skipped "+str(skipped_seqlets)+" seqlets") 
-            new_aggregated_seqlets.append(core.AggregatedSeqlet(
-                seqlets_and_alnmts_arr=new_seqlets_and_alnmts))
+            if (len(new_seqlets_and_alnmts) > 0):
+                new_aggregated_seqlets.append(core.AggregatedSeqlet(
+                    seqlets_and_alnmts_arr=new_seqlets_and_alnmts))
         return new_aggregated_seqlets 
 
 
@@ -121,6 +122,10 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
     def __call__(self, twod_mat):
         import sklearn.cluster
 
+        if (len(twod_mat) < self.minimum_size_for_splitting):
+            print("No split; cluster size is "+str(len(twod_mat)))
+            return np.zeros(len(twod_mat))
+            
         cluster_indices = sklearn.cluster.KMeans(n_clusters=2).\
                                fit_predict(twod_mat)
 
@@ -130,8 +135,7 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
                        np.linalg.norm(cluster1_mean)
                        *np.linalg.norm(cluster2_mean))
 
-        if (cosine_dist > self.threshold or
-             (len(twod_mat) < self.minimum_size_for_splitting)):
+        if (cosine_dist > self.threshold):
             print("No split; similarity is "+str(cosine_dist)+" and "
                   "cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
@@ -400,11 +404,13 @@ class HierarchicalSeqletAggregator(object):
                 parent_agg_seqlet.merge_aggregated_seqlet(
                     agg_seqlet=child_agg_seqlet,
                     aligner=self.pattern_aligner)
-                aggregated_seqlets[i] = parent_agg_seqlet 
-                aggregated_seqlets[j] = parent_agg_seqlet
+                for k in range(len(aggregated_seqlets)):
+                    if (aggregated_seqlets[k] == child_agg_seqlet):
+                        aggregated_seqlets[k] = parent_agg_seqlet
 
         initial_aggregated = list(set(aggregated_seqlets))
-        assert len(initial_aggregated)==1,str(len(initial_aggregated))+" "+str(initial_aggregated)
+        assert len(initial_aggregated)==1,\
+            str(len(initial_aggregated))+" "+str(initial_aggregated)
         
         to_return = initial_aggregated
         if (self.postprocessor is not None):

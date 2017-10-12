@@ -555,6 +555,11 @@ class AggregatedSeqlet(Pattern):
                 new_seqlets_and_alnmnts.append(
                     SeqletAndAlignment(seqlet=new_seqlet,
                                        alnmt=new_alnmt)) 
+            else:
+                print(seqlet_and_alnmt.alnmt)
+                print(len(seqlet_and_alnmt.seqlet))
+                print(start_idx, end_idx)
+                assert False
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts)
 
     def get_per_position_seqlet_center_counts(self):
