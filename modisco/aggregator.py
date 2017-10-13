@@ -6,6 +6,7 @@ from . import util
 from . import backend as B
 from collections import OrderedDict
 import itertools
+import sys
 
 
 class AbstractAggSeqletPostprocessor(object):
@@ -99,6 +100,7 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
                     skipped_seqlets += 1 
             if self.verbose and (skipped_seqlets > 0):
                 print("Skipped "+str(skipped_seqlets)+" seqlets") 
+                sys.stdout.flush()
             if (len(new_seqlets_and_alnmts) > 0):
                 new_aggregated_seqlets.append(core.AggregatedSeqlet(
                     seqlets_and_alnmts_arr=new_seqlets_and_alnmts))
@@ -143,6 +145,7 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
             if (self.verbose):
                 print("Split detected; similarity is "+str(cosine_dist)+" and "
                       "cluster size is "+str(len(twod_mat)))
+                sys.stdout.flush()
             for i in range(2):
                 max_cluster_idx = np.max(cluster_indices)
                 mask_for_this_cluster = (cluster_indices==i)
@@ -166,6 +169,10 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
     def __call__(self, aggregated_seqlets):
         to_return = []
         for agg_seq_idx, aggregated_seqlet in enumerate(aggregated_seqlets):
+            if (self.verbose):
+                print("Inspecting cluster "+str(agg_seq_idx)
+                      +" for spurious merging")
+                sys.stdout.flush()
             assert len(set(len(x.seqlet) for x in
                        aggregated_seqlet._seqlets_and_alnmts))==1,\
                 ("all seqlets should be same length; use "+
@@ -177,6 +184,9 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
             subcluster_indices = self.subclusters_detector(sum_per_position)
             num_subclusters = np.max(subcluster_indices)+1
             if (num_subclusters > 1):
+                if (self.verbose):
+                    print("Got "+str(num_subclusters)+" subclusters")
+                    sys.stdout.flush()
                 for i in range(num_subclusters):
                     seqlets_and_alnmts_for_subcluster = [x[0] for x in
                         zip(aggregated_seqlet._seqlets_and_alnmts,
@@ -282,6 +292,7 @@ class AssignSeqletsByBestCrossCorr(object):
         if (self.verbose):
             if discarded_seqlets > 0:
                 print("Discarded "+str(discarded_seqlets)+" seqlets") 
+                sys.stdout.flush()
 
         new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
             for x in seqlet_and_alnmnt_grps if len(x) > 0]
@@ -311,6 +322,7 @@ class SeparateOnSeqletCenterPeaks(AbstractAggSeqletPostprocessor):
                     [list() for x in enumerated_peaks]
                 if (self.verbose):
                     print("Found "+str(len(enumerated_peaks))+" peaks") 
+                    sys.stdout.flush()
                 #sort the seqlets by the peak whose center they are
                 #closest to 
                 seqlets_and_alnmts = aggregated_seqlet._seqlets_and_alnmts
@@ -452,6 +464,7 @@ class SimilarPatternsCollapser(object):
                         if (self.verbose):
                             print("Collapsing "+str(i)+" & "+str(j+i)
                                  +" with similarity "+str(best_crosscorr)) 
+                            sys.stdout.flush()
                         parent_pattern.merge_aggregated_seqlet(
                             agg_seqlet=child_pattern,
                             aligner=self.pattern_aligner) 

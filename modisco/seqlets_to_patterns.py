@@ -5,6 +5,8 @@ from . import aggregator
 from . import core
 from collections import defaultdict, OrderedDict
 import itertools
+import time
+import sys
 
 
 class AbstractSeqletsToPatterns(object):
@@ -31,7 +33,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        final_flank_to_add=20,
                        verbose=True,
                        batch_size=50,
-                       progress_update=None):
+                       affmat_progress_update=5000):
         self.crosscorr_track_names = crosscorr_track_names
         self.track_set = track_set
         self.crosscorr_min_overlap = crosscorr_min_overlap
@@ -50,7 +52,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.final_flank_to_add=final_flank_to_add
         self.verbose = verbose
         self.batch_size = batch_size
-        self.progress_update = progress_update
+        self.affmat_progress_update = affmat_progress_update
         self.build() 
 
     def build(self):
@@ -64,7 +66,8 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.affinity_mat_from_seqlets =\
             affmat.MaxCrossCorrAffinityMatrixFromSeqlets(
                 pattern_crosscorr_settings=self.pattern_crosscorr_settings,
-                progress_update=self.progress_update)
+                batch_size=self.batch_size,
+                progress_update=self.affmat_progress_update)
 
         self.clusterer = cluster.core.LouvainCluster(
             affmat_transformer=\
@@ -137,22 +140,39 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                 pattern_crosscorr_settings=self.pattern_crosscorr_settings,
                 min_similarity=self.min_similarity_for_seqlet_assignment,
                 batch_size=self.batch_size,
-                progress_update=self.progress_update),
+                progress_update=None),
             min_cluster_size=self.final_min_cluster_size,
             postprocessor=self.expand_trim_expand2) 
         
 
     def __call__(self, seqlets):
 
+        start = time.time()
+
         if (self.verbose):
             print("Computing affinity matrix")
+            sys.stdout.flush()
+        affmat_start = time.time()
         affinity_mat = self.affinity_mat_from_seqlets(seqlets)
         if (self.verbose):
+            print("Affinity mat computed in "
+                  +str(round(time.time()-affmat_start,2))+"s")
+            sys.stdout.flush()
+        #silence it for later steps
+        self.affinity_mat_from_seqlets.progress_update = None
+
+        if (self.verbose):
             print("Computing clustering")
+            sys.stdout.flush()
         cluster_results = self.clusterer(affinity_mat)
         num_clusters = max(cluster_results.cluster_indices+1)
         if (self.verbose):
             print("Got "+str(num_clusters)+" clusters initially")
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("Aggregating seqlets in each cluster")
+            sys.stdout.flush()
 
         cluster_to_seqlets = defaultdict(list)
         for cluster_val, seqlet in zip(cluster_results.cluster_indices,
@@ -161,11 +181,15 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
         cluster_to_aggregated_seqlets = OrderedDict()
         for i in range(num_clusters):
+            if (self.verbose):
+                print("Aggregating for cluster "+str(i))
+                sys.stdout.flush()
             cluster_to_aggregated_seqlets[i] =\
                 self.seqlet_aggregator(cluster_to_seqlets[i])
 
         if (self.verbose):
             print("Collapsing similar patterns")
+            sys.stdout.flush()
 
         merged_patterns = self.similar_patterns_collapser(
             list(itertools.chain(*cluster_to_aggregated_seqlets.values())))
@@ -173,11 +197,18 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("Eliminating clusters smaller than "
                   +(str(self.final_min_cluster_size)))
+            sys.stdout.flush()
 
         merged_patterns = self.small_clusters_eliminator(merged_patterns)
 
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns")
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("Total time taken is "
+                  +str(round(time.time()-start,2))+"s")
+            sys.stdout.flush()
 
         return merged_patterns 
 

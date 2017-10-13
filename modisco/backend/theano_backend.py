@@ -2,6 +2,7 @@ from __future__ import division, print_function
 import theano
 from theano import tensor as T
 import numpy as np
+import sys
 
 
 def run_function_in_batches(func,
@@ -23,6 +24,7 @@ def run_function_in_batches(func,
         if (progress_update is not None):
             if (i%progress_update == 0):
                 print("Done",i)
+                sys.stdout.flush()
         func_output = func(*([x[i:i+batch_size] for x in input_data_list]
                                 +([] if learning_phase is
                                    None else [learning_phase])
@@ -119,6 +121,7 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
         if (progress_update is not None):
             print("On filters",filter_idx,"to",
                   min((filter_idx+filter_batch_size),len(filters)))
+            sys.stdout.flush()
 
         filter_batch = filters[filter_idx:
                               min((filter_idx+filter_batch_size),len(filters))]

@@ -6,6 +6,7 @@ import numpy as np
 from collections import defaultdict
 import itertools
 from sklearn.neighbors.kde import KernelDensity
+import sys
 
 
 class AbstractCoordProducer(object):
@@ -75,7 +76,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
 
     def __init__(self, sliding=11,
                        flank=10,
-                       suppress=20,
+                       suppress=None,
                        max_seqlets_per_seq=10,
                        thresholding_function=MaxCurvatureThreshold(
                             bins=100, bandwidth=0.1,
@@ -88,6 +89,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        verbose=True):
         self.sliding = sliding
         self.flank = flank
+        if (suppress is None):
+            suppress = int(0.5*sliding) + flank
         self.suppress = suppress
         self.max_seqlets_per_seq = max_seqlets_per_seq
         self.thresholding_function = thresholding_function
@@ -101,15 +104,11 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
     def __call__(self, score_track):
      
         assert len(score_track.shape)==2 
-        if (self.verbose):
-            print("Compiling functions") 
         window_sum_function = B.get_window_sum_function(
                                 window_size=self.sliding,
                                 same_size_return=False)
         argmax_func = B.get_argmax_function()
 
-        if (self.verbose):
-            print("Computing window sums") 
         summed_score_track = np.array(window_sum_function(
             inp=score_track,
             batch_size=self.batch_size,
@@ -121,9 +120,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         #the seqlets (which are likely to be outliers)
         zerod_out_summed_score_track = np.copy(summed_score_track)
          
-        if (self.verbose):
-            print("Identifying seqlet coordinates") 
-
         coords = []
         max_per_seq = None
         for n in range(self.max_seqlets_per_seq):
@@ -176,11 +172,13 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
 
         if (self.verbose):
             print("Got "+str(len(coords))+" coords")
+            sys.stdout.flush()
 
         vals_to_threshold = np.array([np.abs(x.score) for x in coords])
         if (self.thresholding_function is not None):
             if (self.verbose):
                 print("Computing thresholds")
+                sys.stdout.flush()
             threshold = self.thresholding_function(vals_to_threshold) 
         else:
             threshold = 0.0
@@ -188,10 +186,12 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         coords = [x for x in coords if x.score >= threshold]
         if (self.verbose):
             print(str(len(coords))+" coords remaining after thresholding")
+            sys.stdout.flush()
 
         if (len(coords) > self.max_seqlets_total):
             if (self.verbose):
                 print("Limiting to top "+str(self.max_seqlets_total))
+                sys.stdout.flush()
             coords = sorted(coords, key=lambda x: -x.score)\
                                [:self.max_seqlets_total]
         return coords

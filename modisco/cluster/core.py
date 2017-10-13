@@ -3,6 +3,7 @@ import sklearn
 from . import phenograph as ph
 import numpy as np
 import time
+import sys
 
 
 class ClusterResults(object):
@@ -75,6 +76,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
+            sys.stdout.flush()
         all_start = time.time()
         if (self.affmat_transformer is not None):
             affinity_mat = self.affmat_transformer(orig_affinity_mat)
@@ -95,5 +97,6 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
         if (self.verbose):
             print("Preproc + Louvain took "+str(time.time()-all_start)+" s")
+            sys.stdout.flush()
         return cluster_results
  
