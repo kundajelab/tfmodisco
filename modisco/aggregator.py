@@ -123,7 +123,7 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
         import sklearn.cluster
 
         if (len(twod_mat) < self.minimum_size_for_splitting):
-            print("No split; cluster size is "+str(len(twod_mat)))
+            #print("No split; cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
             
         cluster_indices = sklearn.cluster.KMeans(n_clusters=2).\
@@ -136,12 +136,13 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
                        *np.linalg.norm(cluster2_mean))
 
         if (cosine_dist > self.threshold):
-            print("No split; similarity is "+str(cosine_dist)+" and "
-                  "cluster size is "+str(len(twod_mat)))
+            #print("No split; similarity is "+str(cosine_dist)+" and "
+            #      "cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
         else:
-            print("Split detected; similarity is "+str(cosine_dist)+" and "
-                  "cluster size is "+str(len(twod_mat)))
+            if (self.verbose):
+                print("Split detected; similarity is "+str(cosine_dist)+" and "
+                      "cluster size is "+str(len(twod_mat)))
             for i in range(2):
                 max_cluster_idx = np.max(cluster_indices)
                 mask_for_this_cluster = (cluster_indices==i)

@@ -100,7 +100,7 @@ def get_argmax_function():
 
 
 def max_cross_corrs(filters, things_to_scan, min_overlap,
-                       verbose=True, batch_size=50,
+                       batch_size=50,
                        func_params_size=1000000,
                        progress_update=1000):
     """
@@ -116,7 +116,7 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
     filter_length = filters.shape[-1]
     filter_idx = 0 
     while filter_idx < filters.shape[0]:
-        if (verbose):
+        if (progress_update is not None):
             print("On filters",filter_idx,"to",
                   min((filter_idx+filter_batch_size),len(filters)))
 
@@ -147,8 +147,7 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
                             func=max_cross_corr_func,
                             input_data_list=[padded_input],
                             batch_size=batch_size,
-                            progress_update=(None if verbose==False else
-                                             progress_update)))
+                            progress_update=progress_update))
         assert len(max_cross_corrs.shape)==2, max_cross_corrs.shape
         to_return[filter_idx:
                   min((filter_idx+filter_batch_size),len(filters)),:] =\

@@ -27,7 +27,7 @@ class LouvainClusterResults(ClusterResults):
 
 class AbstractAffinityMatClusterer(object):
 
-    def cluster(self, affinity_mat):
+    def __call__(self, affinity_mat):
         raise NotImplementedError()
 
 
@@ -46,7 +46,7 @@ class PhenographCluster(AbstractAffinityMatClusterer):
         self.louvain_time_limit = louvain_time_limit
         self.nn_method = nn_method
     
-    def cluster(self, affinity_mat):
+    def __call__(self, affinity_mat):
         communities, graph, Q, hierarchy = ph.cluster.cluster(
             data=affinity_mat,
             k=self.k, min_cluster_size=self.min_cluster_size,
@@ -71,7 +71,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         self.louvain_time_limit = louvain_time_limit
         self.verbose = verbose
     
-    def cluster(self, orig_affinity_mat):
+    def __call__(self, orig_affinity_mat):
 
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
