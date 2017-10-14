@@ -217,11 +217,12 @@ class ReassignSeqletsFromSmallClusters(AbstractAggSeqletPostprocessor):
             *[[x.seqlet for x in pattern._seqlets_and_alnmts]
               for pattern in small_patterns]))
         if (len(large_patterns) > 0):
-            large_patterns, new_assignments =\
-                self.seqlet_assigner(patterns=large_patterns,
-                                     seqlets_to_assign=seqlets_to_assign,
-                                     merge_into_existing_patterns=True)
-            large_patterns = [self.postprocessor(x) for x in large_patterns]
+            if (len(seqlets_to_assign) > 0):
+                large_patterns, new_assignments =\
+                    self.seqlet_assigner(patterns=large_patterns,
+                                         seqlets_to_assign=seqlets_to_assign,
+                                         merge_into_existing_patterns=True)
+            large_patterns = self.postprocessor(large_patterns)
             return large_patterns
         else:
             return []
@@ -345,7 +346,9 @@ class AssignSeqletsByBestCrossCorr(object):
         if (merge_into_existing_patterns):
             new_patterns = patterns
             for pattern,x in zip(patterns, seqlet_and_alnmnt_grps):
-                pattern.merge_seqlets_and_alnmts(x) 
+                pattern.merge_seqlets_and_alnmts(
+                    seqlets_and_alnmts=x,
+                    aligner=self.pattern_aligner) 
         else:
             new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
                 for x in seqlet_and_alnmnt_grps if len(x) > 0]
@@ -529,6 +532,11 @@ class SimilarPatternsCollapser(object):
                             if (original_patterns[k]==parent_pattern or
                                 original_patterns[k]==child_pattern):
                                 original_patterns[k]=new_parent_pattern
+                    else:
+                        if (self.verbose):
+                            print("Not collapsing "+str(i)+" & "+str(j+i)
+                                 +" with similarity "+str(best_crosscorr)) 
+                            sys.stdout.flush()
 
         return sorted(self.postprocessor(list(set(original_patterns))),
                       key=lambda x: -x.num_seqlets)

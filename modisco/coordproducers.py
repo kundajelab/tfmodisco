@@ -82,7 +82,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                             num_to_consider=1000000, verbose=True),
                        min_ratio_top_peak=0.0,
                        min_ratio_over_bg=0.0,
-                       apply_recentering=True,
+                       apply_recentering=False,
                        max_seqlets_total=20000,
                        batch_size=50,
                        progress_update=5000,
