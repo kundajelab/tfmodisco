@@ -232,21 +232,30 @@ class AbstractThresholdLabeler(AbstractLabeler):
                     val=self.get_val(seqlet))
 
 
-class SignedAbsContribThresholdLabeler(AbstractThresholdLabeler):
+class SignedContribThresholdLabeler(AbstractThresholdLabeler):
 
-    def __init__(self, name, track_name):
-        super(SignedAbsContribThresholdLabeler, self).__init__(name=name)
+    def __init__(self, name, track_name, flank_to_ignore):
+        super(SignedContribThresholdLabeler, self).__init__(name=name)
         self.track_name = track_name
+        self.flank_to_ignore = flank_to_ignore
 
     def get_val(self, seqlet):
-        track_values = seqlet[self.track_name].fwd
-        return np.sum(np.abs(track_values))*np.sign(np.sum(track_values))
+        track_values = seqlet[self.track_name]\
+                        .fwd[self.flank_to_ignore:-self.flank_to_ignore]
+        return np.sum(track_values)
 
     def determine_threshold_from_vals(self, vals):
         return np.min(np.abs(vals))
 
     def get_label_given_threshold_and_val(self, threshold, val):
-        return (threshold <= np.abs(val))*np.sign(val)
+       # sigmoid_logit = (np.abs(val)/threshold - 1.0)/100.0
+       # sigmoid_logit = min(sigmoid_logit, 10.0)
+       # return (np.exp(sigmoid_logit)/(1+np.exp(sigmoid_logit)))*np.sign(val)
+        sigmoid_logit = np.abs(val)*(15.0/threshold)
+        sigmoid_logit = min(sigmoid_logit, 15)
+        return (2*(np.exp(sigmoid_logit)/                                      
+                    (1+np.exp(sigmoid_logit)))-1)*np.sign(val)
+        #return (threshold <= np.abs(val))*np.sign(val)
 
 
 class MultiTaskSeqletCreation(object):
@@ -629,7 +638,7 @@ class AggregatedSeqlet(Pattern):
                 rev=self._track_name_to_agg_revcomp[track_name],
                 has_pos_axis=sample_seqlet[track_name].has_pos_axis) 
 
-    def get_nonzero_average(self, track_name):
+    def get_nonzero_average(self, track_name, pseudocount):
         fwd_nonzero_count = np.zeros_like(self[track_name].fwd)
         rev_nonzero_count = np.zeros_like(self[track_name].rev)
         has_pos_axis = self[track_name].has_pos_axis
@@ -643,9 +652,9 @@ class AggregatedSeqlet(Pattern):
                               motif_length-alnmt] +=\
                 (np.abs(seqlet_and_alnmt.seqlet[track_name].rev) > 0.0)
         return Snippet(fwd=self._track_name_to_agg[track_name]
-                           /(fwd_nonzero_count+(fwd_nonzero_count==0)),
+                           /(fwd_nonzero_count+pseudocount),
                        rev=self._track_name_to_agg_revcomp[track_name]
-                           /(rev_nonzero_count+(rev_nonzero_count==0)),
+                           /(rev_nonzero_count+pseudocount),
                        has_pos_axis=has_pos_axis)
 
 
@@ -690,9 +699,14 @@ class AggregatedSeqlet(Pattern):
                     extended_rev_track
 
     def merge_aggregated_seqlet(self, agg_seqlet, aligner):
-        #only merge those seqlets in agg_seqlet that are not already
-        #in the current seqlet
-        for seqlet_and_alnmt in agg_seqlet.seqlets_and_alnmts:
+        self.merge_seqlets_and_alnmts(
+            seqlets_and_alnmts=agg_seqlet.seqlets_and_alnmts,
+            aligner=aligner)
+
+    def merge_seqlets_and_alnmts(self, seqlets_and_alnmts, aligner):
+        for seqlet_and_alnmt in seqlets_and_alnmts:
+            #only merge those seqlets in agg_seqlet that are not already
+            #in the current seqlet
             if (seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts): 
                 self.add_pattern(pattern=seqlet_and_alnmt.seqlet,
                                  aligner=aligner) 

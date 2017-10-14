@@ -21,7 +21,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        track_set,
                        crosscorr_min_overlap=0.5,
                        affmat_progress_update=5000,
-                       min_rows_before_applying_filtering=1000,
+                       min_rows_before_applying_filtering=0,
                        bins_for_curvature_threshold=15,
                        min_jaccard_sim=0.2,
                        min_edges_per_row=5, 
@@ -30,13 +30,11 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        frac_support_to_trim_to=0.2,
                        trim_to_window_size=30,
                        initial_flank_to_add=10,
+                       per_track_min_similarity_for_seqlet_assignment=0,
+                       final_min_cluster_size=40,
                        similarity_splitting_threshold=0.85,
                        per_track_similarity_merging_threshold=0.85,
-                       per_track_min_similarity_for_seqlet_assignment=0,
-                       final_min_cluster_size=20,
                        final_flank_to_add=10,
-                       percent_change_in_assignments_tolerance=0.1,
-                       max_reassignment_rounds=3, 
                        verbose=True,
                        batch_size=50):
 
@@ -64,20 +62,17 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.trim_to_window_size = trim_to_window_size
         self.initial_flank_to_add = initial_flank_to_add
 
+        #reassignment settings
+        self.per_track_min_similarity_for_seqlet_assignment =\
+            per_track_min_similarity_for_seqlet_assignment
+        self.final_min_cluster_size = final_min_cluster_size
+
         #split detection settings
         self.similarity_splitting_threshold = similarity_splitting_threshold
 
         #cluster merging settings
         self.per_track_similarity_merging_threshold =\
             per_track_similarity_merging_threshold
-        self.per_track_min_similarity_for_seqlet_assignment =\
-            per_track_min_similarity_for_seqlet_assignment
-
-        #reassignment settings
-        self.percent_change_in_assignments_tolerance =\
-            percent_change_in_assignments_tolerance
-        self.max_reassignment_rounds = max_reassignment_rounds
-        self.final_min_cluster_size = final_min_cluster_size
 
         #final postprocessor settings
         self.final_flank_to_add=final_flank_to_add
@@ -137,15 +132,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.postprocessor1 =\
             aggregator.TrimToFracSupport(
                         frac=self.frac_support_to_trim_to).chain(
-            self.expand_trim_expand1).chain(
-            aggregator.DetectSpuriousMerging(
-                track_names=self.crosscorr_track_names,
-                track_transformer=affmat.MeanNormalizer().chain(
-                                  affmat.MagnitudeNormalizer()),
-                subclusters_detector=aggregator.RecursiveKmeans(
-                    threshold=self.similarity_splitting_threshold,
-                    minimum_size_for_splitting=self.final_min_cluster_size,
-                    verbose=self.verbose)))
+            self.expand_trim_expand1)
 
         self.pattern_aligner = core.CrossCorrelationPatternAligner(
             pattern_crosscorr_settings=self.pattern_crosscorr_settings)
@@ -154,6 +141,15 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
             pattern_aligner=self.pattern_aligner,
             affinity_mat_from_seqlets=self.affinity_mat_from_seqlets,
             postprocessor=self.postprocessor1) 
+
+        self.split_detector = aggregator.DetectSpuriousMerging(
+                track_names=self.crosscorr_track_names,
+                track_transformer=affmat.MeanNormalizer().chain(
+                                  affmat.MagnitudeNormalizer()),
+                subclusters_detector=aggregator.RecursiveKmeans(
+                    threshold=self.similarity_splitting_threshold,
+                    minimum_size_for_splitting=self.final_min_cluster_size,
+                    verbose=self.verbose))
 
         self.similarity_merging_threshold =\
             (len(self.crosscorr_track_names)*
@@ -169,24 +165,20 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.min_similarity_for_seqlet_assignment =\
             (len(self.crosscorr_track_names)*
              self.per_track_min_similarity_for_seqlet_assignment)
-
-        self.final_postprocessor = aggregator.ExpandSeqletsToFillPattern(
-                                        track_set=self.track_set,
-                                        flank_to_add=self.final_flank_to_add)
-
         self.seqlet_reassigner =\
-           aggregator.ReassignSeqletsTillConvergence(
+           aggregator.ReassignSeqletsFromSmallClusters(
             seqlet_assigner=aggregator.AssignSeqletsByBestCrossCorr(
                 pattern_crosscorr_settings=self.pattern_crosscorr_settings,
                 min_similarity=self.min_similarity_for_seqlet_assignment,
                 batch_size=self.batch_size,
                 progress_update=None),
-            percent_change_tolerance=
-                self.percent_change_in_assignments_tolerance,
-            max_rounds=self.max_reassignment_rounds,
             min_cluster_size=self.final_min_cluster_size,
             postprocessor=self.expand_trim_expand1,
             verbose=self.verbose) 
+
+        self.final_postprocessor = aggregator.ExpandSeqletsToFillPattern(
+                                        track_set=self.track_set,
+                                        flank_to_add=self.final_flank_to_add)
         
 
     def __call__(self, seqlets):
@@ -241,23 +233,34 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                 sys.stdout.flush()
             cluster_to_aggregated_seqlets[i] =\
                 self.seqlet_aggregator(cluster_to_seqlets[i])
+        patterns = list(itertools.chain(
+                        *cluster_to_aggregated_seqlets.values()))
+
+        if (self.verbose):
+            print("Detecting splits")
+            sys.stdout.flush()
+        patterns = self.split_detector(patterns)
+        if (self.verbose):
+            print("Got "+str(len(patterns))+" after split detection")
+            sys.stdout.flush()
 
         if (self.verbose):
             print("Collapsing similar patterns")
             sys.stdout.flush()
-
-        merged_patterns = self.similar_patterns_collapser(
-            list(itertools.chain(*cluster_to_aggregated_seqlets.values())))
+        patterns = self.similar_patterns_collapser(patterns)
+        if (self.verbose):
+            print("Got "+str(len(patterns))+" after collapsing")
+            sys.stdout.flush()
 
         if (self.verbose):
             print("Performing seqlet reassignment")
             sys.stdout.flush()
+        patterns = self.seqlet_reassigner(patterns)
 
-        merged_patterns = self.seqlet_reassigner(merged_patterns)
-        merged_patterns = self.final_postprocessor(merged_patterns)
+        patterns = self.final_postprocessor(patterns)
 
         if (self.verbose):
-            print("Got "+str(len(merged_patterns))+" patterns")
+            print("Got "+str(len(patterns))+" patterns")
             sys.stdout.flush()
 
         if (self.verbose):
@@ -265,5 +268,5 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                   +str(round(time.time()-start,2))+"s")
             sys.stdout.flush()
 
-        return merged_patterns 
+        return patterns 
 

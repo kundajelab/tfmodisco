@@ -36,7 +36,6 @@ class MaxCurvatureThreshold(object):
         self.verbose = verbose
 
     def __call__(self, values):
-        assert np.min(values) >= 0
 
         hist_y, hist_x = np.histogram(values, bins=self.bins*2)
         hist_x = 0.5*(hist_x[:-1]+hist_x[1:])
@@ -83,6 +82,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                             num_to_consider=1000000, verbose=True),
                        min_ratio_top_peak=0.0,
                        min_ratio_over_bg=0.0,
+                       apply_recentering=True,
                        max_seqlets_total=20000,
                        batch_size=50,
                        progress_update=5000,
@@ -96,6 +96,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.thresholding_function = thresholding_function
         self.min_ratio_top_peak = min_ratio_top_peak
         self.min_ratio_over_bg = min_ratio_over_bg
+        self.apply_recentering = apply_recentering
         self.max_seqlets_total = max_seqlets_total
         self.batch_size = batch_size
         self.progress_update = progress_update
@@ -109,11 +110,12 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                                 same_size_return=False)
         argmax_func = B.get_argmax_function()
 
-        summed_score_track = np.array(window_sum_function(
+        original_summed_score_track = np.array(window_sum_function(
             inp=score_track,
             batch_size=self.batch_size,
             progress_update=
              (self.progress_update if self.verbose else None))).astype("float") 
+        summed_score_track = original_summed_score_track.copy()
 
         #As we extract seqlets, we will zero out the values at those positions
         #so that the mean of the background can be updated to exclude
@@ -161,7 +163,34 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                             start=argmax-self.flank,
                             end=argmax+self.sliding+self.flank,
                             score=chunk_height) 
-                        coords.append(coord)
+                        if (self.apply_recentering):
+                            half_sliding = int(0.5*self.sliding)
+                            if ((argmax+half_sliding+self.flank <=
+                                 original_summed_score_track.shape[1]) and
+                                (argmax >= self.flank+half_sliding)):
+                                arr_to_check_for_center =\
+                                    original_summed_score_track[
+                                        example_idx,
+                                        argmax-self.flank-half_sliding:
+                                         argmax+half_sliding+self.flank] 
+                                adjusted_argmax =\
+                                    (argmax+np.argmax(arr_to_check_for_center)
+                                      -(half_sliding+self.flank))
+                                if ((adjusted_argmax >= self.flank) and
+                                    (adjusted_argmax <=
+                                     (score_track.shape[1] 
+                                      -(self.sliding+self.flank)))):
+                                    coords.append(
+                                        SeqletCoordsFWAP(
+                                            example_idx=example_idx,
+                                            start=adjusted_argmax-self.flank,
+                                            end=adjusted_argmax
+                                                +self.sliding+self.flank,
+                                            score=original_summed_score_track
+                                                       [example_idx,
+                                                        adjusted_argmax]))
+                        else:
+                            coords.append(coord)
                     #only zero out if the region was included, so that we
                     #don't zero out sequences that do not pass the conditions
                     zerod_out_summed_score_track[
@@ -180,6 +209,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 print("Computing thresholds")
                 sys.stdout.flush()
             threshold = self.thresholding_function(vals_to_threshold) 
+            if (self.verbose):
+                print("Computed threshold "+str(threshold))
+                sys.stdout.flush()
         else:
             threshold = 0.0
 

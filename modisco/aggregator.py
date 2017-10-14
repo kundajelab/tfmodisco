@@ -125,7 +125,7 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
         import sklearn.cluster
 
         if (len(twod_mat) < self.minimum_size_for_splitting):
-            #print("No split; cluster size is "+str(len(twod_mat)))
+            print("No split; cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
             
         cluster_indices = sklearn.cluster.KMeans(n_clusters=2).\
@@ -197,14 +197,43 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         return to_return
 
 
+class ReassignSeqletsFromSmallClusters(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, seqlet_assigner,
+                       min_cluster_size, postprocessor, verbose):
+        self.seqlet_assigner = seqlet_assigner
+        self.min_cluster_size = min_cluster_size
+        self.postprocessor = postprocessor
+        self.verbose = verbose
+
+    def __call__(self, patterns):
+        
+        #do a final assignment
+        small_patterns =\
+            [x for x in patterns if x.num_seqlets < self.min_cluster_size]
+        large_patterns =\
+            [x for x in patterns if x.num_seqlets >= self.min_cluster_size]
+        seqlets_to_assign = list(itertools.chain(
+            *[[x.seqlet for x in pattern._seqlets_and_alnmts]
+              for pattern in small_patterns]))
+        if (len(large_patterns) > 0):
+            large_patterns, new_assignments =\
+                self.seqlet_assigner(patterns=large_patterns,
+                                     seqlets_to_assign=seqlets_to_assign,
+                                     merge_into_existing_patterns=True)
+            large_patterns = [self.postprocessor(x) for x in large_patterns]
+            return large_patterns
+        else:
+            return []
+
+
 class ReassignSeqletsTillConvergence(AbstractAggSeqletPostprocessor):
 
     def __init__(self, seqlet_assigner, percent_change_tolerance, max_rounds,
-                       min_cluster_size, postprocessor, verbose):
+                       postprocessor, verbose):
         self.seqlet_assigner = seqlet_assigner
         self.percent_change_tolerance = percent_change_tolerance
         self.max_rounds = max_rounds
-        self.min_cluster_size = min_cluster_size
         self.postprocessor = postprocessor
         self.verbose = verbose
 
@@ -233,17 +262,8 @@ class ReassignSeqletsTillConvergence(AbstractAggSeqletPostprocessor):
             if (percent_change <= self.percent_change_tolerance):
                 break 
 
-        #do a final assignment
-        patterns =\
-            [x for x in patterns if x.num_seqlets >= self.min_cluster_size]
-        all_seqlets = list(itertools.chain(
-            *[[x.seqlet for x in pattern._seqlets_and_alnmts]
-              for pattern in patterns]))
-        patterns, new_assignments =\
-            self.seqlet_assigner(patterns=patterns,
-                                 seqlets_to_assign=all_seqlets)
-        return self.postprocessor([x for x in patterns
-                if x.num_seqlets >= self.min_cluster_size])
+        return patterns
+
 
 #reassign seqlets to best match motif
 class AssignSeqletsByBestCrossCorr(object):
@@ -262,7 +282,8 @@ class AssignSeqletsByBestCrossCorr(object):
         self.progress_update = progress_update
         self.func_params_size = func_params_size
 
-    def __call__(self, patterns, seqlets_to_assign):
+    def __call__(self, patterns, seqlets_to_assign,
+                       merge_into_existing_patterns):
 
         (pattern_fwd_data, pattern_rev_data) =\
             core.get_2d_data_from_patterns(
@@ -321,8 +342,13 @@ class AssignSeqletsByBestCrossCorr(object):
                 print("Discarded "+str(discarded_seqlets)+" seqlets") 
                 sys.stdout.flush()
 
-        new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
-            for x in seqlet_and_alnmnt_grps if len(x) > 0]
+        if (merge_into_existing_patterns):
+            new_patterns = patterns
+            for pattern,x in zip(patterns, seqlet_and_alnmnt_grps):
+                pattern.merge_seqlets_and_alnmts(x) 
+        else:
+            new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
+                for x in seqlet_and_alnmnt_grps if len(x) > 0]
 
         return new_patterns, seqlet_assignments
 
