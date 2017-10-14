@@ -23,7 +23,7 @@ class CurvatureBasedThreshold(AbstractThresholder):
         hist_x = 0.5*(hist_x[:-1] + hist_x[1:])
         median_x = next(hist_x[i] for i in range(len(hist_x)) if
                         (cumsum[i] > len(values)*0.5)) 
-        firstd_x, firstd_y = util.firstd(hist_x, hist_y)
+        firstd_x, firstd_y = util.angle_firstd(hist_x, hist_y)
         secondd_x, secondd_y = util.firstd(x_values=firstd_x,
                                            y_values=firstd_y) 
         try:

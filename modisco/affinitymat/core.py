@@ -2,6 +2,8 @@ from __future__ import division, print_function, absolute_import
 from .. import backend as B
 import numpy as np
 from .. import core as modiscocore
+from . import transformers
+import sys
 
 
 class AbstractTrackTransformer(object):
@@ -88,3 +90,39 @@ class MaxCrossCorrAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
                      progress_update=self.progress_update) 
         cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
         return cross_corrs
+
+
+class AbstractGetFilteredRowsMask(object):
+
+    def __call__(self, affinity_mat):
+        raise NotImplementedError()
+
+
+class FilterSparseRows(AbstractGetFilteredRowsMask):
+
+    def __init__(self, affmat_transformer,
+                       min_rows_before_applying_filtering,
+                       min_edges_per_row, verbose=True):
+        self.affmat_transformer = affmat_transformer
+        self.min_rows_before_applying_filtering =\
+             min_rows_before_applying_filtering
+        self.min_edges_per_row = min_edges_per_row
+        self.verbose = verbose
+
+    def __call__(self, affinity_mat):
+        if (len(affinity_mat) < self.min_rows_before_applying_filtering):
+            if (self.verbose):
+                print("Fewer than "
+                 +str(self.min_rows_before_applying_filtering)+" rows so"
+                 +" not applying filtering")
+                sys.stdout.flush()
+            return (np.ones(len(affinity_mat)) > 0.0) #keep all rows
+
+        affinity_mat = self.affmat_transformer(affinity_mat) 
+        per_node_neighbours = np.sum(affinity_mat > 0, axis=1) 
+        passing_nodes = per_node_neighbours > self.min_edges_per_row
+        if (self.verbose):
+            print(str(np.sum(passing_nodes))+" passing out of "
+                  +str(len(passing_nodes)))
+            sys.stdout.flush() 
+        return passing_nodes

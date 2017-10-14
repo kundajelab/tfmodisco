@@ -138,8 +138,8 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
                        *np.linalg.norm(cluster2_mean))
 
         if (cosine_dist > self.threshold):
-            #print("No split; similarity is "+str(cosine_dist)+" and "
-            #      "cluster size is "+str(len(twod_mat)))
+            print("No split; similarity is "+str(cosine_dist)+" and "
+                  "cluster size is "+str(len(twod_mat)))
             return np.zeros(len(twod_mat))
         else:
             if (self.verbose):
@@ -170,8 +170,7 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         to_return = []
         for agg_seq_idx, aggregated_seqlet in enumerate(aggregated_seqlets):
             if (self.verbose):
-                print("Inspecting cluster "+str(agg_seq_idx)
-                      +" for spurious merging")
+                print("Inspecting for spurious merging")
                 sys.stdout.flush()
             assert len(set(len(x.seqlet) for x in
                        aggregated_seqlet._seqlets_and_alnmts))==1,\
@@ -198,24 +197,52 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         return to_return
 
 
-#distribute seqlets from smaller clusters to the larger clusters
-class ReassignSeqletsToLargerClusters(AbstractAggSeqletPostprocessor):
+class ReassignSeqletsTillConvergence(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, seqlet_assigner, min_cluster_size, postprocessor):
+    def __init__(self, seqlet_assigner, percent_change_tolerance, max_rounds,
+                       min_cluster_size, postprocessor, verbose):
         self.seqlet_assigner = seqlet_assigner
+        self.percent_change_tolerance = percent_change_tolerance
+        self.max_rounds = max_rounds
         self.min_cluster_size = min_cluster_size
         self.postprocessor = postprocessor
+        self.verbose = verbose
 
     def __call__(self, patterns):
+        
+        for a_round in range(self.max_rounds):
+            if (self.verbose):
+                print("On reassignment round "+str(a_round))
+            all_seqlets = list(itertools.chain(
+                *[[x.seqlet for x in pattern._seqlets_and_alnmts]
+                  for pattern in patterns]))
+            initial_assignments = list(itertools.chain(
+                *[[pattern_idx for x in pattern._seqlets_and_alnmts]
+                  for pattern_idx, pattern in enumerate(patterns)]))
+            patterns, new_assignments =\
+                self.seqlet_assigner(patterns=patterns,
+                                     seqlets_to_assign=all_seqlets)
+            patterns = self.postprocessor(patterns)
+            changed_assignments = np.sum(
+                1-(np.array(initial_assignments)==np.array(new_assignments)))
+            percent_change = 100*changed_assignments/\
+                                float(len(initial_assignments))
+            if (self.verbose):
+                print("Percent assignments changed: "
+                      +str(round(percent_change,2)))
+            if (percent_change <= self.percent_change_tolerance):
+                break 
+
+        #do a final assignment
+        patterns =\
+            [x for x in patterns if x.num_seqlets >= self.min_cluster_size]
         all_seqlets = list(itertools.chain(
             *[[x.seqlet for x in pattern._seqlets_and_alnmts]
               for pattern in patterns]))
-        filtered_patterns = [x for x in patterns
-                             if x.num_seqlets >= self.min_cluster_size]
-        to_return = self.seqlet_assigner(patterns=filtered_patterns,
-                                    seqlets_to_assign=all_seqlets)[0]
-
-        return self.postprocessor([x for x in to_return
+        patterns, new_assignments =\
+            self.seqlet_assigner(patterns=patterns,
+                                 seqlets_to_assign=all_seqlets)
+        return self.postprocessor([x for x in patterns
                 if x.num_seqlets >= self.min_cluster_size])
 
 #reassign seqlets to best match motif
