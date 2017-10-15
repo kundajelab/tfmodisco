@@ -21,36 +21,27 @@ class CurvatureBasedThreshold(AbstractThresholder):
         cumsum = np.cumsum(hist_y)
         #get midpoints for hist_x
         hist_x = 0.5*(hist_x[:-1] + hist_x[1:])
-        median_x = next(hist_x[i] for i in range(len(hist_x)) if
-                        (cumsum[i] > len(values)*0.5)) 
         firstd_x, firstd_y = util.angle_firstd(hist_x, hist_y)
         secondd_x, secondd_y = util.firstd(x_values=firstd_x,
                                            y_values=firstd_y) 
         try:
-
-            #look at the fastest curvature change for the secondd vals
-            #below the median
-            secondd_vals_below_median = [x for x in zip(secondd_x, secondd_y)
-                                         if x[0] < median_x]
-            #if the median is concentrated at the first bar, this if condition
-            #will be triggered
-            if (len(secondd_vals_below_median)==0):
-                return 0
+            secondd_vals = [x for x in zip(secondd_x, secondd_y)]
 
             fastest_secondd_threshold =\
-                max(secondd_vals_below_median, key=lambda x: x[1])[0]
+                max(secondd_vals, key=lambda x: x[1])[0]
 
             #find the first curvature change after the max
             (x_first_neg_firstd, y_first_neg_firstd) =\
                 next(x for x in zip(firstd_x, firstd_y) if x[1] < 0)
             (x_second_cross_0, y_secondd_cross_0) =\
                 next(x for x in zip(secondd_x, secondd_y)
-                     if x[0] > x_first_neg_firstd and x[1] >= 0
-                     and x[0] < median_x)
+                     if x[0] > x_first_neg_firstd and x[1] >= 0)
 
-            #return the more conservative threshold
-            return min(x_second_cross_0, fastest_secondd_threshold)
-
+            if (fastest_secondd_threshold >= x_first_neg_firstd):
+                #return the more conservative threshold
+                return min(x_second_cross_0, fastest_secondd_threshold)
+            else:
+                return x_second_cross_0
         except StopIteration:
             return fastest_secondd_threshold 
 

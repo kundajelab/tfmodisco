@@ -507,7 +507,7 @@ class SimilarPatternsCollapser(object):
         for i in range(len(original_patterns)):
             for j in range(len(original_patterns[i:])):
                 pattern1 = original_patterns[i]
-                pattern2 = original_patterns[j]
+                pattern2 = original_patterns[i+j]
                 if (pattern1 != pattern2): #if not the same object
                     if (pattern1.num_seqlets < pattern2.num_seqlets):
                         parent_pattern, child_pattern = pattern2, pattern1

@@ -24,7 +24,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        min_rows_before_applying_filtering=0,
                        bins_for_curvature_threshold=15,
                        min_jaccard_sim=0.2,
-                       min_edges_per_row=3, 
+                       min_edges_per_row=20, 
                        tsne_perplexity=50,
                        louvain_min_cluster_size=10,
                        frac_support_to_trim_to=0.2,
