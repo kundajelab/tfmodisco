@@ -72,7 +72,8 @@ def plot_weights_given_ax(ax, array,
                  subticks_frequency,
                  highlight,
                  colors=default_colors,
-                 plot_funcs=default_plot_funcs):
+                 plot_funcs=default_plot_funcs,
+                 ylabel=""):
     if len(array.shape)==3:
         array = np.squeeze(array)
     assert len(array.shape)==2, array.shape
@@ -121,6 +122,8 @@ def plot_weights_given_ax(ax, array,
     height_padding = max(abs(min_neg_height)*(height_padding_factor),
                          abs(max_pos_height)*(height_padding_factor))
     ax.set_ylim(min_neg_height-height_padding, max_pos_height+height_padding)
+    ax.set_ylabel(ylabel)
+    ax.yaxis.label.set_fontsize(15)
 
 
 def plot_weights(array,
@@ -130,7 +133,8 @@ def plot_weights(array,
                  subticks_frequency=1.0,
                  colors=default_colors,
                  plot_funcs=default_plot_funcs,
-                 highlight={}):
+                 highlight={},
+                 ylabel=""):
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111) 
     plot_weights_given_ax(ax=ax, array=array,
@@ -139,5 +143,6 @@ def plot_weights(array,
         subticks_frequency=subticks_frequency,
         colors=colors,
         plot_funcs=plot_funcs,
-        highlight=highlight)
+        highlight=highlight,
+        ylabel=ylabel)
     plt.show()
