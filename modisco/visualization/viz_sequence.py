@@ -5,7 +5,8 @@ import numpy as np
 
 def ic_scale(pwm,background):
     odds_ratio = ((pwm+0.001)/(1.004))/(background[None,:])
-    ic = np.log(odds_ratio+0.001)*pwm
+    ic = ((np.log((pwm+0.001)/(1.004))/np.log(2))*pwm -\
+            (np.log(background)*background/np.log(2))[None,:])
     return pwm*(np.sum(ic,axis=1)[:,None])
 
 
