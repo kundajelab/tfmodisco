@@ -33,7 +33,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        per_track_min_similarity_for_seqlet_assignment=0,
                        final_min_cluster_size=40,
                        similarity_splitting_threshold=0.85,
-                       per_track_similarity_merging_threshold=0.85,
+                       similarity_merging_threshold=None,
                        final_flank_to_add=10,
                        verbose=True,
                        batch_size=50):
@@ -71,8 +71,11 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.similarity_splitting_threshold = similarity_splitting_threshold
 
         #cluster merging settings
-        self.per_track_similarity_merging_threshold =\
-            per_track_similarity_merging_threshold
+        if (similarity_merging_threshold is None):
+            similarity_merging_threshold = 0.9 + 0.73*(
+                                           max(len(crosscorr_track_names)-1,0))
+        self.similarity_merging_threshold =\
+            similarity_merging_threshold
 
         #final postprocessor settings
         self.final_flank_to_add=final_flank_to_add
@@ -150,10 +153,6 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                     threshold=self.similarity_splitting_threshold,
                     minimum_size_for_splitting=self.final_min_cluster_size,
                     verbose=self.verbose))
-
-        self.similarity_merging_threshold =\
-            (len(self.crosscorr_track_names)*
-             self.per_track_similarity_merging_threshold)
 
         self.similar_patterns_collapser =\
             aggregator.SimilarPatternsCollapser(

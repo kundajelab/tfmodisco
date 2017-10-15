@@ -3,6 +3,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def ic_scale(pwm,background):
+    odds_ratio = ((pwm+0.001)/(1.004))/(background[None,:])
+    ic = np.log(odds_ratio+0.001)*pwm
+    return pwm*(np.sum(ic,axis=1)[:,None])
+
+
 def plot_a(ax, base, left_edge, height, color):
     a_polygon_coords = [
         np.array([
