@@ -66,6 +66,7 @@ class MaxCurvatureThreshold(object):
             plt.plot(midpoints, densities*(max_y/np.max(densities)))
             #plt.plot(secondd_x, (secondd_y>0)*secondd_y*(max_y/np.max(secondd_y)))
             plt.plot([maximum_c_x, maximum_c_x], [0, max_y])
+            plt.xlim((0, maximum_c_x*5))
             plt.show()
 
         return maximum_c_x
