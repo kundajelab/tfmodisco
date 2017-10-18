@@ -845,3 +845,32 @@ def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
     return (best_crosscorr, best_crosscorr_argmax)
 
 
+def get_best_alignment_crossabsdiff(parent_matrix, child_matrix, min_overlap):
+    assert len(np.shape(parent_matrix))==2
+    assert len(np.shape(child_matrix))==2
+    assert np.shape(parent_matrix)[1] == np.shape(child_matrix)[1]
+
+    padding_amt = int(np.ceil(np.shape(child_matrix)[0]*min_overlap))
+    #pad the parent matrix as necessary
+    parent_matrix = np.pad(array=parent_matrix,
+                           pad_width=[(padding_amt, padding_amt),(0,0)],
+                           mode='constant')
+
+    crossabsdiffs = crossabsdiff(in1=parent_matrix, in2=child_matrix)
+
+    best_crossabsdiff_argmax = np.argmin(correlations)-padding_amt
+    best_crossabsdiff = np.min(correlations)
+
+    return (best_crossabsdiff, best_crosscorr_argmax)
+
+
+def crossabsdiff(in1, in2):
+    assert len(in1.shape)==2
+    assert len(in2.shape)==2
+    assert in1.shape[1] == in2.shape[1]
+    len_result = (1+len(in1)-len(in2))
+    to_return = np.zeros(len_result)
+    for idx in range(len_result):
+        snippet = in1[idx:idx+in2.shape[1]]
+        to_return[idx] = np.sum(np.abs(snippet-in2),axis=(1,2))
+    return to_return

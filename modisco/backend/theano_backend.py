@@ -110,13 +110,14 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
     """
     #reverse the patterns as the func is a conv not a cross corr
     assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
+    assert filters.shape[-1]==things_to_scan.shape[-1]
     filters = filters.astype("float32")[:,::-1,::-1]
     to_return = np.zeros((filters.shape[0], len(things_to_scan)))
     #compile the number of filters that result in a function with
     #params equal to func_params_size 
     params_per_filter = np.prod(filters[0].shape)
     filter_batch_size = int(func_params_size/params_per_filter)
-    filter_length = filters.shape[-1]
+    filter_length = filters.shape[1]
     filter_idx = 0 
     while filter_idx < filters.shape[0]:
         if (progress_update is not None):
