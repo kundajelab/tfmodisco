@@ -88,7 +88,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
     def build(self):
 
-        self.pattern_crosscorr_settings = affmat.core.PatternCrossCorrSettings(
+        self.pattern_crosscorr_settings = affmat.core.PatternComparisonSettings(
             track_names=self.crosscorr_track_names,                                     
             track_transformer=affmat.MeanNormalizer().chain(
                               affmat.MagnitudeNormalizer()),   
@@ -96,7 +96,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
         self.affinity_mat_from_seqlets =\
             affmat.MaxCrossCorrAffinityMatrixFromSeqlets(
-                pattern_crosscorr_settings=self.pattern_crosscorr_settings,
+                pattern_comparison_settings=self.pattern_crosscorr_settings,
                 batch_size=self.batch_size,
                 progress_update=self.affmat_progress_update)
 
