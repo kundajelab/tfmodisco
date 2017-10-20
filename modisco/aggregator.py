@@ -251,7 +251,8 @@ class ReassignSeqletsTillConvergence(AbstractAggSeqletPostprocessor):
                   for pattern_idx, pattern in enumerate(patterns)]))
             patterns, new_assignments =\
                 self.seqlet_assigner(patterns=patterns,
-                                     seqlets_to_assign=all_seqlets)
+                                     seqlets_to_assign=all_seqlets,
+                                     merge_into_existing_patterns=False)
             patterns = self.postprocessor(patterns)
             changed_assignments = np.sum(
                 1-(np.array(initial_assignments)==np.array(new_assignments)))
@@ -276,7 +277,7 @@ class AssignSeqletsByBestCrossCorr(object):
 
         self.pattern_crosscorr_settings = pattern_crosscorr_settings
         self.pattern_aligner = core.CrossCorrelationPatternAligner(
-                        pattern_crosscorr_settings=pattern_crosscorr_settings)
+                        pattern_comparison_settings=pattern_crosscorr_settings)
         self.min_similarity = min_similarity
         self.verbose = verbose
         self.batch_size = batch_size

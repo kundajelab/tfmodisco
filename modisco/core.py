@@ -427,41 +427,58 @@ class AbstractPatternAligner(object):
 
     def __call__(self, parent_pattern, child_pattern):
         #return an alignment
-        raise NotImplementedError()     
+        raise NotImplementedError()
 
 
-class CrossCorrelationPatternAligner(AbstractPatternAligner):
+class CrossMetricPatternAligner(AbstractPatternAligner):
 
-    def __init__(self, pattern_crosscorr_settings):
-        self.pattern_crosscorr_settings = pattern_crosscorr_settings
+    def __init__(self, pattern_comparison_settings, metric):
+        self.pattern_comparison_settings = pattern_comparison_settings 
+        self.metric = metric
 
     def __call__(self, parent_pattern, child_pattern):
         fwd_data_parent, rev_data_parent = get_2d_data_from_pattern(
             pattern=parent_pattern,
-            track_names=self.pattern_crosscorr_settings.track_names,
+            track_names=self.pattern_comparison_settings.track_names,
             track_transformer=
-             self.pattern_crosscorr_settings.track_transformer) 
+             self.pattern_comparison_settings.track_transformer) 
         fwd_data_child, rev_data_child = get_2d_data_from_pattern(
             pattern=child_pattern,
-            track_names=self.pattern_crosscorr_settings.track_names,
+            track_names=self.pattern_comparison_settings.track_names,
             track_transformer=
-             self.pattern_crosscorr_settings.track_transformer) 
+             self.pattern_comparison_settings.track_transformer) 
         #find optimal alignments of fwd_data_child and rev_data_child
         #with fwd_data_parent.
-        best_crosscorr, best_crosscorr_argmax =\
-            get_best_alignment_crosscorr(
+        best_crossmetric, best_crossmetric_argmax =\
+            self.metric(
                 parent_matrix=fwd_data_parent,
                 child_matrix=fwd_data_child,
-                min_overlap=self.pattern_crosscorr_settings.min_overlap)  
-        best_crosscorr_rev, best_crosscorr_argmax_rev =\
-            get_best_alignment_crosscorr(
+                min_overlap=self.pattern_comparison_settings.min_overlap)  
+        best_crossmetric_rev, best_crossmetric_argmax_rev =\
+            self.metric(
                 parent_matrix=fwd_data_parent,
                 child_matrix=rev_data_child,
-                min_overlap=self.pattern_crosscorr_settings.min_overlap) 
-        if (best_crosscorr_rev > best_crosscorr):
-            return (best_crosscorr_argmax_rev, True, best_crosscorr_rev)
+                min_overlap=self.pattern_comparison_settings.min_overlap) 
+        if (best_crossmetric_rev > best_crossmetric):
+            return (best_crossmetric_argmax_rev, True, best_crossmetric_rev)
         else:
-            return (best_crosscorr_argmax, False, best_crosscorr)
+            return (best_crossmetric_argmax, False, best_crossmetric)
+
+
+class CrossCorrelationPatternAligner(CrossMetricPatternAligner):
+
+    def __init__(self, pattern_comparison_settings):
+        super(CrossCorrelationPatternAligner, self).__init__(
+            pattern_comparison_settings=pattern_comparison_settings,
+            metric=get_best_alignment_crosscorr)
+
+
+class CrossContinJaccardPatternAligner(CrossMetricPatternAligner):
+
+    def __init__(self, pattern_comparison_settings):
+        super(CrossContinJaccardPatternAligner, self).__init__(
+            pattern_comparison_settings=pattern_comparison_settings,
+            metric=get_best_alignment_crosscontinjaccard)
 
 
 #implements the array interface but also tracks the
@@ -828,7 +845,8 @@ def get_2d_data_from_pattern(pattern, track_names, track_transformer):
     return fwd_data, rev_data
 
 
-def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
+def get_best_alignment_crossmetric(parent_matrix, child_matrix,
+                                   min_overlap, metric):
     assert len(np.shape(parent_matrix))==2
     assert len(np.shape(child_matrix))==2
     assert np.shape(parent_matrix)[1] == np.shape(child_matrix)[1]
@@ -838,39 +856,58 @@ def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
     parent_matrix = np.pad(array=parent_matrix,
                            pad_width=[(padding_amt, padding_amt),(0,0)],
                            mode='constant')
-    correlations = scipy.signal.correlate2d(
-        in1=parent_matrix, in2=child_matrix, mode='valid')
+    correlations = metric(
+        in1=parent_matrix, in2=child_matrix)
     best_crosscorr_argmax = np.argmax(correlations)-padding_amt
     best_crosscorr = np.max(correlations)
     return (best_crosscorr, best_crosscorr_argmax)
 
 
+def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
+    return get_best_alignment_crossmetric(
+                parent_matrix=parent_matrix, child_matrix=child_matrix,
+                min_overlap=min_overlap,
+                metric=(lambda in1,in2: scipy.signal.correlate2d(
+                                         in1=in1, in2=in2, mode='valid')))
+
+
 def get_best_alignment_crossabsdiff(parent_matrix, child_matrix, min_overlap):
-    assert len(np.shape(parent_matrix))==2
-    assert len(np.shape(child_matrix))==2
-    assert np.shape(parent_matrix)[1] == np.shape(child_matrix)[1]
-
-    padding_amt = int(np.ceil(np.shape(child_matrix)[0]*(1-min_overlap)))
-    #pad the parent matrix as necessary
-    parent_matrix = np.pad(array=parent_matrix,
-                           pad_width=[(padding_amt, padding_amt),(0,0)],
-                           mode='constant')
-
-    crossabsdiffs = crossabsdiff(in1=parent_matrix, in2=child_matrix)
-
-    best_crossabsdiff_argmax = np.argmin(correlations)-padding_amt
-    best_crossabsdiff = np.min(correlations)
-
-    return (best_crossabsdiff, best_crosscorr_argmax)
+    return get_best_alignment_crossmetric(
+                parent_matrix=parent_matrix, child_matrix=child_matrix,
+                min_overlap=min_overlap,
+                metric=(lambda in1,in2: cross_absdiff(in1=in1, in2=in2)))
 
 
-def crossabsdiff(in1, in2):
+def get_best_alignment_crosscontinjaccard(
+        parent_matrix, child_matrix, min_overlap):
+    return get_best_alignment_crossmetric(
+                parent_matrix=parent_matrix, child_matrix=child_matrix,
+                min_overlap=min_overlap,
+                metric=(lambda in1,in2: cross_continjaccard(in1=in1, in2=in2)))
+
+
+def cross_absdiff(in1, in2):
     assert len(in1.shape)==2
     assert len(in2.shape)==2
     assert in1.shape[1] == in2.shape[1]
     len_result = (1+len(in1)-len(in2))
     to_return = np.zeros(len_result)
     for idx in range(len_result):
-        snippet = in1[idx:idx+in2.shape[1]]
+        snippet = in1[idx:idx+in2.shape[0]]
         to_return[idx] = np.sum(np.abs(snippet-in2),axis=(1,2))
+    return to_return
+
+
+def cross_continjaccard(in1, in2):
+    assert len(in1.shape)==2
+    assert len(in2.shape)==2
+    assert in1.shape[1] == in2.shape[1]
+    len_result = (1+len(in1)-len(in2))
+    to_return = np.zeros(len_result)
+    for idx in range(len_result):
+        snippet = in1[idx:idx+in2.shape[0]]
+        union = np.sum(np.maximum(np.abs(snippet),np.abs(in2)))
+        intersection = np.minimum(np.abs(snippet),np.abs(in2))
+        signs = np.sign(snippet)*np.sign(in2)
+        to_return[idx] = np.sum(signs*intersection)/union
     return to_return
