@@ -160,3 +160,34 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
         filter_idx += filter_batch_size
         
     return to_return
+
+
+def sign(var):
+    return (1.0*(var > 0.0) + -1.0*(var < 0.0))
+
+
+def get_jaccard_sim_func(filters):
+    """
+        func_params_size: when compiling functions
+    """
+    #reverse the patterns as the func is a conv not a cross corr
+    assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
+
+
+    input_var = theano.tensor.TensorType(
+                    dtype=theano.config.floatX,
+                    broadcastable=[False,False,False])("input")
+    intersection = T.sum(T.sum(T.minimum(T.abs_(input_var[None,:,:,:]),
+                                         T.abs_(filters[:,None,:,:]))*
+                               (sign(input_var[None,:,:,:])*
+                                sign(filters[:,None,:,:])),
+                         axis=3),axis=2) 
+    union = T.sum(T.sum(T.maximum(T.abs_(input_var[None,:,:,:]),
+                                  T.abs_(filters[:,None,:,:])),
+                  axis=3),axis=2)
+    result = intersection/union   
+
+    jaccard_sim_func = theano.function([input_var], result,
+                                          allow_input_downcast=True)
+        
+    return jaccard_sim_func

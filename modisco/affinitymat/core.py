@@ -76,16 +76,16 @@ class MaxCrossMetricAffinityMatrixFromSeqlets(
                 track_transformer=
                     self.pattern_comparison_settings.track_transformer)
         #apply the cross metric
-        cross_corrs_fwd = self.cross_metric(
+        cross_metrics_fwd = self.cross_metric(
                      filters=all_fwd_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_corrs_rev = self.cross_metric(
+        cross_metrics_rev = self.cross_metric(
                      filters=all_rev_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
-        return cross_corrs
+        cross_metrics = np.maximum(cross_metrics_fwd, cross_metrics_rev)
+        return cross_metrics
 
 
 class AbstractCrossMetric(object):
@@ -143,8 +143,100 @@ class CrossContinJaccardOneCoreCPU(AbstractCrossMetric):
                        (np.sign(snapshot[None,:,:,:])
                         *np.sign(filters[:,None,:,:])),axis=(2,3))/
                  np.sum(np.maximum(np.abs(snapshot[None,:,:,:]),
-                                   np.abs(filters[:,None,:,:]))))
-        return np.max(full_crossabsdiffs, axis=-1) 
+                                   np.abs(filters[:,None,:,:])),axis=(2,3)))
+        return np.max(full_crossabsdiffs, axis=-1)
+
+
+def jaccard_sim_func(filters, snapshot):
+    return (np.sum(np.minimum(np.abs(snapshot[None,:,:,:]),
+                              np.abs(filters[:,None,:,:]))*
+                   (np.sign(snapshot[None,:,:,:])
+                    *np.sign(filters[:,None,:,:])),axis=(2,3))/
+             np.sum(np.maximum(np.abs(snapshot[None,:,:,:]),
+                               np.abs(filters[:,None,:,:])),axis=(2,3)))
+
+
+class CrossContinJaccardMultiCoreCPU(AbstractCrossMetric):
+
+    def __init__(self, n_cores, verbose=True):
+        self.n_cores = n_cores
+        self.verbose = verbose
+
+    def __call__(self, filters, things_to_scan, min_overlap):
+
+        from joblib import Parallel, delayed
+
+        assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
+        assert len(things_to_scan.shape)==3
+        assert filters.shape[-1] == things_to_scan.shape[-1]
+
+        filter_length = filters.shape[1]
+        padding_amount = int((filter_length)*(1-min_overlap))
+        padded_input = np.array([np.pad(array=x,
+                              pad_width=((padding_amount, padding_amount),
+                                         (0,0)),
+                              mode="constant") for x in things_to_scan])
+
+        len_output = 1+padded_input.shape[1]-filters.shape[1]
+        full_crossabsdiffs = np.zeros((filters.shape[0], padded_input.shape[0],
+                                       len_output))
+        for idx in range(len_output):
+            if (self.verbose):
+                print("On offset",idx,"of",len_output-1)
+                sys.stdout.flush()
+            snapshot = padded_input[:,idx:idx+filters.shape[1],:]
+            assert snapshot.shape[1]==filters.shape[1],\
+                str(snapshape.shape)+" "+filters.shape
+            subsnap_size = int(np.ceil(snapshot.shape[0]/self.n_cores))
+            sys.stdout.flush()
+            subsnaps = [snapshot[(i*subsnap_size):(min((i+1)*subsnap_size,
+                                                     snapshot.shape[0]))]
+                        for i in range(self.n_cores)]
+            full_crossabsdiffs[:,:,idx] =\
+                np.concatenate(
+                 Parallel(n_jobs=self.n_cores)(delayed(jaccard_sim_func)
+                          (filters, subsnap) for subsnap in subsnaps),axis=1)
+        return np.max(full_crossabsdiffs, axis=-1)
+
+
+class CrossContinJaccardOneCoreGPU(AbstractCrossMetric):
+
+    def __init__(self, verbose=True, batch_size=100):
+        self.verbose = verbose
+        self.batch_size = batch_size
+
+    def __call__(self, filters, things_to_scan, min_overlap):
+        assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
+        assert len(things_to_scan.shape)==3
+        assert filters.shape[-1] == things_to_scan.shape[-1]
+        jaccard_sim_func = B.get_jaccard_sim_func(filters)
+
+        filter_length = filters.shape[1]
+        padding_amount = int((filter_length)*(1-min_overlap))
+        padded_input = np.array([np.pad(array=x,
+                              pad_width=((padding_amount, padding_amount),
+                                         (0,0)),
+                              mode="constant") for x in things_to_scan])
+
+        len_output = 1+padded_input.shape[1]-filters.shape[1]
+        full_crosscontinjaccard =\
+            np.zeros((filters.shape[0], padded_input.shape[0], len_output))
+
+        for idx in range(len_output):
+            if (self.verbose):
+                print("On offset",idx,"of",len_output-1)
+                sys.stdout.flush()
+            snapshot = padded_input[:,idx:idx+filters.shape[1],:]
+            batch_start = 0
+            while (batch_start < snapshot.shape[0]):
+                batch_end = min(batch_start+self.batch_size, snapshot.shape[0])
+                batch = snapshot[batch_start:batch_end]
+                sys.stdout.flush()
+                full_crosscontinjaccard[:,batch_start:batch_end,idx] =\
+                    jaccard_sim_func(batch) 
+                sys.stdout.flush()
+                batch_start += self.batch_size
+        return np.max(full_crosscontinjaccard, axis=-1) 
 
 
 class AbstractGetFilteredRowsMask(object):
