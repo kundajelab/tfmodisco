@@ -4,6 +4,7 @@ import numpy as np
 from .. import core as modiscocore
 from . import transformers
 import sys
+import time
 
 
 class AbstractTrackTransformer(object):
@@ -178,8 +179,9 @@ class CrossContinJaccardMultiCoreCPU(AbstractCrossMetric):
                               mode="constant") for x in things_to_scan])
 
         len_output = 1+padded_input.shape[1]-filters.shape[1]
-        full_crossabsdiffs = np.zeros((filters.shape[0], padded_input.shape[0],
-                                       len_output))
+        full_crosscontinjaccards =\
+            np.zeros((filters.shape[0], padded_input.shape[0], len_output))
+
         for idx in range(len_output):
             if (self.verbose):
                 print("On offset",idx,"of",len_output-1)
@@ -192,14 +194,62 @@ class CrossContinJaccardMultiCoreCPU(AbstractCrossMetric):
             subsnaps = [snapshot[(i*subsnap_size):(min((i+1)*subsnap_size,
                                                      snapshot.shape[0]))]
                         for i in range(self.n_cores)]
-            full_crossabsdiffs[:,:,idx] =\
+            full_crosscontinjaccards[:,:,idx] =\
                 np.concatenate(
                  Parallel(n_jobs=self.n_cores)(delayed(jaccard_sim_func)
                           (filters, subsnap) for subsnap in subsnaps),axis=1)
-        return np.max(full_crossabsdiffs, axis=-1)
+        return np.max(full_crosscontinjaccards, axis=-1)
 
 
-class CrossContinJaccardOneCoreGPU(AbstractCrossMetric):
+class CrossContinJaccardMultiCoreCPU2(AbstractCrossMetric):
+
+    def __init__(self, n_cores, verbose=True):
+        self.n_cores = n_cores
+        self.verbose = verbose
+
+    def __call__(self, filters, things_to_scan, min_overlap):
+
+        from joblib import Parallel, delayed
+        if (self.verbose):
+            print("Begin cross contin jaccard")
+
+        assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
+        assert len(things_to_scan.shape)==3
+        assert filters.shape[-1] == things_to_scan.shape[-1]
+
+        filter_length = filters.shape[1]
+        padding_amount = int((filter_length)*(1-min_overlap))
+        padded_input = np.array([np.pad(array=x,
+                              pad_width=((padding_amount, padding_amount),
+                                         (0,0)),
+                              mode="constant") for x in things_to_scan])
+
+        len_output = 1+padded_input.shape[1]-filters.shape[1]
+        full_crosscontinjaccards =\
+            np.zeros((filters.shape[0], padded_input.shape[0], len_output))
+
+        start = time.time()
+        #parallelize by index
+        job_arguments = []
+        for idx in range(0,len_output):
+            snapshot = padded_input[:,idx:idx+filters.shape[1],:]
+            assert snapshot.shape[1]==filters.shape[1],\
+                str(snapshot.shape)+" "+filters.shape
+            job_arguments.append((filters, snapshot))
+
+        to_concat = (Parallel(n_jobs=self.n_cores)
+                       (delayed(jaccard_sim_func)(job_args[0], job_args[1])
+                        for job_args in job_arguments))
+        full_crosscontinjaccards[:,:,:] =\
+                np.concatenate([x[:,:,None] for x in to_concat],axis=2)
+        end = time.time()
+        if (self.verbose):
+            print("Cross contin jaccard time taken:",round(end-start,2),"s")
+
+        return np.max(full_crosscontinjaccards, axis=-1)
+
+
+class CrossContinJaccardGPU(AbstractCrossMetric):
 
     def __init__(self, verbose=True, batch_size=100):
         self.verbose = verbose
