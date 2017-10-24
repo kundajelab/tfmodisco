@@ -53,19 +53,42 @@ class MaxCurvatureThreshold(object):
 
         firstd_x, firstd_y = util.angle_firstd(x_values=midpoints,
                                                 y_values=densities) 
-        secondd_x, secondd_y = util.firstd(x_values=firstd_x,
+        curvature_x, curvature_y = util.angle_curvature(x_values=midpoints,
+                                                y_values=densities) 
+        secondd_x, secondd_y = util.angle_firstd(x_values=firstd_x,
                                            y_values=firstd_y)
+        thirdd_x, thirdd_y = util.firstd(x_values=secondd_x,
+                                           y_values=secondd_y)
+        mean_secondd_ys_at_thirdds = 0.5*(secondd_y[1:]+secondd_y[:-1])
         #find point of maximum curvature
-        maximum_c_x = max([x for x in zip(secondd_x, secondd_y)
-                           if x[0] > global_max_x], key=lambda x:x[1])[0]
+        maximum_c_x = max([x for x in zip(secondd_x, secondd_y,
+                                          mean_secondd_ys_at_thirdds)
+                           if (x[0] > global_max_x
+                              and x[2] > 0)], key=lambda x:x[1])[0]
+        maximum_c_x2 = max([x for x in zip(thirdd_x, thirdd_y,
+                                          mean_secondd_ys_at_thirdds)
+                           if (x[0] > global_max_x
+                              and x[2] > 0)], key=lambda x:x[1])[0]
 
         if (self.verbose):
             from matplotlib import pyplot as plt
             hist_y, _, _ = plt.hist(values, bins=self.bins)
             max_y = np.max(hist_y)
             plt.plot(midpoints, densities*(max_y/np.max(densities)))
+            plt.plot(firstd_x, -firstd_y*(max_y/np.max(-firstd_y))*(firstd_y<0))
+            #plt.plot(secondd_x, secondd_y*(max_y/np.max(secondd_y))*(secondd_y>0))
+            #plt.plot(curvature_x, curvature_y*(max_y/np.max(curvature_y))*(curvature_y>0))
+            #plt.plot(thirdd_x, thirdd_y*(max_y/np.max(thirdd_y))*(thirdd_y>0))
             #plt.plot(secondd_x, (secondd_y>0)*secondd_y*(max_y/np.max(secondd_y)))
             plt.plot([maximum_c_x, maximum_c_x], [0, max_y])
+            #plt.plot([maximum_c_x2, maximum_c_x2], [0, max_y])
+            plt.xlim((0, maximum_c_x*5))
+            plt.show()
+            plt.plot(firstd_x, firstd_y)
+            plt.plot(secondd_x, secondd_y*(secondd_y>0))
+            plt.xlim((0, maximum_c_x*5))
+            plt.show()
+            plt.plot(curvature_x[curvature_x>global_max_x], curvature_y[curvature_x>global_max_x])
             plt.xlim((0, maximum_c_x*5))
             plt.show()
 

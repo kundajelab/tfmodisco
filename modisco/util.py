@@ -62,6 +62,18 @@ def angle_firstd(x_values, y_values):
     return x_midpoints, np.arctan2(y_differences, x_differences)
 
 
+def angle_curvature(x_values, y_values):
+    x_midpoints, y_angles = angle_firstd(x_values, y_values)
+    y_midpoints = 0.5*(y_values[1:] + y_values[:-1])
+    x_midmidpoints, y_anglechange = firstd(x_midpoints, y_angles)
+    x_differences = x_midpoints[1:] - x_midpoints[:-1] 
+    y_differences = y_midpoints[1:] - y_midpoints[:-1]
+    distance_travelled = np.sqrt(np.square(x_differences)+
+                                 np.square(y_differences))
+    angle_change_w_dist = y_anglechange/distance_travelled
+    return x_midmidpoints, angle_change_w_dist
+
+
 def firstd(x_values, y_values):
     x_differences = x_values[1:] - x_values[:-1]
     x_midpoints = 0.5*(x_values[1:] + x_values[:-1])

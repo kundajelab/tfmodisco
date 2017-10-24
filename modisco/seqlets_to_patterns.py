@@ -21,11 +21,9 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        track_set,
                        crosscorr_min_overlap=0.5,
                        affmat_progress_update=5000,
-                       min_rows_before_applying_filtering=0,
-                       bins_for_curvature_threshold=15,
+                       tsne_perplexity=50,
                        min_jaccard_sim=0.2,
                        min_edges_per_row=20, 
-                       tsne_perplexity=50,
                        louvain_min_cluster_size=10,
                        frac_support_to_trim_to=0.2,
                        trim_to_window_size=30,
@@ -46,15 +44,15 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.crosscorr_min_overlap = crosscorr_min_overlap
         self.affmat_progress_update = affmat_progress_update
 
+        #affinity mat to tsne dist mat setting
+        self.tsne_perplexity = tsne_perplexity
+
         #seqlet filtering based on affinity_mat
-        self.min_rows_before_applying_filtering =\
-            min_rows_before_applying_filtering
         self.bins_for_curvature_threshold = bins_for_curvature_threshold
         self.min_jaccard_sim = min_jaccard_sim
         self.min_edges_per_row = min_edges_per_row
 
         #clustering settings
-        self.tsne_perplexity = tsne_perplexity
         self.louvain_min_cluster_size = louvain_min_cluster_size
 
         #postprocessor1 settings
@@ -99,6 +97,9 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                 pattern_comparison_settings=self.pattern_crosscorr_settings,
                 batch_size=self.batch_size,
                 progress_update=self.affmat_progress_update)
+
+        self.tsne_affinitymat_transformer =\
+            affmat.TsneJointProbs(perplexity=50)
 
         self.filtered_rows_mask_producer =\
            affmat.core.FilterSparseRows(

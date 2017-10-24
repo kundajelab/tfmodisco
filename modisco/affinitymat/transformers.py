@@ -111,7 +111,8 @@ class JaccardSimCPU(AbstractAffMatTransformer):
         unions_complement = np.dot(one_minus_affinity_mat,
                                    one_minus_affinity_mat.transpose(1,0))
         unions = len(affinity_mat) - unions_complement
-        jaccard_sim = intersections.astype("float")/unions.astype("float")
+        jaccard_sim = intersections.astype("float")/(
+                       unions.astype("float") + 0.0000001*(unions==0))
 
         if (self.verbose):
             print("Jaccard preproc took "+str(time.time()-start)+" s")
