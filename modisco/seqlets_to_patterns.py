@@ -15,7 +15,6 @@ class SeqletsToPatternsResults(object):
         self.patterns = patterns
 
 
-
 class AbstractSeqletsToPatterns(object):
 
     def __call__(self, seqlets):
@@ -265,6 +264,9 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
             print("Total time taken is "
                   +str(round(time.time()-start,2))+"s")
             sys.stdout.flush()
+
+        results = SeqletsToPatternsResults(patterns)
+        results.seqlets = seqlets #the filtered seqlets
 
         return patterns 
 
