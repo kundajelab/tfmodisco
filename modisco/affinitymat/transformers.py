@@ -10,12 +10,47 @@ class AbstractThresholder(object):
         raise NotImplementedError()
 
 
+class NonzeroMeanThreshold(AbstractThresholder):
+
+    def __call__(self, values):
+        return np.mean(values[values != 0])
+        droppped_zeros = [x for x in values if x != 0]
+        hist_y, hist_x = np.histogram(droppped_zeros, bins=self.bins)
+        cumsum = np.cumsum(hist_y)
+        #get midpoints for hist_x
+        hist_x = 0.5*(hist_x[:-1] + hist_x[1:])
+        firstd_x, firstd_y = util.angle_firstd(hist_x, hist_y)
+        secondd_x, secondd_y = util.firstd(x_values=firstd_x,
+                                           y_values=firstd_y) 
+        try:
+            secondd_vals = [x for x in zip(secondd_x, secondd_y)]
+
+            fastest_secondd_threshold =\
+                max(secondd_vals, key=lambda x: x[1])[0]
+
+            #find the first curvature change after the max
+            (x_first_neg_firstd, y_first_neg_firstd) =\
+                next(x for x in zip(firstd_x, firstd_y) if x[1] < 0)
+            (x_second_cross_0, y_secondd_cross_0) =\
+                next(x for x in zip(secondd_x, secondd_y)
+                     if x[0] > x_first_neg_firstd and x[1] >= 0)
+
+            if (fastest_secondd_threshold >= x_first_neg_firstd):
+                #return the more conservative threshold
+                return min(x_second_cross_0, fastest_secondd_threshold)
+            else:
+                return x_second_cross_0
+        except StopIteration:
+            return fastest_secondd_threshold 
+
+
 class CurvatureBasedThreshold(AbstractThresholder):
 
     def __init__(self, bins):
         self.bins = bins
 
     def __call__(self, values):
+        values = np.max(values)-values #convert similarity to distance
         droppped_zeros = [x for x in values if x != 0]
         hist_y, hist_x = np.histogram(droppped_zeros, bins=self.bins)
         cumsum = np.cumsum(hist_y)
@@ -73,18 +108,12 @@ class PerNodeThresholdDistanceBinarizer(AbstractAffMatTransformer):
         self.verbose = verbose
     
     def __call__(self, affinity_mat):
-        #flip it to be a fistance matrix
-        affinity_mat = np.max(affinity_mat)-affinity_mat
         if (self.verbose):
             print("Starting thresholding preprocessing")
         start = time.time()
         #ignore affinity to self
-        affinity_mat_zero_d = affinity_mat*(1-np.eye(len(affinity_mat)))
-        thresholds = np.array([self.thresholder(x)
-                               for x in affinity_mat_zero_d])
-        to_return = (affinity_mat <= thresholds[:,None]).astype("int") 
-        #each node is attached to itself
-        to_return = np.maximum(to_return, np.eye(len(affinity_mat)))
+        thresholds = np.array([self.thresholder(x) for x in affinity_mat])
+        to_return = (affinity_mat >= thresholds[:,None]).astype("int") 
         if (self.verbose):
             print("Thresholding preproc took "+str(time.time()-start)+" s")
         return to_return

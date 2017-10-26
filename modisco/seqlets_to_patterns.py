@@ -26,7 +26,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
     def __init__(self, track_names,
                        track_set,
                        min_overlap_while_sliding=0.5,
-                       affmat_progress_update=5000,
+                       n_cores=20,
                        tsne_perplexity=50,
                        min_edges_per_row=15, 
                        louvain_min_cluster_size=10,
@@ -36,7 +36,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        per_track_min_similarity_for_seqlet_assignment=0,
                        final_min_cluster_size=40,
                        similarity_splitting_threshold=0.75,
-                       similarity_merging_threshold=0.75,
+                       similarity_merging_threshold=0.7,
                        final_flank_to_add=10,
                        verbose=True,
                        batch_size=50):
@@ -47,7 +47,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
         #affinity_mat calculation
         self.min_overlap_while_sliding = min_overlap_while_sliding
-        self.affmat_progress_update = affmat_progress_update
+        self.n_cores = n_cores
 
         #affinity mat to tsne dist mat setting
         self.tsne_perplexity = tsne_perplexity
@@ -94,20 +94,20 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                 min_overlap=self.min_overlap_while_sliding)
 
         self.affinity_mat_from_seqlets =\
-            affmat.CrossContinJaccardMultiCoreCPU2(
+            affmat.core.MaxCrossMetricAffinityMatrixFromSeqlets(                       
                 pattern_comparison_settings=self.pattern_comparison_settings,
-                batch_size=self.batch_size,
-                progress_update=self.affmat_progress_update)
+                cross_metric=affmat.core.CrossContinJaccardMultiCoreCPU2(
+                             verbose=True, n_cores=10))
 
         self.tsne_affinitymat_transformer =\
-            affmat.TsneJointProbs(perplexity=50)
+            affmat.transformers.TsneJointProbs(perplexity=50)
 
         self.filtered_rows_mask_producer =\
            affmat.core.FilterSparseRows(
             affmat_transformer=\
                 affmat.transformers.PerNodeThresholdDistanceBinarizer(
-                    thresholder=affmat.transformers.AboveNonzeroMeanThreshold())
-                .chain(affmat.transformers.SymmetrizeByMultiplying())
+                 thresholder=affmat.transformers.NonzeroMeanThreshold())
+                 .chain(affmat.transformers.SymmetrizeByMultiplying()),
             min_rows_before_applying_filtering=0,
             min_edges_per_row=self.min_edges_per_row,
             verbose=self.verbose)
@@ -163,12 +163,12 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.seqlet_reassigner =\
            aggregator.ReassignSeqletsFromSmallClusters(
             seqlet_assigner=aggregator.AssignSeqletsByBestMetric(
-                pattern_comparison_settings=pattern_comparison_settings,
+                pattern_comparison_settings=self.pattern_comparison_settings,
                 individual_aligner_metric=
                     core.get_best_alignment_crosscontinjaccard,
                 matrix_affinity_metric=
                     affmat.core.CrossContinJaccardMultiCoreCPU2(
-                        verbose=True, n_cores=20)),
+                        verbose=self.verbose, n_cores=self.n_cores)),
             min_cluster_size=self.final_min_cluster_size,
             postprocessor=self.expand_trim_expand1,
             verbose=self.verbose) 
