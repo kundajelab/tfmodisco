@@ -315,9 +315,11 @@ class FilterSparseRows(AbstractGetFilteredRowsMask):
                 sys.stdout.flush()
             return (np.ones(len(affinity_mat)) > 0.0) #keep all rows
 
+        print(np.mean(affinity_mat))
         affinity_mat = self.affmat_transformer(affinity_mat) 
         per_node_neighbours = np.sum(affinity_mat > 0, axis=1) 
-        passing_nodes = per_node_neighbours > self.min_edges_per_row
+        print(np.mean(per_node_neighbours))
+        passing_nodes = per_node_neighbours >= self.min_edges_per_row
         if (self.verbose):
             print(str(np.sum(passing_nodes))+" passing out of "
                   +str(len(passing_nodes)))

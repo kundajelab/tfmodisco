@@ -25,18 +25,18 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
     def __init__(self, track_names,
                        track_set,
-                       min_overlap_while_sliding=0.5,
+                       min_overlap_while_sliding=0.7,
                        n_cores=20,
                        tsne_perplexity=50,
-                       min_edges_per_row=15, 
+                       min_edges_per_row=None, 
                        louvain_min_cluster_size=10,
                        frac_support_to_trim_to=0.2,
                        trim_to_window_size=30,
                        initial_flank_to_add=10,
                        per_track_min_similarity_for_seqlet_assignment=0,
-                       final_min_cluster_size=40,
+                       final_min_cluster_size=30,
                        similarity_splitting_threshold=0.75,
-                       similarity_merging_threshold=0.7,
+                       similarity_merging_threshold=0.75,
                        final_flank_to_add=10,
                        verbose=True,
                        batch_size=50):
@@ -53,6 +53,8 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.tsne_perplexity = tsne_perplexity
 
         #seqlet filtering based on affinity_mat
+        if (min_edges_per_row is None):
+            min_edges_per_row = tsne_perplexity/5.0
         self.min_edges_per_row = min_edges_per_row
 
         #clustering settings
@@ -89,24 +91,24 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.pattern_comparison_settings =\
             affmat.core.PatternComparisonSettings(
                 track_names=self.track_names,                                     
-                track_transformer=affmat.MeanNormalizer().chain(
-                                  affmat.MagnitudeNormalizer()),   
+                track_transformer=affmat.L1Normalizer(),   
                 min_overlap=self.min_overlap_while_sliding)
 
         self.affinity_mat_from_seqlets =\
             affmat.core.MaxCrossMetricAffinityMatrixFromSeqlets(                       
                 pattern_comparison_settings=self.pattern_comparison_settings,
                 cross_metric=affmat.core.CrossContinJaccardMultiCoreCPU2(
-                             verbose=True, n_cores=10))
+                             verbose=True, n_cores=self.n_cores))
 
         self.tsne_affinitymat_transformer =\
-            affmat.transformers.TsneJointProbs(perplexity=50)
+            affmat.transformers.TsneJointProbs(perplexity=self.tsne_perplexity)
 
         self.filtered_rows_mask_producer =\
            affmat.core.FilterSparseRows(
             affmat_transformer=\
-                affmat.transformers.PerNodeThresholdDistanceBinarizer(
-                 thresholder=affmat.transformers.NonzeroMeanThreshold())
+                affmat.transformers.PerNodeThresholdBinarizer(
+                 thresholder=affmat.transformers.NonzeroMeanThreshold(
+                                expected_nonzeros=self.tsne_perplexity*3))
                  .chain(affmat.transformers.SymmetrizeByMultiplying()),
             min_rows_before_applying_filtering=0,
             min_edges_per_row=self.min_edges_per_row,
@@ -143,8 +145,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
         self.split_detector = aggregator.DetectSpuriousMerging(
                 track_names=self.track_names,
-                track_transformer=affmat.MeanNormalizer().chain(
-                                  affmat.MagnitudeNormalizer()),
+                track_transformer=affmat.L1Normalizer(),
                 subclusters_detector=aggregator.RecursiveKmeans(
                     threshold=self.similarity_splitting_threshold,
                     minimum_size_for_splitting=self.final_min_cluster_size,
