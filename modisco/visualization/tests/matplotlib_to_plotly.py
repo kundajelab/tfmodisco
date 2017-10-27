@@ -1,5 +1,5 @@
 #demo code for converting a matplotlib fig to a plotly div for sticking into an html file 
-
+import pdb 
 from plotly.offline import init_notebook_mode, plot_mpl
 import matplotlib.pyplot as plt
 
@@ -9,6 +9,9 @@ fig = plt.figure()
 x = [10, 15, 20, 25, 30]
 y = [100, 250, 200, 150, 300]
 plt.plot(x, y, "o")
+pdb.set_trace()
+
+type(fig)
 
 
 
