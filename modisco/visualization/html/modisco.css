@@ -23,6 +23,8 @@
     text-align:center;
 }
 
+
+
  p{
     text-align: center;
  } 
@@ -46,6 +48,11 @@ button.accordion {
     border: none;
     outline: none;
     transition: 0.4s;
+    color: rgba(0,0,0,0.6);
+    text-shadow: 2px 8px 6px rgba(0,0,0,0.2),
+    0px -5px 35px rgba(255,255,255,0.3);
+    font-weight: 900;
+    font-size:150%;
 }
 
 /* Add a background color to the button if it is clicked on (add the .active class with JS), and when you move the mouse over it (hover) */
@@ -189,6 +196,12 @@ div.tab button {
     cursor: pointer;
     padding: 14px 16px;
     transition: 0.3s;
+    color: rgba(0,0,0,0.6);
+    text-shadow: 2px 8px 6px rgba(0,0,0,0.2),
+    0px -5px 35px rgba(255,255,255,0.3);
+    font-weight: 900;
+    font-size:100%;
+
 }
 
 /* Change background color of buttons on hover */
