@@ -1,6 +1,6 @@
 /* Style the buttons that are used to open and close the accordion panel */
 button.accordion {
-    background - color: #eee;
+    background-color: #eee;
     color: #444;
     cursor: pointer;
     padding: 18px;
@@ -18,23 +18,21 @@ button.accordion.active, button.accordion:hover {
 
 /* Style the accordion panel. Note: hidden by default */
 div.panel {
-    padding: 0 18 px;
-    background - color: white;
-    max - height: 0;
+    padding: 0 18px;
+    background-color: white;
+    max-height: 0;
     overflow: hidden;
-    transition: max - height 0.2 s ease - out;
+    transition: max-height 0.2 s ease-out;
 }
 
 /* Style the Image Used to Trigger the Modal */
-#
-myImg {
-    border - radius: 5 px;
+#myImg {
+    border-radius: 5px;
     cursor: pointer;
-    transition: 0.3 s;
+    transition: 0.3s;
 }
 
-#
-myImg: hover {
+#myImg: hover {
         opacity: 0.7;
     }
 
@@ -42,52 +40,51 @@ myImg: hover {
     .modal {
         display: none; /* Hidden by default */
         position: fixed; /* Stay in place */
-        z - index: 1; /* Sit on top */
-        padding - top: 100 px; /* Location of the box */
+        z-index: 1; /* Sit on top */
+        padding-top: 100px; /* Location of the box */
         left: 0;
         top: 0;
-        width: 100 % ; /* Full width */
-        height: 100 % ; /* Full height */
+        width: 100% ; /* Full width */
+        height: 100% ; /* Full height */
         overflow: auto; /* Enable scroll if needed */
-        background - color: rgb(0, 0, 0); /* Fallback color */
-        background - color: rgba(0, 0, 0, 0.9); /* Black w/ opacity */
+        background-color: rgb(200, 200, 200); /* Fallback color */
+        background-color: rgba(200, 200, 200, 0.9); /* Black w/ opacity */
     }
 
     /* Modal Content (Image) */
-    .modal - content {
+    .modal-content {
         margin: auto;
         display: block;
-        width: 80 % ;
-        max - width: 700 px;
+        width: 80% ;
+        max-width: 700px;
     }
 
-/* Caption of Modal Image (Image Text) - Same Width as the Image */
-#
-caption {
+/* Caption of Modal Image (Image Text)-Same Width as the Image */
+#caption {
     margin: auto;
     display: block;
-    width: 80 % ;
-    max - width: 700 px;
-    text - align: center;
-    color: #ccc;
-    padding: 10 px 0;
-    height: 150 px;
+    width: 80% ;
+    max-width: 700px;
+    text-align: center;
+    color: #000;
+    padding: 10px 0;
+    height: 150px;
 }
 
-/* Add Animation - Zoom in the Modal */
-.modal - content, #caption {
-    -webkit - animation - name: zoom; -
-    webkit - animation - duration: 0.6 s;
-    animation - name: zoom;
-    animation - duration: 0.6 s;
+/* Add Animation-Zoom in the Modal */
+.modal-content, #caption {
+    -webkit-animation-name: zoom;
+    -webkit-animation-duration: 0.6s;
+    animation-name: zoom;
+    animation-duration: 0.6s;
 }
 
-@ - webkit - keyframes zoom {
+@-webkit-keyframes zoom {
     from {
-        -webkit - transform: scale(0)
+        -webkit-transform: scale(0)
     }
     to {
-        -webkit - transform: scale(1)
+        -webkit-transform: scale(1)
     }
 }
 
@@ -100,34 +97,34 @@ caption {
     }
 }
 
-a /* The Close Button */
+/* The Close Button */
     .close {
         position: absolute;
-        top: 15 px;
-        right: 35 px;
-        color: #f1f1f1;
-        font - size: 40 px;
-        font - weight: bold;
-        transition: 0.3 s;
+        top: 15px;
+        right: 35px;
+        color: #000000;
+        font-size: 40px;
+        font-weight: bold;
+        transition: 0.3s;
     }
 
     .close: hover,
     .close: focus {
         color: #bbb;
-        text - decoration: none;
+        text-decoration: none;
         cursor: pointer;
     }
 
 /* 100% Image Width on Smaller Screens */
-@media only screen and(max - width: 700 px) {
-        .modal - content {
-            width: 100 % ;
+@media only screen and(max-width: 700px) {
+        .modal-content {
+            width: 100% ;
         }
     }
 
     /* Dropdown Button */
     .dropbtn {
-        background - color: #000000;
+    background-color: #000000;
     color: white;
     padding: 16px;
     font-size: 16px;
@@ -137,37 +134,37 @@ a /* The Close Button */
 
 /* Dropdown button on hover & focus */
 .dropbtn:hover, .dropbtn:focus {
-		    background-color: # CCCCCC;
+		    background-color: #CCCCCC;
     }
 
-    /* The container <div> - needed to position the dropdown content */
+    /* The container <div>-needed to position the dropdown content */
     .dropdown {
         position: absolute;
-        top: 11 % ;
-        left: 500 px;
+        top: 11% ;
+        left: 500px;
     }
 
     /* Dropdown Content (Hidden by Default) */
-    .dropdown - content {
+    .dropdown-content {
         display: none;
         position: absolute;
-        background - color: #f9f9f9;
-        min - width: 160 px;
-        box - shadow: 0 px 8 px 16 px 0 px rgba(0, 0, 0, 0.2);
-        z - index: 1;
+        background-color: #f9f9f9;
+        min-width: 160px;
+        box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
+        z-index: 1;
     }
 
     /* Links inside the dropdown */
-    .dropdown - content a {
+    .dropdown-content a {
         color: black;
-        padding: 12 px 16 px;
-        text - decoration: none;
+        padding: 12px 16px;
+        text-decoration: none;
         display: block;
     }
 
     /* Change color of dropdown links on hover */
-    .dropdown - content a: hover {
-        background - color: #f1f1f1
+    .dropdown-content a: hover {
+        background-color: #f1f1f1
     }
 
     /* Show the dropdown menu (use JS to add this class to the .dropdown-content container when the user clicks on the dropdown button) */
