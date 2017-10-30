@@ -1,43 +1,115 @@
 <!DOCTYPE html>
 <html lang='en'>
-  <head>
+
+<head>
     <title>MODISCO example dataset</title>
     <link type='text/css' rel='stylesheet' href="modisco.css">
-  </head>
-  <body>
-    <div id="metaclusters_heatmap" display="inline">
-      <h2>All metaclusters heatmap</h2>
-      <img src="example_figures_modisco/metaclusters_heatmap.png"/>
-    </div>
-    <button class="accordion">Metacluster 0</button>
-    <div class="panel">
-      <p>Lorem ipsum...</p>
-    </div>
-
-    <button class="accordion">Metacluster 1</button>
-    <div class="panel">
-      <p>Lorem ipsum...</p>
-    </div>
-
-    <button class="accordion">Metacluster 2</button>
-    <div class="panel">
-      <p>Lorem ipsum...</p>
-    </div>
+    <!-- Toggle dropdown menu -->
     <script>
-      var acc = document.getElementsByClassName("accordion");
-      var i;
+        /* When the user clicks on the button,
+              toggle between hiding and showing the dropdown content */
+        function myFunction() {
+            document.getElementById("myDropdown").classList.toggle("show");
+        }
 
-      for (i = 0; i < acc.length; i++) {
-		      acc[i].onclick = function() {
-		      this.classList.toggle("active");
-		      var panel = this.nextElementSibling;
-		      if (panel.style.maxHeight){
-		      panel.style.maxHeight = null;
-		      } else {
-		      panel.style.maxHeight = panel.scrollHeight + "px";
-		      }
-		      }
-		      }
-		      </script>
+        // Close the dropdown menu if the user clicks outside of it
+        window.onclick = function(event) {
+            if (!event.target.matches('.dropbtn')) {
 
-  </body>
+                var dropdowns = document.getElementsByClassName("dropdown-content");
+                var i;
+                for (i = 0; i < dropdowns.length; i++) {
+                    var openDropdown = dropdowns[i];
+                    if (openDropdown.classList.contains('show')) {
+                        openDropdown.classList.remove('show');
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div class="horizontal_panel">
+        <div style="display:inline-block;">
+            <h2>All metaclusters heatmap</h2>
+            <!-- Trigger the Modal -->
+            <img id="myImg" src="example_figures_modisco/metaclusters_heatmap.png" alt="Metaclusters Heatmap" width="450" height="450">
+
+            <!-- The Modal -->
+            <div id="myModal" class="modal">
+
+                <!-- The Close Button -->
+                <span class="close">&times;</span>
+
+                <!-- Modal Content (The Image) -->
+                <img class="modal-content" id="img01">
+
+                <!-- Modal Caption (Image Text) -->
+                <div id="caption"></div>
+            </div>
+            <div class="dropdown">
+                <button onclick="myFunction()" class="dropbtn">Per-Task Histograms</button>
+                <div id="myDropdown" class="dropdown-content">
+                    <a href="#">Link 1</a>
+                    <a href="#">Link 2</a>
+                    <a href="#">Link 3</a>
+                </div>
+            </div>
+
+        </div>
+        <button class="accordion">Metacluster 0</button>
+        <div class="panel">
+            <p>Lorem ipsum...</p>
+        </div>
+
+        <button class="accordion">Metacluster 1</button>
+        <div class="panel">
+            <p>Lorem ipsum...</p>
+        </div>
+
+        <button class="accordion">Metacluster 2</button>
+        <div class="panel">
+            <p>Lorem ipsum...</p>
+        </div>
+        <!--accordion script-->
+        <script>
+            var acc = document.getElementsByClassName("accordion");
+            var i;
+
+            for (i = 0; i < acc.length; i++) {
+                acc[i].onclick = function() {
+                    this.classList.toggle("active");
+                    var panel = this.nextElementSibling;
+                    if (panel.style.maxHeight) {
+                        panel.style.maxHeight = null;
+                    } else {
+                        panel.style.maxHeight = panel.scrollHeight + "px";
+                    }
+                }
+            }
+        </script>
+        <!-- Script to zoom in to all metaclusters heatmap -->
+        <script>
+            // Get the modal
+            var modal = document.getElementById('myModal');
+
+            // Get the image and insert it inside the modal - use its "alt" text as a caption
+            var img = document.getElementById('myImg');
+            var modalImg = document.getElementById("img01");
+            var captionText = document.getElementById("caption");
+            img.onclick = function() {
+                modal.style.display = "block";
+                modalImg.src = this.src;
+                captionText.innerHTML = this.alt;
+            }
+
+            // Get the <span> element that closes the modal
+            var span = document.getElementsByClassName("close")[0];
+
+            // When the user clicks on <span> (x), close the modal
+            span.onclick = function() {
+                modal.style.display = "none";
+            }
+        </script>
+</body>
