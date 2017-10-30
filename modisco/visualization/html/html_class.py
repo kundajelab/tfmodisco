@@ -29,18 +29,20 @@ class VCluster(object):
     all are optional. 
     tsne_embedding -- VTsne object 
     tsne_embedding_denoised -- VTsne_denoised object 
-    aggregate_motif -- VMotif object 
+    aggregate_motif -- VPattern object 
     example_seqlets -- list of VSeqlet objects 
     """
     def __init__(self,
                  tsne_embedding=None,
-                 tsne_embedding_denoised=None,
                  aggregate_motif=None,
                  example_seqlets=[],
                  
     ):
+        self.tsne_embedding=tsne_embedding
+        self.aggregate_motif=aggregate_motif
+        self.example_seqlets=example_seqlets 
         
-class VMetaCluster(VCluster):
+class VMetaCluster(object):
     """
     Inputs:
     all are optional. 
@@ -53,9 +55,9 @@ class VMetaCluster(VCluster):
                  tsne_embedding=None,
                  tsne_embedding_denoised=None,
                  clusters=[])
-    VCluster.__init__(tsne_embedding,
-                      tsne_embedding_denoised)
     self.clusters=clusters
+    self.tsne_embedding=tsne_embedding 
+    self.tsne_embedding_denoised=tsne_embedding_noised
 
 
 class VAllMetaclusterHeatmap(object):
@@ -77,38 +79,48 @@ class VAllMetaclusterHeatmap(object):
         
         
         
-class VMotif(object):
+class VPattern(object):
     """
     Inputs:
     image can be either a string to a png image file 
     or a matplotlib figure handle 
     
-    motif_tracks -- list of VTrack objects corresponding to the motif 
-    motif_seqlets -- list of VSeqlet objects corresponding to the motif 
+    tracks -- list of VSnippet objects corresponding to the motif 
     """
-    def __init__(self,motif_tracks,motif_seqlets):
-        self.motif_tracks=motif_tracks
-        self.motif_seqlets=motif_seqlets
-        
-        
-class VSeqlet(object):
-    """
-    Inputs:
-    image can be either a string to a png image file 
-    or a matplotlib figure handle 
-    tracks: list of VTrack objects 
-    """
-    def __init__(self,image,tracks,coordinates):
-        self.image=load_image(image)
+    def __init__(self,original_pattern,tracks):
+        self.original_pattern=original_pattern 
         self.tracks=tracks
+
         
-class VTrack(object):
+class VAggregatedSeqlet(VPattern):
+    """
+    seqlets is a list of VSeqlet objects
+    """
+    def __init__(self,original_aggregated_seqlet,tracks,seqlets):
+        super(VAggregatedSeqlet,self).__init__(original_pattern,tracks)
+        self.original_aggregated_seqlet=original_aggregated_seqlet  
+        self.seqlets=seqlets
+        
+class VSeqlet(VPattern):
     """
     Inputs:
     image can be either a string to a png image file 
     or a matplotlib figure handle 
-    
+    tracks: list of VSnippet objects 
     """
+    def __init__(self,original_Seqlet,tracks):
+        super(VSeqlet,self).__init__(tracks)
+        self.image=load_image(image)
+        self.coordinates=coordinates
+        self.original_seqlet=original_seqlet 
+        
+class VSnippet(object):
+    """
+    Inputs:
+    image can be either a string to a png image file 
+    or a matplotlib figure handle     
+    """
+    
     def __init__(self,track_name,fwd_image,rev_image):
         self.track_name=track_name
         self.fwd_image=load_image(fwd_image)
@@ -124,6 +136,7 @@ class VHistogram(object):
     thresh: threshold (double) 
     num_above_thresh: number motifs passing threshold (integer) 
     """
+    
     def __init__(self,image, thresh,num_above_thresh):
         self.image=load_image(image)
         self.thresh=thresh
@@ -135,8 +148,7 @@ class VTsne(object):
     """
     Inputs:
     image can be either a string to a png image file 
-    or a matplotlib figure handle 
-    
+    or a matplotlib figure handle     
     cluster_id_to_color_triplet is a dictionary 
     """
     def __init__(self,image,cluster_id_to_color_triplet):
