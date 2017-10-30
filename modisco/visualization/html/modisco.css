@@ -1,3 +1,40 @@
+/*style the task-specific histogram divs*/
+
+.column {float: left;
+	 font-family: sans-serif;
+	 margin: 15px;
+	 overflow:auto;
+	 text-align:left; 
+	}
+.histogram {
+    display:none;
+    float:left;
+}
+.tsne{
+    float:left;
+    overflow:auto;
+    margin: 15px;
+    text-align:left;
+}
+.tsne_class{
+    margin:auto;
+    overflow:auto;
+    margin: 15px;
+    text-align:center;
+}
+
+ p{
+    text-align: center;
+ } 
+ h2{
+     text-align: center;
+ }
+ h4{
+     padding:0px;
+ }
+ h5{
+     padding:0px;
+ }
 /* Style the buttons that are used to open and close the accordion panel */
 button.accordion {
     background-color: #eee;
@@ -21,10 +58,20 @@ div.panel {
     padding: 0 18px;
     background-color: white;
     max-height: 0;
-    overflow: hidden;
+    overflow: auto;
     transition: max-height 0.2 s ease-out;
 }
-
+div.blue{
+    background-color: lightblue;
+    text-align:left;
+}
+div{
+    text-align:left;
+}
+img.track{
+    width:900px;
+    height:100px;
+}
 /* Style the Image Used to Trigger the Modal */
 #myImg {
     border-radius: 5px;
@@ -122,52 +169,42 @@ div.panel {
         }
     }
 
-    /* Dropdown Button */
-    .dropbtn {
-    background-color: #000000;
-    color: white;
-    padding: 16px;
-    font-size: 16px;
-    border: none;
-    cursor: pointer;
-}
-
-/* Dropdown button on hover & focus */
-.dropbtn:hover, .dropbtn:focus {
-		    background-color: #CCCCCC;
-    }
-
-    /* The container <div>-needed to position the dropdown content */
-    .dropdown {
+div.hist_checkbox {
         position: absolute;
         top: 11% ;
         left: 500px;
     }
+/* Style the tab */
+div.tab {
+    overflow: auto;
+    border: 1px solid #ccc;
+    background-color: #f1f1f1;
+}
 
-    /* Dropdown Content (Hidden by Default) */
-    .dropdown-content {
-        display: none;
-        position: absolute;
-        background-color: #f9f9f9;
-        min-width: 160px;
-        box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
-        z-index: 1;
-    }
+/* Style the buttons inside the tab */
+div.tab button {
+    background-color: inherit;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    padding: 14px 16px;
+    transition: 0.3s;
+}
 
-    /* Links inside the dropdown */
-    .dropdown-content a {
-        color: black;
-        padding: 12px 16px;
-        text-decoration: none;
-        display: block;
-    }
+/* Change background color of buttons on hover */
+div.tab button:hover {
+    background-color: #ddd;
+}
 
-    /* Change color of dropdown links on hover */
-    .dropdown-content a: hover {
-        background-color: #f1f1f1
-    }
+/* Create an active/current tablink class */
+div.tab button.active {
+    background-color: #ccc;
+}
 
-    /* Show the dropdown menu (use JS to add this class to the .dropdown-content container when the user clicks on the dropdown button) */
-    .show {
-        display: block;
-    }
+/* Style the tab content */
+.tabcontent {
+    display: none;
+    padding: 6px 12px;
+    border: 1px solid #ccc;
+    overflow:auto;
+ 
