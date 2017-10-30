@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang='en'>
+  <head>
+    <title>MODISCO example dataset</title>
+    <link type='text/css' rel='stylesheet' href="modisco.css">
+  </head>
+  <body>
+    <div id="metaclusters_heatmap" display="inline">
+      <h2>All metaclusters heatmap</h2>
+      <img src="example_figures_modisco/metaclusters_heatmap.png"/>
+    </div>
+    <button class="accordion">Metacluster 0</button>
+    <div class="panel">
+      <p>Lorem ipsum...</p>
+    </div>
+
+    <button class="accordion">Metacluster 1</button>
+    <div class="panel">
+      <p>Lorem ipsum...</p>
+    </div>
+
+    <button class="accordion">Metacluster 2</button>
+    <div class="panel">
+      <p>Lorem ipsum...</p>
+    </div>
+    <script>
+      var acc = document.getElementsByClassName("accordion");
+      var i;
+
+      for (i = 0; i < acc.length; i++) {
+		      acc[i].onclick = function() {
+		      this.classList.toggle("active");
+		      var panel = this.nextElementSibling;
+		      if (panel.style.maxHeight){
+		      panel.style.maxHeight = null;
+		      } else {
+		      panel.style.maxHeight = panel.scrollHeight + "px";
+		      }
+		      }
+		      }
+		      </script>
+
+  </body>
