@@ -1,0 +1,223 @@
+/*style the task-specific histogram divs*/
+
+.column {float: left;
+	 font-family: sans-serif;
+	 margin: 15px;
+	 overflow:auto;
+	 text-align:left; 
+	}
+.histogram {
+    display:none;
+    float:left;
+}
+.tsne{
+    float:left;
+    overflow:auto;
+    margin: 15px;
+    text-align:left;
+}
+.tsne_class{
+    margin:auto;
+    overflow:auto;
+    margin: 15px;
+    text-align:center;
+}
+
+
+
+ p{
+    text-align: center;
+ } 
+ h2{
+     text-align: center;
+ }
+ h4{
+     padding:0px;
+ }
+ h5{
+     padding:0px;
+ }
+/* Style the buttons that are used to open and close the accordion panel */
+button.accordion {
+    background-color: #eee;
+    color: #444;
+    cursor: pointer;
+    padding: 18px;
+    width: 100%;
+    text-align: left;
+    border: none;
+    outline: none;
+    transition: 0.4s;
+    color: rgba(0,0,0,0.6);
+    text-shadow: 2px 8px 6px rgba(0,0,0,0.2),
+    0px -5px 35px rgba(255,255,255,0.3);
+    font-weight: 900;
+    font-size:150%;
+}
+
+/* Add a background color to the button if it is clicked on (add the .active class with JS), and when you move the mouse over it (hover) */
+button.accordion.active, button.accordion:hover {
+			     background-color: # ccc;
+}
+
+/* Style the accordion panel. Note: hidden by default */
+div.panel {
+    padding: 0 18px;
+    background-color: white;
+    max-height: 0;
+    overflow: auto;
+    transition: max-height 0.2 s ease-out;
+}
+div.blue{
+    background-color: lightblue;
+    text-align:left;
+}
+div{
+    text-align:left;
+}
+img.track{
+    width:900px;
+    height:100px;
+}
+/* Style the Image Used to Trigger the Modal */
+#myImg {
+    border-radius: 5px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+#myImg: hover {
+        opacity: 0.7;
+    }
+
+    /* The Modal (background) */
+    .modal {
+        display: none; /* Hidden by default */
+        position: fixed; /* Stay in place */
+        z-index: 1; /* Sit on top */
+        padding-top: 100px; /* Location of the box */
+        left: 0;
+        top: 0;
+        width: 100% ; /* Full width */
+        height: 100% ; /* Full height */
+        overflow: auto; /* Enable scroll if needed */
+        background-color: rgb(200, 200, 200); /* Fallback color */
+        background-color: rgba(200, 200, 200, 0.9); /* Black w/ opacity */
+    }
+
+    /* Modal Content (Image) */
+    .modal-content {
+        margin: auto;
+        display: block;
+        width: 80% ;
+        max-width: 700px;
+    }
+
+/* Caption of Modal Image (Image Text)-Same Width as the Image */
+#caption {
+    margin: auto;
+    display: block;
+    width: 80% ;
+    max-width: 700px;
+    text-align: center;
+    color: #000;
+    padding: 10px 0;
+    height: 150px;
+}
+
+/* Add Animation-Zoom in the Modal */
+.modal-content, #caption {
+    -webkit-animation-name: zoom;
+    -webkit-animation-duration: 0.6s;
+    animation-name: zoom;
+    animation-duration: 0.6s;
+}
+
+@-webkit-keyframes zoom {
+    from {
+        -webkit-transform: scale(0)
+    }
+    to {
+        -webkit-transform: scale(1)
+    }
+}
+
+@keyframes zoom {
+    from {
+        transform: scale(0)
+    }
+    to {
+        transform: scale(1)
+    }
+}
+
+/* The Close Button */
+    .close {
+        position: absolute;
+        top: 15px;
+        right: 35px;
+        color: #000000;
+        font-size: 40px;
+        font-weight: bold;
+        transition: 0.3s;
+    }
+
+    .close: hover,
+    .close: focus {
+        color: #bbb;
+        text-decoration: none;
+        cursor: pointer;
+    }
+
+/* 100% Image Width on Smaller Screens */
+@media only screen and(max-width: 700px) {
+        .modal-content {
+            width: 100% ;
+        }
+    }
+
+div.hist_checkbox {
+        position: absolute;
+        top: 11% ;
+        left: 500px;
+    }
+/* Style the tab */
+div.tab {
+    overflow: auto;
+    border: 1px solid #ccc;
+    background-color: #f1f1f1;
+}
+
+/* Style the buttons inside the tab */
+div.tab button {
+    background-color: inherit;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    padding: 14px 16px;
+    transition: 0.3s;
+    color: rgba(0,0,0,0.6);
+    text-shadow: 2px 8px 6px rgba(0,0,0,0.2),
+    0px -5px 35px rgba(255,255,255,0.3);
+    font-weight: 900;
+    font-size:100%;
+
+}
+
+/* Change background color of buttons on hover */
+div.tab button:hover {
+    background-color: #ddd;
+}
+
+/* Create an active/current tablink class */
+div.tab button.active {
+    background-color: #ccc;
+}
+
+/* Style the tab content */
+.tabcontent {
+    display: none;
+    padding: 6px 12px;
+    border: 1px solid #ccc;
+    overflow:auto;
+ 
