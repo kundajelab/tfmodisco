@@ -133,15 +133,15 @@ class RecursiveKmeans(AbstractTwoDMatSubclusterer):
 
         cluster1_mean = np.mean(twod_mat[cluster_indices==0], axis=0)
         cluster2_mean = np.mean(twod_mat[cluster_indices==1], axis=0)
-        dist = ((np.sum(np.minimum(np.abs(cluster1_mean),
-                                   np.abs(cluster1_mean))*
-                        np.sign(cluster1_mean)*
-                        np.sign(cluster2_mean)))/
-                 np.sum(np.maximum(np.abs(cluster1_mean),
-                                   np.abs(cluster2_mean)))) 
-        #dist = np.sum(cluster1_mean*cluster2_mean)/(
-        #               np.linalg.norm(cluster1_mean)
-        #               *np.linalg.norm(cluster2_mean))
+        #dist = ((np.sum(np.minimum(np.abs(cluster1_mean),
+        #                           np.abs(cluster1_mean))*
+        #                np.sign(cluster1_mean)*
+        #                np.sign(cluster2_mean)))/
+        #         np.sum(np.maximum(np.abs(cluster1_mean),
+        #                           np.abs(cluster2_mean)))) 
+        dist = np.sum(cluster1_mean*cluster2_mean)/(
+                       np.linalg.norm(cluster1_mean)
+                       *np.linalg.norm(cluster2_mean))
 
         if (dist > self.threshold):
             print("No split; similarity is "+str(dist)+" and "

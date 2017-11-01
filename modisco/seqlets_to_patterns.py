@@ -35,8 +35,8 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                        initial_flank_to_add=10,
                        per_track_min_similarity_for_seqlet_assignment=0,
                        final_min_cluster_size=30,
-                       similarity_splitting_threshold=0.75,
-                       similarity_merging_threshold=0.75,
+                       similarity_splitting_threshold=0.9,
+                       similarity_merging_threshold=None,
                        final_flank_to_add=10,
                        verbose=True,
                        batch_size=50):
@@ -74,8 +74,9 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.similarity_splitting_threshold = similarity_splitting_threshold
 
         #merging settings
-        self.similarity_merging_threshold =\
-            similarity_merging_threshold
+        if (similarity_merging_threshold is None):
+            similarity_merging_threshold = 0.85*len(track_names)
+        self.similarity_merging_threshold = similarity_merging_threshold
 
         #final postprocessor settings
         self.final_flank_to_add=final_flank_to_add
@@ -97,7 +98,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.affinity_mat_from_seqlets =\
             affmat.core.MaxCrossMetricAffinityMatrixFromSeqlets(                       
                 pattern_comparison_settings=self.pattern_comparison_settings,
-                cross_metric=affmat.core.CrossContinJaccardMultiCoreCPU2(
+                cross_metric=affmat.core.CrossContinJaccardMultiCoreCPU(
                              verbose=True, n_cores=self.n_cores))
 
         self.tsne_affinitymat_transformer =\
@@ -115,7 +116,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
             verbose=self.verbose)
 
         self.clusterer = cluster.core.LouvainCluster(
-            affmat_transformer=None,
+            affmat_transformer=self.tsne_affinitymat_transformer,
             min_cluster_size=self.louvain_min_cluster_size,
             verbose=self.verbose)
 
@@ -135,11 +136,9 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                         frac=self.frac_support_to_trim_to).chain(
             self.expand_trim_expand1)
 
-        self.pattern_aligner = core.CrossContinJaccardPatternAligner(
-            pattern_comparison_settings=self.pattern_comparison_settings)
-        
         self.seqlet_aggregator = aggregator.HierarchicalSeqletAggregator(
-            pattern_aligner=self.pattern_aligner,
+            pattern_aligner=core.CrossContinJaccardPatternAligner(
+            pattern_comparison_settings=self.pattern_comparison_settings),
             affinity_mat_from_seqlets=self.affinity_mat_from_seqlets,
             postprocessor=self.postprocessor1) 
 
@@ -153,7 +152,13 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
 
         self.similar_patterns_collapser =\
             aggregator.SimilarPatternsCollapser(
-                pattern_aligner=self.pattern_aligner,
+                pattern_aligner=core.CrossCorrelationPatternAligner(
+                    pattern_comparison_settings=
+                        affmat.core.PatternComparisonSettings(
+                            track_names=self.track_names,
+                            track_transformer=affmat.MeanNormalizer().chain(
+                                              affmat.MagnitudeNormalizer()),
+                            min_overlap=self.min_overlap_while_sliding)),
                 merging_threshold=self.similarity_merging_threshold,
                 postprocessor=self.expand_trim_expand1,
                 verbose=self.verbose) 
@@ -168,7 +173,7 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                 individual_aligner_metric=
                     core.get_best_alignment_crosscontinjaccard,
                 matrix_affinity_metric=
-                    affmat.core.CrossContinJaccardMultiCoreCPU2(
+                    affmat.core.CrossContinJaccardMultiCoreCPU(
                         verbose=self.verbose, n_cores=self.n_cores)),
             min_cluster_size=self.final_min_cluster_size,
             postprocessor=self.expand_trim_expand1,
@@ -203,13 +208,13 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
             print("Rows filtering took "+
                   str(round(time.time()-filtering_start_time))+"s")
 
-        tsne_mat = (tsne_mat[filtered_rows_mask])[:,filtered_rows_mask]
         seqlets = [x[0] for x in zip(seqlets, filtered_rows_mask) if (x[1])]
 
         if (self.verbose):
             print("Computing clustering")
             sys.stdout.flush()
-        cluster_results = self.clusterer(tsne_mat)
+        cluster_results = self.clusterer(
+            affinity_mat[filtered_rows_mask][:,filtered_rows_mask])
         num_clusters = max(cluster_results.cluster_indices+1)
         if (self.verbose):
             print("Got "+str(num_clusters)+" clusters initially")
@@ -267,7 +272,11 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
             sys.stdout.flush()
 
         results = SeqletsToPatternsResults(patterns)
-        results.seqlets = seqlets #the filtered seqlets
+        results.affinity_mat = affinity_mat
+        results.filtered_rows_mask = filtered_rows_mask
+        results.filtered_seqlets = filtered_seqlets
+        results.cluster_results = cluster_results
+        results.cluster
 
         return patterns 
 

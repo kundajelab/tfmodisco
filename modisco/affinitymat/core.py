@@ -41,10 +41,30 @@ class MagnitudeNormalizer(AbstractTrackTransformer):
         return (inp / (np.linalg.norm(inp.ravel())+0.0000001))
 
 
+class AttenuateOutliers(AbstractTrackTransformer):
+
+    def __init__(self, fold_above_mean_threshold):
+        self.fold_above_mean_threshold = fold_above_mean_threshold
+
+    def __call__(self, inp):
+        return np.maximum(np.abs(inp)/np.mean(np.abs(inp)),
+                          self.fold_above_mean_threshold)*np.sign(inp)
+
+
+class SquareMagnitude(AbstractTrackTransformer):
+
+    def __call__(self, inp):
+        return np.square(inp)*np.sign(inp) 
+
+
 class L1Normalizer(AbstractTrackTransformer):
 
     def __call__(self, inp):
-        return (inp / (np.sum(np.abs(inp.ravel()))+0.0000001))
+        abs_sum = np.sum(np.abs(inp))
+        if (abs_sum==0):
+            return inp
+        else:
+            return (inp/abs_sum)
 
 
 class PatternComparisonSettings(object):
@@ -182,22 +202,43 @@ class CrossContinJaccardMultiCoreCPU(AbstractCrossMetric):
         full_crosscontinjaccards =\
             np.zeros((filters.shape[0], padded_input.shape[0], len_output))
 
-        for idx in range(len_output):
-            if (self.verbose):
-                print("On offset",idx,"of",len_output-1)
+        start = time.time()
+        if len(filters) >= 2000: 
+            for idx in range(len_output):
+                if (self.verbose):
+                    print("On offset",idx,"of",len_output-1)
+                    sys.stdout.flush()
+                snapshot = padded_input[:,idx:idx+filters.shape[1],:]
+                assert snapshot.shape[1]==filters.shape[1],\
+                    str(snapshape.shape)+" "+filters.shape
+                subsnap_size = int(np.ceil(snapshot.shape[0]/self.n_cores))
                 sys.stdout.flush()
-            snapshot = padded_input[:,idx:idx+filters.shape[1],:]
-            assert snapshot.shape[1]==filters.shape[1],\
-                str(snapshape.shape)+" "+filters.shape
-            subsnap_size = int(np.ceil(snapshot.shape[0]/self.n_cores))
-            sys.stdout.flush()
-            subsnaps = [snapshot[(i*subsnap_size):(min((i+1)*subsnap_size,
-                                                     snapshot.shape[0]))]
-                        for i in range(self.n_cores)]
-            full_crosscontinjaccards[:,:,idx] =\
-                np.concatenate(
-                 Parallel(n_jobs=self.n_cores)(delayed(jaccard_sim_func)
-                          (filters, subsnap) for subsnap in subsnaps),axis=1)
+                subsnaps = [snapshot[(i*subsnap_size):(min((i+1)*subsnap_size,
+                                                         snapshot.shape[0]))]
+                            for i in range(self.n_cores)]
+                full_crosscontinjaccards[:,:,idx] =\
+                    np.concatenate(
+                     Parallel(n_jobs=self.n_cores)(delayed(jaccard_sim_func)
+                              (filters, subsnap) for subsnap in subsnaps),axis=1)
+        else:
+            #parallelize by index
+            job_arguments = []
+            for idx in range(0,len_output):
+                snapshot = padded_input[:,idx:idx+filters.shape[1],:]
+                assert snapshot.shape[1]==filters.shape[1],\
+                    str(snapshot.shape)+" "+filters.shape
+                job_arguments.append((filters, snapshot))
+
+            to_concat = (Parallel(n_jobs=self.n_cores)
+                           (delayed(jaccard_sim_func)(job_args[0], job_args[1])
+                            for job_args in job_arguments))
+            full_crosscontinjaccards[:,:,:] =\
+                    np.concatenate([x[:,:,None] for x in to_concat],axis=2)
+
+        end = time.time()
+        if (self.verbose):
+            print("Cross contin jaccard time taken:",round(end-start,2),"s")
+
         return np.max(full_crosscontinjaccards, axis=-1)
 
 
@@ -315,10 +356,8 @@ class FilterSparseRows(AbstractGetFilteredRowsMask):
                 sys.stdout.flush()
             return (np.ones(len(affinity_mat)) > 0.0) #keep all rows
 
-        print(np.mean(affinity_mat))
         affinity_mat = self.affmat_transformer(affinity_mat) 
         per_node_neighbours = np.sum(affinity_mat > 0, axis=1) 
-        print(np.mean(per_node_neighbours))
         passing_nodes = per_node_neighbours >= self.min_edges_per_row
         if (self.verbose):
             print(str(np.sum(passing_nodes))+" passing out of "
