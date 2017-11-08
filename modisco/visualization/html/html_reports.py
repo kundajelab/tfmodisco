@@ -9,5 +9,6 @@ def generate_html_report(dataset,oprefix):
     oprefix is a string indicating the output prefix for the html file to generate 
     """
     outf=open(oprefix+'.html','w')
+    
     pass
             
