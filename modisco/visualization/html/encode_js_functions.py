@@ -9,11 +9,17 @@ def showHist():
 def accordion():
     return 'varacc=document.getElementsByClassName("accordion");vari;for(i=0;i<acc.length;i++){acc[i].onclick=function(){this.classList.toggle("active");varpanel=this.nextElementSibling;if(panel.style.maxHeight){panel.style.maxHeight=null;}else{panel.style.maxHeight=panel.scrollHeight+"px";}}}'
 
-def zoomAllMetaClustersHeatmap():
-    return '//Getthemodalvarmodal=document.getElementById("myModal");//Gettheimageandinsertitinsidethemodal-useits"alt"textasacaptionvarimg=document.getElementById("myImg");varmodalImg=document.getElementById("img01");varcaptionText=document.getElementById("caption");img.onclick=function(){modal.style.display="block";modalImg.src=this.src;captionText.innerHTML=this.alt;}//Getthe<span>elementthatclosesthemodalvarspan=document.getElementsByClassName("close")[0];//Whentheuserclickson<span>(x),closethemodalspan.onclick=function(){modal.style.display="none";}'
+def def_modalFunction():
+    return '//GetthemodalfunctiongetModal(modalId,imageId,modalImageId,captionId){varmodal=document.getElementById(modalId);varimg=document.getElementById(imageId);varmodalImg=document.getElementById(modalImageId);varcaptionText=document.getElementById(captionId);img.onclick=function(){modal.style.display="block";modalImg.src=this.src;captionText.innerHTML=this.alt;}varspan=document.getElementsByClassName("close")[0];span.onclick=function(){modal.style.display="none";}}'                        
+
+def call_modalFunction(modalId,imageId,modalImageId,captionId):
+    return 'getModal("{modalId}","{imageId}","{modalImageId}","{captionId}")'.format(modalId=modalId,
+                                                                                     imageId=imageId,
+                                                                                     modalImageId=modalImageId,
+                                                                                     captionId=captionId)
 
 def uncheckAll():
-    return 'varcheckboxes=document.getElementsByTagName("input");for(vari=0;i<checkboxes.length;i++){if(checkboxes[i].type=="checkbox"){checkboxes[i].checked=false;}}</script>'
+    return 'varcheckboxes=document.getElementsByTagName("input");for(vari=0;i<checkboxes.length;i++){if(checkboxes[i].type=="checkbox"){checkboxes[i].checked=false;}}'
 
 
 def selectClusterTab():

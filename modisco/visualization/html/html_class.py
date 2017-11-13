@@ -144,10 +144,12 @@ class VHistogram(object):
     
     def __init__(self,image=None,
                  thresh=None,
-                 num_above_thresh=None):
+                 num_above_thresh=None,
+                 label=None):
         self.image=load_image(image)
         self.thresh=thresh
         self.number_above_thresh=num_above_thresh
+        self.label=label
 
         
 
