@@ -13,14 +13,15 @@ class VDataset(object):
     def __init__(self,
                  metaclusters_heatmap=None,
                  per_task_histograms=[],
-                 metaclusters=[]
+                 metaclusters=[],
+                 title=None
                  
                  
     ):
         self.metaclusters_heatmap=metaclusters_heatmap
         self.per_task_histograms=per_task_histograms
         self.metaclusters=metaclusters
-        
+        self.title=title
         
         
 class VCluster(object):
@@ -28,7 +29,8 @@ class VCluster(object):
     Inputs: 
     all are optional. 
     tsne_embedding -- VTsne object 
-    tsne_embedding_denoised -- VTsne_denoised object 
+    tsne_embedding_denoised -- VTsne_denoised
+ object 
     aggregate_motif -- VPattern object 
     example_seqlets -- list of VSeqlet objects 
     """
@@ -54,15 +56,15 @@ class VMetaCluster(object):
     def __init__(self,
                  tsne_embedding=None,
                  tsne_embedding_denoised=None,
-                 clusters=[])
-    self.clusters=clusters
-    self.tsne_embedding=tsne_embedding 
-    self.tsne_embedding_denoised=tsne_embedding_noised
+                 clusters=[]):
+        self.clusters=clusters
+        self.tsne_embedding=tsne_embedding 
+        self.tsne_embedding_denoised=tsne_embedding_denoised
 
 
 class VAllMetaclusterHeatmap(object):
     """
-    Histogram of all metaclusters in the dataset. 
+    Heatmap of all metaclusters in the dataset. 
     
     Inputs:
     image can be either a string to a png image file 
@@ -76,10 +78,7 @@ class VAllMetaclusterHeatmap(object):
                  cluster_id_to_num_seqlets_in_cluster={}):
         self.image=load_image(image)
         self.cluster_id_to_mean=cluster_id_to_mean
-        self.cluster_id_to_num_seqlets_in_cluster=cluster_id_to_num_seqlets_in_cluster
-        
-        
-        
+        self.cluster_id_to_num_seqlets_in_cluster=cluster_id_to_num_seqlets_in_cluster        
         
 class VPattern(object):
     """
@@ -97,15 +96,12 @@ class VPattern(object):
         
 class VAggregatedSeqlet(VPattern):
     """
-    seqlets is a list of VSeqlet objects
+    seqlets is a list of VSeqlet objects -- corresponds to an aggregate motif 
     """
     def __init__(self,original_aggregated_seqlet=None,
-                 tracks=[],
-                 seqlets=[]):
-        super(VAggregatedSeqlet,self).__init__(original_pattern,tracks)
-        self.original_aggregated_seqlet=original_aggregated_seqlet  
-        self.seqlets=seqlets
-        
+                 tracks=[]):
+        super(VAggregatedSeqlet,self).__init__(original_pattern=original_aggregated_seqlet,tracks=tracks)
+         
 class VSeqlet(VPattern):
     """
     Inputs:
@@ -114,10 +110,10 @@ class VSeqlet(VPattern):
     tracks: list of VSnippet objects 
     """
     def __init__(self,
-                 original_Seqlet=None,
-                 tracks=[]):
+                 original_seqlet=None,
+                 tracks=[],
+                 coordinates=None):
         super(VSeqlet,self).__init__(tracks)
-        self.image=load_image(image)
         self.coordinates=coordinates
         self.original_seqlet=original_seqlet 
         
@@ -151,7 +147,7 @@ class VHistogram(object):
                  num_above_thresh=None):
         self.image=load_image(image)
         self.thresh=thresh
-        self.number_above_thresh=number_above_thresh
+        self.number_above_thresh=num_above_thresh
 
         
 
@@ -162,7 +158,7 @@ class VTsne(object):
     or a matplotlib figure handle     
     cluster_id_to_color_triplet is a dictionary 
     """
-    def __init__(self,image,=None,
+    def __init__(self,image=None,
                  cluster_id_to_color_triplet={}):
         self.image=load_image(image)
         self.cluster_id_to_color_triplet=cluster_id_to_color_triplet

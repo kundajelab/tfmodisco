@@ -1,13 +1,16 @@
 from yattag import *
 from encode_js_functions import *
 
-def generate_html_doc(title,vdataset):
+def generate_html_string(vdataset):
     #generates main body of the html document.
     doc,tag,text=Doc().tagtext()
-    with
+    doc.asis('<!DOCTYPE html>')
+    doc.stag('html',lang='en')
+    doc.stag('meta',content='text/html;charset=utf-8',http_equiv='Content-Type')
+    doc.stag('meta',content='utf-8',http_equiv="encoding")    
     with tag('head'):
         with tag('title'):
-            text(title)
+            text(vdataset.title)
         doc.tag('link',type='text/css',rel='stylesheet',href='modisco.css')
         with tag('script'):
             text(showHist())
