@@ -837,6 +837,8 @@ def get_2d_data_from_patterns(patterns, track_names, track_transformer):
 def get_2d_data_from_pattern(pattern, track_names, track_transformer): 
     snippets = [pattern[track_name]
                  for track_name in track_names] 
+    if (track_transformer is None):
+        track_transformer = lambda x: x
     fwd_data = np.concatenate([track_transformer(
              np.reshape(snippet.fwd, (len(snippet.fwd), -1)))
             for snippet in snippets], axis=1)
@@ -900,15 +902,41 @@ def cross_absdiff(in1, in2):
 
 
 def cross_continjaccard(in1, in2):
-    assert len(in1.shape)==2
-    assert len(in2.shape)==2
-    assert in1.shape[1] == in2.shape[1]
     len_result = (1+len(in1)-len(in2))
     to_return = np.zeros(len_result)
     for idx in range(len_result):
         snippet = in1[idx:idx+in2.shape[0]]
-        union = np.sum(np.maximum(np.abs(snippet),np.abs(in2)))
-        intersection = np.minimum(np.abs(snippet),np.abs(in2))
-        signs = np.sign(snippet)*np.sign(in2)
-        to_return[idx] = np.sum(signs*intersection)/union
+        to_return[idx] = continjaccard(in1=snippet, in2=in2)
     return to_return
+
+
+def continjaccard(in1, in2):
+    assert len(in1.shape)==2
+    assert len(in2.shape)==2
+    assert in1.shape[1] == in2.shape[1]
+    union = np.sum(np.maximum(np.abs(in1),np.abs(in2)))
+    intersection = np.minimum(np.abs(in1),np.abs(in2))
+    signs = np.sign(in1)*np.sign(in2)
+    return np.sum(signs*intersection)/union
+
+
+def corr(in1, in2):
+    assert len(in1.shape)==2
+    assert len(in2.shape)==2
+    assert in1.shape[1] == in2.shape[1]
+    return (in1/np.linalg.norm(in1))*(in2/np.linalg.norm(in2)) 
+
+
+def max_kl_div(in1, in2):
+    assert len(in1.shape)==2
+    assert len(in2.shape)==2
+    assert in1.shape[1] == in2.shape[1]
+    assert np.testing.assertAlmostEqual(np.sum(in1, axis=2),1.0,eps=0.00001)) 
+    #pseudocount
+    in1 = (in1+0.0001)/1.0004
+    in2 = (in2+0.0001)/1.0004
+    kldiv1 = np.sum(in1*np.log(in1/in2),axis=1) 
+    kldiv2 = np.sum(in2*np.log(in2/in1),axis=1) 
+    return np.max(0.5*(kldiv1+kldiv2))
+
+
