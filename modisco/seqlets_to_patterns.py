@@ -21,12 +21,12 @@ class AbstractSeqletsToPatterns(object):
         raise NotImplementedError()
 
 
-class SeqletsToPatterns1(AbstractSeqletsToPatterns):
+class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
     def __init__(self, track_names,
                        track_set,
-                       min_overlap_while_sliding=0.7,
                        n_cores=20,
+                       min_overlap_while_sliding=0.7,
                        tsne_perplexity=50,
                        min_edges_per_row=None, 
                        louvain_min_cluster_size=10,
@@ -46,8 +46,8 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         self.track_set = track_set
 
         #affinity_mat calculation
-        self.min_overlap_while_sliding = min_overlap_while_sliding
         self.n_cores = n_cores
+        self.min_overlap_while_sliding = min_overlap_while_sliding
 
         #affinity mat to tsne dist mat setting
         self.tsne_perplexity = tsne_perplexity

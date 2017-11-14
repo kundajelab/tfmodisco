@@ -580,15 +580,45 @@ class HierarchicalSeqletAggregator(object):
                       key=lambda x: -x.num_seqlets)
 
 
+class AbstractMergePatternsCondition(object):
+
+    def __call__(self, pattern1, pattern2):
+        raise NotImplementedError()
+
+    def chain(self, other_merge_patterns_condition):
+        return AdhocMergePatternsCondition( 
+                lambda pattern1, pattern2:
+                    (self(pattern1, pattern2) and
+                     other_merge_patterns_condition(pattern1, pattern2)))
+
+
+class AdhocMergePatternsCondition(AbstractMergePatternsCondition):
+
+    def __init__(self, func):
+        self.func = func
+
+    def __call__(self, pattern1, pattern2):
+        return self.func(pattern1=pattern1, pattern2=pattern2)
+
+
+class AlignAndValidateProperties(AbstractMergePatternsCondition):
+
+   def __init__(self, pattern_comparison_settings, metric):
+        self.pattern_comparison_settings = pattern_comparison_settings
+        self.pattern_aligner = core.CrossMetricPatternAligner(
+            pattern_comparison_settings=pattern_comparison_settings,
+            metric=metric)
+
+
 class SimilarPatternsCollapser(object):
 
-    def __init__(self, pattern_aligner,
-                       merging_threshold,
+    def __init__(self, merge_patterns_condition,
+                       pattern_aligner,
                        postprocessor,
                        verbose=True):
+        self.merge_patterns_condition = merge_patterns_condition
         self.pattern_aligner = pattern_aligner
-        self.merging_threshold = merging_threshold
-        self.verbose=verbose
+        self.verbose = verbose
         self.postprocessor = postprocessor
 
     def __call__(self, original_patterns):
@@ -603,13 +633,12 @@ class SimilarPatternsCollapser(object):
                         parent_pattern, child_pattern = pattern2, pattern1
                     else:
                         parent_pattern, child_pattern = pattern1, pattern2
-                    (best_crosscorr_argmax, is_revcomp, best_crosscorr) =\
-                        self.pattern_aligner(parent_pattern=parent_pattern,
-                                             child_pattern=child_pattern)  
-                    if (best_crosscorr > self.merging_threshold): 
+                    merge, alnmt = self.merge_patterns_condition(
+                                parent_pattern=parent_pattern,
+                                child_pattern=child_pattern)
+                    if (merge): 
                         if (self.verbose):
-                            print("Collapsing "+str(i)+" & "+str(j+i)
-                                 +" with similarity "+str(best_crosscorr)) 
+                            print("Collapsing "+str(i)+" & "+str(j+i)) 
                             sys.stdout.flush()
                         parent_pattern.merge_aggregated_seqlet(
                             agg_seqlet=child_pattern,
@@ -625,7 +654,7 @@ class SimilarPatternsCollapser(object):
                     else:
                         if (self.verbose):
                             print("Not collapsing "+str(i)+" & "+str(j+i)
-                                 +" with similarity "+str(best_crosscorr)) 
+                                 +" with similarity "+str(best_corr)) 
                             sys.stdout.flush()
 
         return sorted(self.postprocessor(list(set(original_patterns))),

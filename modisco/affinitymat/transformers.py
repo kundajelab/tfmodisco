@@ -143,6 +143,12 @@ class MinVal(AbstractAffMatTransformer):
         return affinity_mat*(affinity_mat >= self.min_val)
 
 
+class DistToSymm(AbstractAffMatTransformer):
+
+    def __call__(self, affinity_mat):
+        return np.max(affinity_mat)-affinity_mat
+
+
 class TsneJointProbs(AbstractAffMatTransformer):
 
     def __init__(self, perplexity, verbose=1):

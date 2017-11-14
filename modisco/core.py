@@ -254,7 +254,8 @@ class SignedContribThresholdLabeler(AbstractThresholdLabeler):
        # sigmoid_logit = np.abs(val)*(15.0/threshold)
        # sigmoid_logit = min(sigmoid_logit, 15)
         core_val = np.abs(val)/threshold
-        core_val = 2 if (core_val >= 2) else core_val
+        core_val = ((1+(np.log(core_val)/np.log(2)))
+                    if (core_val >= 1) else core_val)
         return core_val*np.sign(val)
        # return (2*(np.exp(sigmoid_logit)/                                      
        #             (1+np.exp(sigmoid_logit)))-1)*np.sign(val)
