@@ -1,10 +1,45 @@
 from yattag import *
 from encode_js_functions import *
 
+def add_snippet(doc,tag,cur_snippet,snippet_index,modal_image_function_calls):
+    with tag('h4'):
+        text("Track_{snippet_index}".format(snippet_index=snippet_index))
+        with tag('h5'):
+            text("Forward")
+        modal_image_function_calls.append(add_modal_image(doc,tag,cur_snippet.fwd_image),modal_image_function_calls)
+        with tag('h5'):
+            text("Reverse")
+        modal_image_function_calls.append(add_modal_image(doc,tag,cur_snippet.rev_image),modal_image_function_calls)
+    return modal_image_function_calls
+
 def add_seqlet(doc,tag,cur_seqlet,seqlet_index,modal_image_function_calls):
-    
-    return modal_image_function_calls 
+    #color-code odd & even seqlets to make them easier to distinguish visually
+    if seqlet_index%2==0:
+        cur_class="blue"
+    else:
+        cur_class="gray"
+    with tag('div',klass=cur_class):
+        with tag('h3'):
+            text("Seqlet_{seqlet_index}".format(seqlet_index=seqlet_index))
+        for snippet_index in range(len(cur_seqlet.tracks)):
+            cur_snippet=cur_seqlet.tracks[snippet_index]
+            modal_image_function_calls=add_snippet(doc,tag,cur_snippet,snippet_index,modal_image_function_calls)        
+    return modal_image_function_calls
+
 def add_aggregate_motif(doc,tag,aggregate_motif,modal_image_function_calls):
+    with tag('h3'):
+        text("Aggregate Motif")
+    #iterate through the VSnippet objects that form the tracks
+    for track_index in range(len(aggregate_motif.tracks)):
+        cur_track=aggregate_motif.tracks[track_index]
+        with tag('h4'):
+            text('Track_{track_index}'.format(track_index=track_index))
+        with tag('h5'):
+            text("Forward:")
+        modal_image_function_calls.append(add_modal_image(doc,tag,cur_track.fwd_image),modal_image_function_calls)
+        with tag('h5'):
+            text("Reverse:")
+        modal_image_function_calls.append(add_modal_image(doc,tag,cur_track.rev_image),modal_image_function_calls)
     return modal_image_function_calls
 
 def add_cluster(doc,tag,cur_cluster,cluster_index,modal_image_function_calls):
@@ -175,4 +210,3 @@ if __name__=="__main__":
     test_out=generate_html_string(vdataset)
     outf=open('test_small.html','w')
     outf.write(test_out)
-    

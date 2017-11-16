@@ -96,7 +96,7 @@ class VPattern(object):
         
 class VAggregatedSeqlet(VPattern):
     """
-    seqlets is a list of VSeqlet objects -- corresponds to an aggregate motif 
+    tracks is a list of Vsnippet objects -- corresponds to an aggregate motif 
     """
     def __init__(self,original_aggregated_seqlet=None,
                  tracks=[]):
