@@ -6,10 +6,10 @@ def add_snippet(doc,tag,text,cur_snippet,snippet_index,modal_image_function_call
         text("Track_{snippet_index}".format(snippet_index=snippet_index))
         with tag('h5'):
             text("Forward")
-        modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_snippet.fwd_image),modal_image_function_calls)
+        modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_snippet.fwd_image,len(modal_image_function_calls)))
         with tag('h5'):
             text("Reverse")
-        modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_snippet.rev_image),modal_image_function_calls)
+        modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_snippet.rev_image,len(modal_image_function_calls)))
     return modal_image_function_calls
 
 def add_seqlet(doc,tag,text,cur_seqlet,seqlet_index,modal_image_function_calls):
@@ -48,8 +48,8 @@ def add_cluster(doc,tag,text,cur_cluster,cluster_index,modal_image_function_call
         modal_image_function_calls=add_aggregate_motif(doc,tag,text,cur_cluster.aggregate_motif,modal_image_function_calls)
         with tag('div',klass='column'):
             with tag('h3'):
-                text("TSNE highlighting cluster {cluster_index}".format(cluster_index=cluster_index))
-            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_cluster.tsne_embedding.image,cur_id=len(modal_image_function_calls)))
+                text("TSNE highlighting current cluster")
+        modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_cluster.tsne_embedding.image,cur_id=len(modal_image_function_calls)))
 
         with tag('button',klass='accordion'):
             text('Sample Seqlets')
@@ -76,13 +76,15 @@ def add_metacluster(doc,tag,text,cur_metacluster,metacluster_index,modal_image_f
         #add cluster tabs for the current metacluster 
         with tag('div',klass='tab'):
             for cluster_index in range(len(cur_metacluster.clusters)):
-                with tag('button',klass='tablinks',onclick="openCluster(event,'cluster_{cluster_index}')".format(cluster_index=cluster_index)):
+                unique_cluster_index=hash(str(metacluster_index)+str(cluster_index))
+                with tag('button',klass='tablinks',onclick="openCluster(event,'cluster_{i}')".format(i=unique_cluster_index)):
                     text("cluster_{cluster_index}".format(cluster_index=cluster_index))
                     
         #add a div containing cluster-specific information for each cluster within the metacluster 
         for cluster_index in range(len(cur_metacluster.clusters)):
             cur_cluster=cur_metacluster.clusters[cluster_index]
-            modal_image_function_calls=add_cluster(doc,tag,text,cur_cluster,cluster_index,modal_image_function_calls)            
+            unique_cluster_index=hash(str(metacluster_index)+str(cluster_index))
+            modal_image_function_calls=add_cluster(doc,tag,text,cur_cluster,unique_cluster_index,modal_image_function_calls)      
     return modal_image_function_calls 
 
 def add_per_task_histograms(doc,tag,text,vdataset,modal_image_function_calls):
@@ -92,11 +94,12 @@ def add_per_task_histograms(doc,tag,text,vdataset,modal_image_function_calls):
                 cur_hist=vdataset.per_task_histograms[histogram_index]
                 checkbox_label='check{histogram_index}'.format(histogram_index=histogram_index)
                 with tag('label'):
-                    doc.tag('input',
-                        type='checkbox',
-                        id=checkbox_label,
+                    with tag('input',
+                             type='checkbox',
+                             id=checkbox_label,
                              onchange='showHist("hist{histogram_index}")'.format(histogram_index=histogram_index)
-                    )
+                    ):
+                        pass                    
                     with tag('span'):
                         text(cur_hist.label)
     with tag('div',klass='column'):

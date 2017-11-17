@@ -58,10 +58,10 @@ def selectClusterTab():
     return 'function openCluster(evt,cityName){\n\
     var i,tabcontent,tablinks;\n\
     tabcontent=document.getElementsByClassName("tabcontent");\n\
-    for(i=0;i<tabcontent.length;i++){\n\
+    for(i=0;i < tabcontent.length;i++){\n\
     tabcontent[i].style.display="none";}\n\
     tablinks=document.getElementsByClassName("tablinks");\n\
-    for(i=0;i<tablinks.length;i++){\n\
+    for(i=0; i< tablinks.length;i++){\n\
     tablinks[i].className=tablinks[i].className.replace("active","");}\n\
     document.getElementById(cityName).style.display="block";\n\
-    evt.currentTarget.className+="active";}'
+    evt.currentTarget.className += "active";}'

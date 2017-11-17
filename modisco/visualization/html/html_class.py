@@ -76,7 +76,7 @@ class VAllMetaclusterHeatmap(object):
     def __init__(self,image=None,
                  cluster_id_to_mean={},
                  cluster_id_to_num_seqlets_in_cluster={}):
-        self.image=load_image(image)
+        self.image=load_image(image,dim="height=\"400px\"")
         self.cluster_id_to_mean=cluster_id_to_mean
         self.cluster_id_to_num_seqlets_in_cluster=cluster_id_to_num_seqlets_in_cluster        
         
@@ -113,7 +113,7 @@ class VSeqlet(VPattern):
                  original_seqlet=None,
                  tracks=[],
                  coordinates=None):
-        super(VSeqlet,self).__init__(tracks)
+        super(VSeqlet,self).__init__(tracks=tracks)
         self.coordinates=coordinates
         self.original_seqlet=original_seqlet 
         
@@ -128,8 +128,8 @@ class VSnippet(object):
                  fwd_image=None,
                  rev_image=None):
         self.track_name=track_name
-        self.fwd_image=load_image(fwd_image)
-        self.rev_image=load_image(rev_image)
+        self.fwd_image=load_image(fwd_image,dim="width=\"700px\"")
+        self.rev_image=load_image(rev_image,dim="width=\"700px\"")
 
     
 class VHistogram(object):
