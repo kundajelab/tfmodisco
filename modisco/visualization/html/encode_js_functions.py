@@ -3,7 +3,7 @@
 
 
 def showHist():
-    return 'functionshowHist(hist_div)\n\
+    return 'function showHist(hist_div){\n\
     var connected_div=document.getElementById(hist_div).style.display;\n\
     var vis="block";\n\
     if(connected_div=="none"){\n\
@@ -12,41 +12,40 @@ def showHist():
     if(connected_div=="block"){\n\
     vis="none";\n\
     }\n\
-    document.getElementById(hist_div).style.display=vis;\n\
-    }'
+    document.getElementById(hist_div).style.display=vis;}'
 
 
 def accordion():
-    return 'varacc=document.getElementsByClassName("accordion");\n\
+    return 'var acc=document.getElementsByClassName("accordion");\n\
     var i;\n\
     for(i=0;i<acc.length;i++){\n\
     acc[i].onclick=function(){\n\
     this.classList.toggle("active");\n\
-    varpanel=this.nextElementSibling;\n\
+    var panel=this.nextElementSibling;\n\
     if(panel.style.maxHeight){\n\
     panel.style.maxHeight=null;}\n\
     else{\n\
-    panel.style.maxHeight=panel.scrollHeight+"px";}}}'
+    panel.style.maxHeight=panel.scrollHeight+"px";}}}\n'
 
 def def_modalFunction():
-    return 'getModal(modalId,imageId,modalImageId,captionId){\n\
+    return 'function getModal(modalId,imageId,modalImageId,captionId,closeId){\n\
     var modal=document.getElementById(modalId);\n\
-    var img=document.getElementById(imageId);\n\
+    var img=document.getElementById(imageId).childNodes[0].childNodes[0];\n\
     var modalImg=document.getElementById(modalImageId);\n\
     var captionText=document.getElementById(captionId);\n\
     img.onclick=function(){\n\
     modal.style.display="block";\n\
-    modalImg.src=this.src;\n\
-    captionText.innerHTML=this.alt;}\n\
-    varspan=document.getElementsByClassName("close")[0];\n\
+    modalImg.src=this.src;}\n\
+    var span=document.getElementById(closeId);\n\
     span.onclick=function(){\n\
-    modal.style.display="none";}}'
+    modal.style.display="none";}}\n'
 
-def call_modalFunction(modalId,imageId,modalImageId,captionId):
-    return 'getModal("{modalId}","{imageId}","{modalImageId}","{captionId}");\n'.format(modalId=modalId,
-                                                                                     imageId=imageId,
-                                                                                     modalImageId=modalImageId,
-                                                                                     captionId=captionId)
+def call_modalFunction(modalId,imageId,modalImageId,captionId,closeId):
+    return 'getModal("{modalId}","{imageId}","{modalImageId}","{captionId}","{closeId}");\n'.format(modalId=modalId,
+                                                                                    imageId=imageId,
+                                                                                    modalImageId=modalImageId,
+                                                                                    captionId=captionId,
+                                                                                    closeId=closeId)
 
 def uncheckAll():
     return 'var checkboxes=document.getElementsByTagName("input");\n\

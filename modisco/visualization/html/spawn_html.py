@@ -141,19 +141,19 @@ def add_modal_image(doc,tag,text,image,id):
     imageId="image{id}".format(id=id)
     modalImageId="modalImage{id}".format(id=id)
     captionId="caption{id}".format(id=id)
-
+    closeId="close{id}".format(id=id)
     #generate the modal elements associated with the image
     #add the div tag for the image 
     with doc.tag('div',id=imageId):
         doc.asis(image)
     with doc.tag('div',id=modalId,klass="modal"):
-        with doc.tag('span',klass="close"):
+        with doc.tag('span',id=closeId,klass="close"):
             doc.asis('&times;')
         doc.stag('img',klass='modal-content',id=modalImageId)
         doc.stag('div',id=captionId)
 
     #generate the modal function call for the image & return the associated string
-    return call_modalFunction(modalId,imageId,modalImageId,captionId)
+    return call_modalFunction(modalId,imageId,modalImageId,captionId,closeId)
 
 def generate_html_string(vdataset):
     '''
@@ -169,7 +169,7 @@ def generate_html_string(vdataset):
     with tag('head'):
         with tag('title'):
             text(vdataset.title)
-        doc.tag('link',type='text/css',rel='stylesheet',href='modisco.css')
+        doc.stag('link',type='text/css',rel='stylesheet',href='modisco.css')
         with tag('script'):
             text(showHist())
     with tag('body'):

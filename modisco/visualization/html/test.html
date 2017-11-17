@@ -47,9 +47,9 @@
         <div class="column">
 	  <h2>Task-specific histograms</h2>
 	  <ul>
-	    <li><label for="check1"><input type="checkbox" id="check1" onchange="showHist('hist1')"/> <span>CTCF</span></label></li>
-	    <li><label for="check2"><input type="checkbox" id="check2"  onchange="showHist('hist2')" /> <span>SIX5</span></label></li>
-	    <li><label for="check3"><input type="checkbox" id="check3"  onchange="showHist('hist3')" /> <span>ZNF143</span></label></li>
+	    <li><label><input type="checkbox" id="check1" onchange="showHist('hist1')"/> <span>CTCF</span></label></li>
+	    <li><label><input type="checkbox" id="check2"  onchange="showHist('hist2')" /> <span>SIX5</span></label></li>
+	    <li><label><input type="checkbox" id="check3"  onchange="showHist('hist3')" /> <span>ZNF143</span></label></li>
 	  </ul>
         </div>
 	<div class="column">
@@ -464,7 +464,6 @@
             img.onclick = function() {
                 modal.style.display = "block";
                 modalImg.src = this.src;
-                captionText.innerHTML = this.alt;
             }
             var span = document.getElementsByClassName("close")[0];
             span.onclick = function() {
