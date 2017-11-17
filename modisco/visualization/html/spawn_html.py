@@ -49,7 +49,7 @@ def add_cluster(doc,tag,text,cur_cluster,cluster_index,modal_image_function_call
         with tag('div',klass='column'):
             with tag('h3'):
                 text("TSNE highlighting cluster {cluster_index}".format(cluster_index=cluster_index))
-            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_cluster.tsne_embedding.image,id=len(modal_image_function_calls)))
+            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_cluster.tsne_embedding.image,cur_id=len(modal_image_function_calls)))
 
         with tag('button',klass='accordion'):
             text('Sample Seqlets')
@@ -65,18 +65,18 @@ def add_metacluster(doc,tag,text,cur_metacluster,metacluster_index,modal_image_f
     with tag('div',klass='panel'):
         with tag('div',klass='tsne'):
             #add a modal image for TSNE
-            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_metacluster.tsne_embedding.image,id=len(modal_image_function_calls)))
+            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_metacluster.tsne_embedding.image,cur_id=len(modal_image_function_calls)))
             with tag('p'):
                 text('TSNE Embedding')
             #add a modal image for denoised TSNE
-            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_metacluster.tsne_embedding_denoised.image,id=len(modal_image_function_calls)))
+            modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_metacluster.tsne_embedding_denoised.image,cur_id=len(modal_image_function_calls)))
             with tag('p'):
                 text('Noise-Filtered TSNE Embedding')
                 
         #add cluster tabs for the current metacluster 
         with tag('div',klass='tab'):
             for cluster_index in range(len(cur_metacluster.clusters)):
-                with tag('button',klass='tablinks',onclick="openCluster(event,'cluste_{cluster_index})".format(cluster_index=cluster_index)):
+                with tag('button',klass='tablinks',onclick="openCluster(event,'cluster_{cluster_index}')".format(cluster_index=cluster_index)):
                     text("cluster_{cluster_index}".format(cluster_index=cluster_index))
                     
         #add a div containing cluster-specific information for each cluster within the metacluster 
@@ -92,10 +92,10 @@ def add_per_task_histograms(doc,tag,text,vdataset,modal_image_function_calls):
                 cur_hist=vdataset.per_task_histograms[histogram_index]
                 checkbox_label='check{histogram_index}'.format(histogram_index=histogram_index)
                 with tag('label'):
-                    tag('input',
+                    doc.tag('input',
                         type='checkbox',
                         id=checkbox_label,
-                        onchange='showHist(\'{histogram_index}\')'.format(histogram_index=histogram_index)
+                             onchange='showHist("hist{histogram_index}")'.format(histogram_index=histogram_index)
                     )
                     with tag('span'):
                         text(cur_hist.label)
@@ -104,7 +104,7 @@ def add_per_task_histograms(doc,tag,text,vdataset,modal_image_function_calls):
             cur_hist=vdataset.per_task_histograms[histogram_index]
             hist_label='hist{histogram_index}'.format(histogram_index=histogram_index)
             with tag('div',klass='histogram',id=hist_label):
-                modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_hist.image,id=len(modal_image_function_calls)))
+                modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_hist.image,cur_id=len(modal_image_function_calls)))
                 with tag('p'):
                     text(cur_hist.label)
     return modal_image_function_calls
@@ -132,25 +132,27 @@ def add_scripts(doc,tag,modal_image_function_calls):
         doc.asis(selectClusterTab())
     
 
-def add_modal_image(doc,tag,text,image,id):
+def add_modal_image(doc,tag,text,image,cur_id):
     '''
     adds an image div and an associated modal div to the doc object 
     '''
-    #get unique id's for the modal elements 
-    modalId="modal{id}".format(id=id)
-    imageId="image{id}".format(id=id)
-    modalImageId="modalImage{id}".format(id=id)
-    captionId="caption{id}".format(id=id)
-    closeId="close{id}".format(id=id)
+    #get unique cur_id's for the modal elements 
+    modalId="modal{cur_id}".format(cur_id=cur_id)
+    imageId="image{cur_id}".format(cur_id=cur_id)
+    modalImageId="modalImage{cur_id}".format(cur_id=cur_id)
+    captionId="caption{cur_id}".format(cur_id=cur_id)
+    closeId="close{cur_id}".format(cur_id=cur_id)
     #generate the modal elements associated with the image
     #add the div tag for the image 
-    with doc.tag('div',id=imageId):
+    with tag('div',id=imageId):
         doc.asis(image)
-    with doc.tag('div',id=modalId,klass="modal"):
-        with doc.tag('span',id=closeId,klass="close"):
+    with tag('div',id=modalId,klass="modal"):
+        with tag('span',id=closeId,klass="close"):
             doc.asis('&times;')
-        doc.stag('img',klass='modal-content',id=modalImageId)
-        doc.stag('div',id=captionId)
+        with tag('img',klass='modal-content',id=modalImageId):
+            pass
+        with tag('div',id=captionId):
+            pass
 
     #generate the modal function call for the image & return the associated string
     return call_modalFunction(modalId,imageId,modalImageId,captionId,closeId)
@@ -163,25 +165,23 @@ def generate_html_string(vdataset):
     modal_image_function_calls=[];
     doc,tag,text=Doc().tagtext()
     doc.asis('<!DOCTYPE html>')
-    doc.stag('html',lang='en')
-    doc.stag('meta',content='text/html;charset=utf-8',http_equiv='Content-Type')
-    doc.stag('meta',content='utf-8',http_equiv="encoding")    
+    doc.asis('<html lang=\'en\'>')
+    doc.asis('<meta content="text/html;charset=utf-8" http-equiv="Content-Type">')
+    doc.asis('<meta content="utf-8" http-equiv="encoding">')
     with tag('head'):
         with tag('title'):
             text(vdataset.title)
-        doc.stag('link',type='text/css',rel='stylesheet',href='modisco.css')
+        doc.asis('<link type=\'text/css\' rel=\'stylesheet\' href="modisco.css">')
         with tag('script'):
             text(showHist())
     with tag('body'):
         with tag('div',klass='horizontal_panel'):
             with tag('div',klass='column'):
                 with tag('h2'):
-                    text('All Metaclusters Heatmap')
-                    
+                    text('All Metaclusters Heatmap')                    
                 #generate a modal image for the all metacluster heatmap.
                 #add the modal function call to the list of all modal image function calls in the HTML doc 
-                modal_image_function_calls.append(add_modal_image(doc,tag,text,vdataset.metaclusters_heatmap.image,id=len(modal_image_function_calls)))
-
+                modal_image_function_calls.append(add_modal_image(doc,tag,text,vdataset.metaclusters_heatmap.image,cur_id=len(modal_image_function_calls)))
             with tag('div',klass='column'):
                 with tag('h2'):
                     text("Task-specific histograms")

@@ -3,7 +3,7 @@ import numpy as np
 from plotly.offline import init_notebook_mode, plot_mpl
 import base64
 
-def load_image(image,height=450,width=450):
+def load_image(image,height="200",width="200"):
     """
     Determines whether 'image' is a string 
     or a matplotlib figure handle. 
