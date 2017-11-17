@@ -1,6 +1,7 @@
 from os import listdir
 from os.path import isfile, join
-
+import random
+import string
 import sys
 sys.path.append('../')
 from html_class import *
@@ -49,7 +50,7 @@ def generate_vdataset_from_folder(folder_name):
     
     per_task_histograms_folder=folder_name+"/per_task_histograms"
     per_task_histograms_files = [(per_task_histograms_folder+'/'+f) for f in listdir(per_task_histograms_folder) if isfile(join(per_task_histograms_folder, f))]
-    per_task_histograms=[VHistogram(image=f) for f in per_task_histograms_files]
+    per_task_histograms=[VHistogram(image=f,label=''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(8))) for f in per_task_histograms_files]
 
     per_metacluster_folder=folder_name+"/per_metacluster_figures"
     per_metacluster_files=[(per_metacluster_folder+'/'+f) for f in listdir(per_metacluster_folder) if (not f.startswith('.'))]

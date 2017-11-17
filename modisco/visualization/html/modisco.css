@@ -72,6 +72,13 @@ div.blue{
     background-color: lightblue;
     text-align:left;
 }
+
+div.gray{
+    background-color: lightgray;
+    text-align:left;
+}
+
+
 div{
     text-align:left;
 }
