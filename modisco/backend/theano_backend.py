@@ -101,6 +101,38 @@ def get_argmax_function():
     return argmax_func_wrapper
 
 
+def get_gapped_kmer_embedding_func(filters, biases):
+
+    #filters should be: out_channels, rows, ACGT
+    filters = filters.astype("float32")
+    biases = biases.astype("float32")
+    onehot_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                          broadcastable=[False]*3)("onehot")
+    toembed_var = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                           broadcastable=[False]*3)("toembed")
+    theano_filters = theano.tensor.as_tensor_variable(
+                      x=filters, name="filters")
+    theano_biases = theano.tensor.as_tensor_variable(x=biases, name="biases")
+    onehot_out = 1.0*((theano.tensor.nnet.conv.conv2d(
+                    input=onehot_var[:,None,:,:],
+                    filters=theano_filters[:,None,::-1,::-1],
+                    border_mode='valid')[:,:,:,0] + biases[None,:,None])
+                    > 0.0)
+    embedding_out = theano.tensor.sum((theano.tensor.nnet.conv.conv2d(
+                        input=toembed_var[:,None,:,:],
+                        filters=theano_filters[:,None,::-1,::-1],
+                        border_mode='valid')[:,:,:,0])*onehot_out, axis=2)
+    func = theano.function([onehot_var, toembed_var], embedding_out,
+                            allow_input_downcast=True)
+    def batchwise_func(onehot, to_embed, batch_size, progress_update):
+        return np.array(run_function_in_batches(
+                            func=func,
+                            input_data_list=[onehot, to_embed],
+                            batch_size=batch_size,
+                            progress_update=progress_update))
+    return batchwise_func
+
+
 def max_cross_corrs(filters, things_to_scan, min_overlap,
                        batch_size=50,
                        func_params_size=1000000,

@@ -11,6 +11,13 @@ import traceback
 from sklearn.neighbors.kde import KernelDensity
 
 
+def factorial(val):
+    to_return = 1
+    for i in range(1,val+1):
+        to_return *= i
+    return to_return
+
+
 def first_curvature_max(values, bins, bandwidth):
     kde = KernelDensity(kernel="gaussian", bandwidth=bandwidth).fit(
                 [[x,0] for x in values])

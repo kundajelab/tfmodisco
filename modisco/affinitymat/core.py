@@ -1,10 +1,12 @@
 from __future__ import division, print_function, absolute_import
 from .. import backend as B
 import numpy as np
+from .. import util as modiscoutil
 from .. import core as modiscocore
 from . import transformers
 import sys
 import time
+import itertools
 
 
 class AbstractTrackTransformer(object):
@@ -81,6 +83,112 @@ class AbstractAffinityMatrixFromSeqlets(object):
         raise NotImplementedError()
 
 
+class AbstractSeqletsToOnedEmbedder(object):
+
+    def __call__(seqlets):
+        raise NotImplementedError()
+
+
+class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
+    
+    def __init__(self, alphabet_size,
+                       kmer_len,
+                       num_gaps,
+                       onehot_track_name,
+                       toscore_track_names_and_signs,
+                       normalizer,
+                       batch_size=50,
+                       progress_update=None):
+        self.alphabet_size = alphabet_size
+        self.kmer_len = kmer_len
+        self.num_gaps = num_gaps
+        self.filters, self.biases = self.prepare_gapped_kmer_filters()
+        self.onehot_track_name = onehot_track_name
+        self.toscore_track_names_and_signs = toscore_track_names_and_signs
+        self.normalizer = normalizer
+        self.batch_size = batch_size
+        self.progress_update = progress_update
+        self.gapped_kmer_embedding_func = B.get_gapped_kmer_embedding_func(
+                                            filters=self.filters,
+                                            biases=self.biases)
+
+    def prepare_gapped_kmer_filters(self):
+        nonzero_position_combos = list(itertools.combinations(
+                            iterable=range(self.kmer_len),
+                            r=(self.kmer_len-self.num_gaps)))
+        letter_permutations = list(itertools.product(
+                                *[list(range(self.alphabet_size)) for x in
+                                  range(self.kmer_len-self.num_gaps)]))
+        filters = []
+        biases = []
+        unique_nonzero_positions = set()
+        for nonzero_positions in nonzero_position_combos:
+            string_representation = [" " for x in range(self.kmer_len)]
+            for nonzero_position in nonzero_positions:
+                string_representation[nonzero_position] = "X"
+            nonzero_positions_string =\
+                ("".join(string_representation)).lstrip().rstrip()
+            if (nonzero_positions_string not in unique_nonzero_positions):
+                unique_nonzero_positions.add(nonzero_positions_string) 
+                for letter_permutation in letter_permutations:
+                    assert len(nonzero_positions)==len(letter_permutation)
+                    the_filter = np.zeros((self.kmer_len, self.alphabet_size)) 
+                    for nonzero_position, letter\
+                        in zip(nonzero_positions, letter_permutation):
+                        the_filter[nonzero_position, letter] = 1 
+                    filters.append(the_filter)
+                    biases.append(-(len(nonzero_positions)-1))
+        return np.array(filters), np.array(biases)
+
+    def __call__(seqlets):
+        onehot_track_fwd, onehot_track_rev =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=[self.onehot_track_name], track_transformer=None)
+
+        data_to_embed_fwd = np.zeros((len(seqlets),
+                                  len(seqlets[0]), self.alphabet_size))
+        data_to_embed_rev = np.zeros((len(seqlets),
+                                  len(seqlets[0]), self.alphabet_size))
+        for (track_name, sign) in self.toscore_track_names_and_signs:
+            fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=[track_name], track_transformer=None)
+            data_to_embed_fwd += fwd_data*sign
+            data_to_embed_rev += rev_data*sign
+        data_to_embed_fwd = np.array([self.normalizer(x) for x in
+                                      data_to_embed_fwd])
+        data_to_embed_rev = np.array([self.normalizer(x) for x in
+                                      data_to_embed_rev])
+
+        embedding_fwd = self.gapped_kmer_embedding_func(
+                              onehot=onehot_track_fwd,
+                              to_embed=data_to_embed_fwd,
+                              batch_size=self.batch_size,
+                              progress_update=self.progress_update)
+        embedding_rev = self.gapped_kmer_embedding_func(
+                              onehot=onehot_track_rev,
+                              to_embed=data_to_embed_rev,
+                              batch_size=self.batch_size,
+                              progress_update=self.progress_update)
+        return embedding_fwd, embedding_rev
+
+
+class AffmatFromEmbeddings(AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, seqlets_to_1d_embedder, affinity_mat_from_1d):
+        self.seqlets_to_1d_embedder = seqlets_to_1d_embedder
+        self.affinity_mat_from_1d = affinity_mat_from_1d 
+
+    def __call__(self, seqlets):
+        embedding_fwd, embedding_rev = self.seqlets_to_1d_embedder(seqlets)
+        affinity_mat_fwd = self.affinity_mat_from_1d(
+                            vecs1=embedding_fwd, vecs2=embedding_fwd)  
+        affinity_mat_rev = self.affinity_mat_from_1d(
+                            vecs1=embedding_fwd, vecs2=embedding_rev)
+        return np.maximum(affinity_mat_fwd, affinity_mat_rev) 
+
+
 class MaxCrossMetricAffinityMatrixFromSeqlets(
         AbstractAffinityMatrixFromSeqlets):
 
@@ -107,6 +215,15 @@ class MaxCrossMetricAffinityMatrixFromSeqlets(
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
         cross_metrics = np.maximum(cross_metrics_fwd, cross_metrics_rev)
         return cross_metrics
+
+
+class MaxCrossCorrAffinityMatrixFromSeqlets(
+        MaxCrossMetricAffinityMatrixFromSeqlets):
+
+    def __init__(self, pattern_comparison_settings, **kwargs):
+        super(MaxCrossCorrAffinityMatrixFromSeqlets, self).__init__(
+            pattern_comparison_settings=pattern_comparison_settings,
+            cross_metric=CrossCorrMetricGPU(**kwargs))
 
 
 class AbstractCrossMetric(object):
