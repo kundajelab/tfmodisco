@@ -1,5 +1,5 @@
-from distutils.core import setup
-
+#from distutils.core import setup
+from setuptools import setup
 if __name__== '__main__':
     setup(include_package_data=True,
           description='MOtif Discovery from Importance SCOres',
