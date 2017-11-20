@@ -94,14 +94,16 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
     def __init__(self, alphabet_size,
                        kmer_len,
                        num_gaps,
-                       onehot_track_name,
+                       num_mismatches,
                        toscore_track_names_and_signs,
                        normalizer,
+                       onehot_track_name=None,
                        batch_size=50,
                        progress_update=None):
         self.alphabet_size = alphabet_size
         self.kmer_len = kmer_len
         self.num_gaps = num_gaps
+        self.num_mismatches = num_mismatches
         self.filters, self.biases = self.prepare_gapped_kmer_filters()
         self.onehot_track_name = onehot_track_name
         self.toscore_track_names_and_signs = toscore_track_names_and_signs
@@ -110,9 +112,13 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         self.normalizer = normalizer
         self.batch_size = batch_size
         self.progress_update = progress_update
-        self.gapped_kmer_embedding_func = B.get_gapped_kmer_embedding_func(
-                                            filters=self.filters,
-                                            biases=self.biases)
+        self.require_onehot_match = (True if self.onehot_track_name
+                                     is not None else False)
+        self.gapped_kmer_embedding_func =\
+            B.get_gapped_kmer_embedding_func(
+                    filters=self.filters,
+                    biases=self.biases,
+                    require_onehot_match=self.require_onehot_match)
 
     def prepare_gapped_kmer_filters(self):
         nonzero_position_combos = list(itertools.combinations(
@@ -139,14 +145,19 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                         in zip(nonzero_positions, letter_permutation):
                         the_filter[nonzero_position, letter] = 1 
                     filters.append(the_filter)
-                    biases.append(-(len(nonzero_positions)-1))
+                    biases.append(-(len(nonzero_positions)-1
+                                    -self.num_mismatches))
         return np.array(filters), np.array(biases)
 
     def __call__(self, seqlets):
-        onehot_track_fwd, onehot_track_rev =\
-            modiscocore.get_2d_data_from_patterns(
-                patterns=seqlets,
-                track_names=[self.onehot_track_name], track_transformer=None)
+        print("Computing embeddings")
+        sys.stdout.flush()
+        if (self.require_onehot_match):
+            onehot_track_fwd, onehot_track_rev =\
+                modiscocore.get_2d_data_from_patterns(
+                    patterns=seqlets,
+                    track_names=[self.onehot_track_name],
+                    track_transformer=None)
 
         data_to_embed_fwd = np.zeros((len(seqlets),
                                      len(seqlets[0]), self.alphabet_size))\
@@ -164,16 +175,24 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                       data_to_embed_fwd])
         data_to_embed_rev = np.array([self.normalizer(x) for x in
                                       data_to_embed_rev])
-        embedding_fwd = self.gapped_kmer_embedding_func(
-                              onehot=onehot_track_fwd,
-                              to_embed=data_to_embed_fwd,
-                              batch_size=self.batch_size,
-                              progress_update=self.progress_update)
-        embedding_rev = self.gapped_kmer_embedding_func(
-                              onehot=onehot_track_rev,
-                              to_embed=data_to_embed_rev,
-                              batch_size=self.batch_size,
-                              progress_update=self.progress_update)
+        common_args = {'batch_size': self.batch_size,
+                       'progress_update': self.progress_update}
+        if (self.require_onehot_match):
+            embedding_fwd = self.gapped_kmer_embedding_func(
+                                  onehot=onehot_track_fwd,
+                                  to_embed=data_to_embed_fwd,
+                                  **common_args)
+            embedding_rev = self.gapped_kmer_embedding_func(
+                                  onehot=onehot_track_rev,
+                                  to_embed=data_to_embed_rev,
+                                  **common_args)
+        else:
+            embedding_fwd = self.gapped_kmer_embedding_func(
+                                  to_embed=data_to_embed_fwd,
+                                  **common_args)
+            embedding_rev = self.gapped_kmer_embedding_func(
+                                  to_embed=data_to_embed_rev,
+                                  **common_args)
         return embedding_fwd, embedding_rev
 
 
@@ -186,9 +205,11 @@ class AbstractAffinityMatrixFromOneD(object):
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
     def __call__(self, vecs1, vecs2):
+        print("Computing similarity")
+        sys.stdout.flush()
         normed_vecs1 = vecs1/np.linalg.norm(vecs1, axis=1)[:,None] 
         normed_vecs2 = vecs2/np.linalg.norm(vecs2, axis=1)[:,None] 
-        return np.sum(normed_vecs1[:,None,:]*normed_vecs2[None,:,:],axis=-1)
+        return np.dot(normed_vecs1,normed_vecs2.T)
 
 
 class AffmatFromEmbeddings(AbstractAffinityMatrixFromSeqlets):
