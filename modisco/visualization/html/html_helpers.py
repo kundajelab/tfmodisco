@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+
 from plotly.offline import init_notebook_mode, plot_mpl
 import base64
 from html_classes import *
@@ -83,4 +84,16 @@ def convert_AggregatedSeqlet_to_VAggregatedSeqlet(aggregated_seqlet_instance):
 
 
         
-#Helpers to generate clusters & Metaclusters
+def generate_VCluster(aggregated_seqlet_instance,n=5,tsne_embedding=None):
+        '''
+        generates a VCluster object from an AggregatedSeqlet object 
+        n indicates how many sample seqlets to select (at random) from 
+        SeqletsAndAlignments attribute of aggregated_seqlet_instance. 
+        '''
+        cur_VAggregatedSeqlet=convert_AggregatedSeqlet_to_VAggregatedSeqlet(aggregated_seqlet_instance)
+        seqlets=aggregated_seqlet_instance.seqlets_and_alnmts.arr
+        example_seqlets=[convert_Seqlet_to_VSeqlet(i) for i in np.random.choice(seqlets,n)]
+        return Vcluster(tsne_embedding=tsne_embedding,
+                        aggregate_motif=cur_VAggregatedSeqlet,
+                        example_seqlets=example_seqlets)
+

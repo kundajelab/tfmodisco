@@ -46,7 +46,7 @@ def scatter_plot(coords, clusters=None,
     if (coords.shape[1]==3):
         ax.set_zlabel(zlabel)
     plt.show()
-
+    return fig 
 
 def frac_to_rainbow_colour(frac):
     """

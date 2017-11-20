@@ -16,3 +16,4 @@ def color_tsne_embedding_by_clustering(embedding, clusters,
     mplh.scatter_plot(coords=embedding, clusters=clusters,
                       *args, **kwargs)
     
+    
