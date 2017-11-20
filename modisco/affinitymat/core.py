@@ -97,6 +97,7 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                        num_mismatches,
                        toscore_track_names_and_signs,
                        normalizer,
+                       num_filters_to_retain=None,
                        onehot_track_name=None,
                        batch_size=50,
                        progress_update=None):
@@ -104,6 +105,7 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         self.kmer_len = kmer_len
         self.num_gaps = num_gaps
         self.num_mismatches = num_mismatches
+        self.num_filters_to_retain = num_filters_to_retain
         self.filters, self.biases = self.prepare_gapped_kmer_filters()
         self.onehot_track_name = onehot_track_name
         self.toscore_track_names_and_signs = toscore_track_names_and_signs
@@ -193,6 +195,20 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
             embedding_rev = self.gapped_kmer_embedding_func(
                                   to_embed=data_to_embed_rev,
                                   **common_args)
+        if (self.num_filters_to_retain is not None):
+            all_embeddings = np.concatenate(
+                             [embedding_fwd, embedding_rev], axis=0)
+            embeddings_denominators =\
+                np.sum(np.abs(all_embeddings) > 0, axis=0).astype("float")
+            embeddings_denominators += 10.0
+            embeddings_mean_impact =\
+                (np.sum(np.abs(all_embeddings), axis=0)/
+                 embeddings_denominators)
+            top_embedding_indices = [
+                x[0] for x in sorted(enumerate(embeddings_mean_impact),
+                key=lambda x: -x[1])][:self.num_filters_to_retain]
+            embedding_fwd = embedding_fwd[:,top_embedding_indices]
+            embedding_rev = embedding_rev[:,top_embedding_indices]
         return embedding_fwd, embedding_rev
 
 
