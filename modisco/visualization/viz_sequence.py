@@ -147,3 +147,5 @@ def plot_weights(array,
         highlight=highlight,
         ylabel=ylabel)
     plt.show()
+    return fig
+

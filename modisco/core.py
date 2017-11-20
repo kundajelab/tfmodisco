@@ -605,7 +605,8 @@ class AggregatedSeqlet(Pattern):
         ax = fig.add_subplot(111)
         self.plot_counts_given_ax(ax=ax, counts=counts)
         plt.show()
-
+        return  fig
+    
     def plot_counts_given_ax(self, ax, counts):
         ax.plot(counts)
         ax.set_ylim((0,max(counts)*1.1))
