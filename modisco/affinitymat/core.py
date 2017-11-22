@@ -7,6 +7,7 @@ from . import transformers
 import sys
 import time
 import itertools
+from sklearn.neighbors import NearestNeighbors 
 
 
 class AbstractTrackTransformer(object):
@@ -280,6 +281,133 @@ class MaxCrossCorrAffinityMatrixFromSeqlets(
             cross_metric=CrossCorrMetricGPU(**kwargs))
 
 
+class TwoTierAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, fast_affmat_from_seqlets,
+                       nearest_neighbors_object,
+                       n_neighbors,
+                       affmat_from_seqlets_with_nn_pairs):
+        self.fast_affmat_from_seqlets = fast_affmat_from_seqlets
+        self.nearest_neighbors_object = nearest_neighbors_object
+        self.n_neighbors = n_neighbors
+        self.affmat_from_seqlets_with_nn_pairs =\
+            affmat_from_seqlets_with_nn_pairs
+
+    def __call__(self, seqlets):
+        fast_affmat = self.fast_affmat_from_seqlets(seqlets) 
+        neighbors = self.nearest_neighbors_object.fit(fast_affmat)\
+                        .kneighbors(X=fast_affmat,
+                                    n_neighbors=self.n_neighbors,
+                                    return_distance=False) 
+        final_affmat = self.affmat_from_seqlets_with_nn_pairs(
+                         seqlet_neighbors=neighbors,
+                         seqlets=seqlets)
+
+
+class AffmatFromSeqletsWithNNpairs(object):
+
+    def __init__(self, pattern_comparison_settings,
+                       sim_metric_on_nn_pairs):
+        self.pattern_comparison_settings = pattern_comparison_settings 
+        self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
+
+    def __call__(seqlet_neighbors, seqlets):
+        (all_fwd_data, all_rev_data) =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=self.pattern_comparison_settings.track_names,
+                track_transformer=
+                    self.pattern_comparison_settings.track_transformer)
+        #apply the cross metric
+        affmat_fwd = self.sim_metric_on_nn_pairs(
+                     neighbors_of_things_to_scan=seqlet_neighbors,
+                     filters=all_fwd_data,
+                     things_to_scan=all_fwd_data,
+                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+        affmat_rev = self.sim_metric_on_nn_pairs(
+                     neighbors_of_things_to_scan=seqlet_neighbors,
+                     filters=all_rev_data,
+                     things_to_scan=all_fwd_data,
+                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+        affmat = np.maximum(affmat_fwd, affmat_rev)
+        return affmat
+        
+
+
+class AbstractSimMetricOnNNpairs(object):
+
+    def __call__(self, neighbors_of_things_to_scan,
+                       filters, things_to_scan, min_overlap):
+        raise NotImplementedError()
+
+
+class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs)
+
+    def __init__(self, n_cores, cross_metric_single_region):
+        self.n_cores = n_cores
+        self.cross_metric_single_region = cross_metric_single_region
+
+    def __call__(self, neighbors_of_things_to_scan,
+                       filters, things_to_scan, min_overlap):
+        assert neighbors_of_things_to_scan.shape[0]==thing_to_scan.shape[0]
+        assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
+        assert len(thing_to_scan.shape)==3
+        assert len(filters.shape)==3
+       
+        filter_length = filters.shape[1]
+        padding_amount = int((filter_length)*(1-min_overlap))
+        things_to_scan = np.pad(array=things_to_scan,
+                              pad_width=((0,0),
+                                         (padding_amount, padding_amount),
+                                         (0,0)),
+                              mode="constant")
+ 
+        to_return = np.zeros((thing_to_scan.shape[0], filters.shape[0]))
+        job_arguments = []
+        for neighbors_of_thing_to_scan, thing_to_scan\
+            in zip(neighbors_of_things_to_scan, things_to_scan): 
+            args = (filters[neighbors_of_things_to_scan], thing_to_scan) 
+            job_arguments.append(args)
+
+        results = (Parallel(n_jobs=self.n_cores)                          
+                   (delayed(self.cross_metric_single_region)
+                           (job_args[0], job_args[1])
+                    for args in job_arguments))
+
+        for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
+             in enumerate(zip(results, neighbors)):
+            to_return[thing_to_scan_idx,
+                      thing_to_scan_neighbor_indices] = result
+
+        return to_return
+
+
+class AbstractCrossMetricSingleRegion(object):
+
+    def __call__(self, filters, thing_to_scan):
+        raise NotImplementedError()
+
+
+class CrossContinJaccardSingleRegion(AbstractCrossMetricSingleRegion)
+
+    def __call__(self, filters, thing_to_scan):
+        assert len(thing_to_scan.shape)==2
+        assert len(filters.shape)==3
+        len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
+        full_crossmetric = np.zeros((filters.shape[0],len_output))
+    
+        for idx in range(len_output):
+            snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
+            full_crossmetric[:,idx] =\
+                (np.sum(np.minimum(np.abs(snapshot[None,:,:]),
+                                   np.abs(filters[:,:,:]))*
+                        (np.sign(snapshot[None,:,:])
+                         *np.sign(filters[:,:,:])),axis=(1,2))/
+                 np.sum(np.maximum(np.abs(snapshot[None,:,:]),
+                                   np.abs(filters[:,:,:])),axis=(1,2)))
+        return np.max(full_crossmetric, axis=-1) 
+
+
 class AbstractCrossMetric(object):
 
     def __call__(self, filters, things_to_scan, min_overlap):
@@ -322,21 +450,21 @@ class CrossContinJaccardOneCoreCPU(AbstractCrossMetric):
                               mode="constant") for x in things_to_scan])
 
         len_output = 1+padded_input.shape[1]-filters.shape[1]
-        full_crossabsdiffs = np.zeros((filters.shape[0], padded_input.shape[0],
+        full_crossmetric = np.zeros((filters.shape[0], padded_input.shape[0],
                                        len_output))
         for idx in range(len_output):
             if (self.verbose):
                 print("On offset",idx,"of",len_output-1)
                 sys.stdout.flush()
             snapshot = padded_input[:,idx:idx+filters.shape[1],:]
-            full_crossabsdiffs[:,:,idx] =\
+            full_crossmetric[:,:,idx] =\
                 (np.sum(np.minimum(np.abs(snapshot[None,:,:,:]),
                                   np.abs(filters[:,None,:,:]))*
                        (np.sign(snapshot[None,:,:,:])
                         *np.sign(filters[:,None,:,:])),axis=(2,3))/
                  np.sum(np.maximum(np.abs(snapshot[None,:,:,:]),
                                    np.abs(filters[:,None,:,:])),axis=(2,3)))
-        return np.max(full_crossabsdiffs, axis=-1)
+        return np.max(full_crossmetric, axis=-1)
 
 
 def jaccard_sim_func(filters, snapshot):
