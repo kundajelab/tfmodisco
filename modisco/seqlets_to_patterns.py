@@ -11,8 +11,9 @@ import sys
 
 class SeqletsToPatternsResults(object):
 
-    def __init__(self, patterns):
+    def __init__(self, patterns, **kwargs):
         self.patterns = patterns
+        self.__dict__.update(**kwargs)
 
 
 class AbstractSeqletsToPatterns(object):
@@ -271,12 +272,11 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                   +str(round(time.time()-start,2))+"s")
             sys.stdout.flush()
 
-        results = SeqletsToPatternsResults(patterns)
-        results.affinity_mat = affinity_mat
-        results.filtered_rows_mask = filtered_rows_mask
-        results.filtered_seqlets = filtered_seqlets
-        results.cluster_results = cluster_results
-        results.cluster
+        results = SeqletsToPatternsResults(
+            patterns=patterns,
+            affinity_mat=affinity_mat,
+            cluster_results=cluster_results,
+            filtered_seqlets=filtered_seqlets)
 
         return patterns 
 
