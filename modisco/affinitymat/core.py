@@ -7,7 +7,6 @@ from . import transformers
 import sys
 import time
 import itertools
-from sklearn.neighbors import NearestNeighbors 
 from joblib import Parallel, delayed
 
 
@@ -296,8 +295,8 @@ class TwoTierAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
 
     def __call__(self, seqlets):
         fast_affmat = self.fast_affmat_from_seqlets(seqlets) 
-        neighbors = self.nearest_neighbors_object.fit(fast_affmat)\
-                        .kneighbors(X=fast_affmat,
+        neighbors = self.nearest_neighbors_object.fit(-fast_affmat)\
+                        .kneighbors(X=-fast_affmat,
                                     n_neighbors=self.n_neighbors,
                                     return_distance=False) 
         final_affmat = self.affmat_from_seqlets_with_nn_pairs(
