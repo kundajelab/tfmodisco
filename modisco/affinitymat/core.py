@@ -8,6 +8,7 @@ import sys
 import time
 import itertools
 from sklearn.neighbors import NearestNeighbors 
+from joblib import Parallel, delayed
 
 
 class AbstractTrackTransformer(object):
@@ -311,7 +312,7 @@ class AffmatFromSeqletsWithNNpairs(object):
         self.pattern_comparison_settings = pattern_comparison_settings 
         self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
 
-    def __call__(seqlet_neighbors, seqlets):
+    def __call__(self, seqlet_neighbors, seqlets):
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
@@ -341,17 +342,18 @@ class AbstractSimMetricOnNNpairs(object):
         raise NotImplementedError()
 
 
-class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs)
+class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
 
-    def __init__(self, n_cores, cross_metric_single_region):
+    def __init__(self, n_cores, cross_metric_single_region, verbose=True):
         self.n_cores = n_cores
         self.cross_metric_single_region = cross_metric_single_region
+        self.verbose = verbose
 
     def __call__(self, neighbors_of_things_to_scan,
                        filters, things_to_scan, min_overlap):
-        assert neighbors_of_things_to_scan.shape[0]==thing_to_scan.shape[0]
+        assert neighbors_of_things_to_scan.shape[0]==things_to_scan.shape[0]
         assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
-        assert len(thing_to_scan.shape)==3
+        assert len(things_to_scan.shape)==3
         assert len(filters.shape)==3
        
         filter_length = filters.shape[1]
@@ -362,22 +364,34 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs)
                                          (0,0)),
                               mode="constant")
  
-        to_return = np.zeros((thing_to_scan.shape[0], filters.shape[0]))
+        to_return = np.zeros((things_to_scan.shape[0], filters.shape[0]))
         job_arguments = []
+
         for neighbors_of_thing_to_scan, thing_to_scan\
             in zip(neighbors_of_things_to_scan, things_to_scan): 
-            args = (filters[neighbors_of_things_to_scan], thing_to_scan) 
+            args = (filters[neighbors_of_thing_to_scan], thing_to_scan) 
             job_arguments.append(args)
+        
+         
+        start = time.time()
+        if (self.verbose):
+            print("launching nearest neighbors affmat calculation job")
+            sys.stdout.flush()
 
         results = (Parallel(n_jobs=self.n_cores)                          
                    (delayed(self.cross_metric_single_region)
                            (job_args[0], job_args[1])
-                    for args in job_arguments))
+                    for job_args in job_arguments))
 
         for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
-             in enumerate(zip(results, neighbors)):
+             in enumerate(zip(results, neighbors_of_things_to_scan)):
             to_return[thing_to_scan_idx,
                       thing_to_scan_neighbor_indices] = result
+
+        end = time.time()
+        if (self.verbose):
+            print("Job completed in:",round(end-start,2),"s")
+            sys.stdout.flush()
 
         return to_return
 
@@ -388,7 +402,7 @@ class AbstractCrossMetricSingleRegion(object):
         raise NotImplementedError()
 
 
-class CrossContinJaccardSingleRegion(AbstractCrossMetricSingleRegion)
+class CrossContinJaccardSingleRegion(AbstractCrossMetricSingleRegion):
 
     def __call__(self, filters, thing_to_scan):
         assert len(thing_to_scan.shape)==2
