@@ -2,6 +2,11 @@ from __future__ import division, print_function, absolute_import
 import numpy as np
 import time
 from modisco import util
+import sklearn
+import sklearn.manifold
+import scipy
+from scipy.sparse import csr_matrix
+from sklearn.neighbors import NearestNeighbors
 
 
 class AbstractThresholder(object):
@@ -128,10 +133,22 @@ class JaccardSimCPU(AbstractAffMatTransformer):
         return jaccard_sim
 
 
-class SymmetrizeByMultiplying(AbstractAffMatTransformer):
+class SymmetrizeByElemwiseMultiplying(AbstractAffMatTransformer):
 
     def __call__(self, affinity_mat):
         return affinity_mat*affinity_mat.T
+
+
+class SymmetrizeByAddition(AbstractAffMatTransformer):
+
+    def __init__(self, probability_normalize=False):
+        self.probability_normalize = probability_normalize
+
+    def __call__(self, affinity_mat):
+        to_return = affinity_mat + affinity_mat.T
+        if (self.probability_normalize):
+            to_return = to_return/np.sum(to_return).astype("float")
+        return to_return
 
 
 class MinVal(AbstractAffMatTransformer):
@@ -149,18 +166,23 @@ class DistToSymm(AbstractAffMatTransformer):
         return np.max(affinity_mat)-affinity_mat
 
 
-class TsneJointProbs(AbstractAffMatTransformer):
+class ApplyTransitions(AbstractAffMatTransformer):
+
+    def __init__(self, num_steps):
+        self.num_steps = num_steps
+
+    def __call__(self, affinity_mat):
+        return np.dot(np.linalg.matrix_power(affinity_mat.T,
+                                             self.num_steps),affinity_mat)
+
+
+class AbstractTsneProbs(AbstractAffMatTransformer):
 
     def __init__(self, perplexity, verbose=1):
         self.perplexity = perplexity 
         self.verbose=verbose
     
     def __call__(self, affinity_mat):
-        import sklearn
-        import sklearn.manifold
-        import scipy
-        from scipy.sparse import csr_matrix
-        from sklearn.neighbors import NearestNeighbors
 
         #make the affinity mat a distance mat
         dist_mat = (np.max(affinity_mat) - affinity_mat)
@@ -201,6 +223,43 @@ class TsneJointProbs(AbstractAffMatTransformer):
         # Free the memory
         del knn
 
+        P = self.tsne_probs_calc(distances_nn, neighbors_nn)
+        return P
+
+    def tsne_probs_calc(self, distances_nn, neighbors_nn):
+        raise NotImplementedError()
+
+
+class TsneConditionalProbs(AbstractTsneProbs):
+
+    def tsne_probs_calc(self, distances_nn, neighbors_nn):
+        t0 = time.time()
+        # Compute conditional probabilities such that they approximately match
+        # the desired perplexity
+        n_samples, k = neighbors_nn.shape
+        distances = distances_nn.astype(np.float32, copy=False)
+        neighbors = neighbors_nn.astype(np.int64, copy=False)
+        conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+            distances, neighbors, self.perplexity, self.verbose)
+        #for some reason, likely a sklearn bug, a few of
+        #the rows don't sum to 1...for now, fix by making them sum to 1
+        #print(np.sum(np.sum(conditional_P, axis=1) > 1.1))
+        #print(np.sum(np.sum(conditional_P, axis=1) < 0.9))
+        assert np.all(np.isfinite(conditional_P)), \
+            "All probabilities should be finite"
+
+        # Symmetrize the joint probability distribution using sparse operations
+        P = csr_matrix((conditional_P.ravel(), neighbors.ravel(),
+                        range(0, n_samples * k + 1, k)),
+                       shape=(n_samples, n_samples))
+        to_return = np.array(P.todense())
+        to_return = to_return/np.sum(to_return,axis=1)[:,None]
+        return to_return
+
+
+class TsneJointProbs(AbstractTsneProbs):
+
+    def tsne_probs_calc(self, distances_nn, neighbors_nn):
         P = sklearn.manifold.t_sne._joint_probabilities_nn(
                                     distances_nn, neighbors_nn,
                                     self.perplexity, self.verbose)
