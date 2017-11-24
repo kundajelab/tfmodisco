@@ -793,7 +793,7 @@ class AggregatedSeqlet(Pattern):
              fwd=np.copy(self.track_name_to_snippet[x].rev),
              rev=np.copy(self.track_name_to_snippet[x].fwd),
              has_pos_axis=self.track_name_to_snippet[x].has_pos_axis)) 
-         ]) 
+         for x in self.track_name_to_snippet]) 
         rev_seqlets_and_alignments_arr = [
             SeqletAndAlignment(seqlet=x.seqlet.revcomp(),
                                alnmt=self.length-(x.alnmt+len(x.seqlet)))
@@ -924,17 +924,18 @@ def corr(in1, in2):
     assert len(in1.shape)==2
     assert len(in2.shape)==2
     assert in1.shape[1] == in2.shape[1]
-    return (in1/np.linalg.norm(in1))*(in2/np.linalg.norm(in2)) 
+    return np.dot((in1/np.linalg.norm(in1)).ravel(),
+                  (in2/np.linalg.norm(in2)).ravel()) 
 
 
-def max_kl_div(in1, in2):
+def neg_max_kl_div(in1, in2):
     assert len(in1.shape)==2
     assert len(in2.shape)==2
     assert in1.shape[1] == in2.shape[1]
-    assert np.testing.assertAlmostEqual(np.sum(in1, axis=2),1.0,eps=0.00001)
+    assert np.max(np.abs(np.sum(in1, axis=1)-1.0)) < 0.00001
     #pseudocount
     in1 = (in1+0.0001)/1.0004
     in2 = (in2+0.0001)/1.0004
     kldiv1 = np.sum(in1*np.log(in1/in2),axis=1) 
     kldiv2 = np.sum(in2*np.log(in2/in1),axis=1) 
-    return np.max(0.5*(kldiv1+kldiv2))
+    return -np.max(0.5*(kldiv1+kldiv2))
