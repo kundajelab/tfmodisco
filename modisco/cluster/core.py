@@ -19,9 +19,10 @@ class ClusterResults(object):
 
 class LouvainClusterResults(ClusterResults):
 
-    def __init__(self, cluster_indices, hierarchy, Q):
+    def __init__(self, cluster_indices, level_to_return, hierarchy, Q):
         super(LouvainClusterResults, self).__init__(
          cluster_indices=cluster_indices)
+        self.level_to_return = level_to_return
         self.hierarchy = hierarchy
         self.Q = Q
 
@@ -98,7 +99,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         cluster_results = LouvainClusterResults(
                 cluster_indices=communities,
                 hierarchy=hierarchy,
-                level=level_to_return,
+                level_to_return=level_to_return,
                 Q=Q)
 
         if (self.verbose):

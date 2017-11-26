@@ -4,7 +4,8 @@ from . import cluster
 from . import aggregator
 from . import core
 from collections import defaultdict, OrderedDict
-from sklearn import NearestNeighbors
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
 import itertools
 import time
 import sys
@@ -38,7 +39,7 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
                        nn_n_jobs=4,
                        nearest_neighbors_multiplier=3,
 
-                       affmat_correlation_threshold=0.2
+                       affmat_correlation_threshold=0.1,
 
                        tsne_perplexity=50,
                        louvain_min_cluster_size=10,
@@ -48,7 +49,7 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
                        trim_to_window_size=30,
                        initial_flank_to_add=10,
 
-                       neg_kldiv_merging_threshold=-0.25
+                       neg_kldiv_merging_threshold=-0.25,
                        crosscorr_similarity_merging_threshold=None,
 
                        per_track_min_similarity_for_seqlet_assignment=0.1,
@@ -82,11 +83,6 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
         #affinity mat to tsne dist mat setting
         self.tsne_perplexity = tsne_perplexity
 
-        #seqlet filtering based on affinity_mat
-        if (min_edges_per_row is None):
-            min_edges_per_row = tsne_perplexity/5.0
-        self.min_edges_per_row = min_edges_per_row
-
         #clustering settings
         self.louvain_min_cluster_size = louvain_min_cluster_size
         self.louvain_level_to_return = louvain_level_to_return
@@ -101,14 +97,12 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
             per_track_min_similarity_for_seqlet_assignment
         self.final_min_cluster_size = final_min_cluster_size
 
-        #split detection settings
-        self.similarity_splitting_threshold = similarity_splitting_threshold
-
         #merging settings
+        self.neg_kldiv_merging_threshold = neg_kldiv_merging_threshold
         if (crosscorr_similarity_merging_threshold is None):
             crosscorr_similarity_merging_threshold = 0.85*len(track_names)
         self.crosscorr_similarity_merging_threshold =\
-                cross_similarity_merging_threshold
+                crosscorr_similarity_merging_threshold
 
         #final postprocessor settings
         self.final_flank_to_add=final_flank_to_add
@@ -211,17 +205,17 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
                     affmat.core.PatternComparisonSettings(
                         track_names=[self.onehot_track_name],
                         track_transformer=None,
-                        min_overlap=self.min_overlap),
+                        min_overlap=self.min_overlap_while_sliding),
                 comparison_metric=core.neg_max_kl_div,
                 threshold=-self.neg_kldiv_merging_threshold,
                 verbose=self.verbose).chain(
             aggregator.SimilarityThreshold(
                 pattern_comparison_settings=\
                     affmat.core.PatternComparisonSettings(
-                        track_names=relevant_tracks,
+                        track_names=self.track_names,
                         track_transformer=affmat.MeanNormalizer().chain(                
                                           affmat.MagnitudeNormalizer()),
-                        min_overlap=self.min_overlap),
+                        min_overlap=self.min_overlap_while_sliding),
                 comparison_metric=core.corr,
                 threshold=self.crosscorr_similarity_merging_threshold,
                 verbose=self.verbose))
@@ -236,7 +230,7 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
                                               affmat.MagnitudeNormalizer()),
                             min_overlap=self.min_overlap_while_sliding)),
                 merge_aligned_patterns_condition=\
-                    merge_aligned_patterns_condition,
+                    self.merge_aligned_patterns_condition,
                 postprocessor=self.expand_trim_expand1,
                 verbose=self.verbose)
 
@@ -281,7 +275,8 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
                 -affinity_mat_from_seqlet_embeddings).kneighbors(
                 X=-affinity_mat_from_seqlet_embeddings,
                 n_neighbors=
-                  min(self.nearest_neighbors_multiplier*3*self.perplexity+1,
+                  min(self.nearest_neighbors_multiplier
+                      *3*self.tsne_perplexity+1,
                       len(seqlets)),
                 return_distance=False)
 
@@ -337,14 +332,6 @@ class SeqletsToPatterns2(AbstractSeqletsToPatterns):
                 self.seqlet_aggregator(cluster_to_seqlets[i])
         patterns = list(itertools.chain(
                         *cluster_to_aggregated_seqlets.values()))
-
-        if (self.verbose):
-            print("Detecting splits")
-            sys.stdout.flush()
-        patterns = self.split_detector(patterns)
-        if (self.verbose):
-            print("Got "+str(len(patterns))+" after split detection")
-            sys.stdout.flush()
 
         if (self.verbose):
             print("Collapsing similar patterns")

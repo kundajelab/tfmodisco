@@ -413,7 +413,7 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
          
         start = time.time()
         if (self.verbose):
-            print("launching nearest neighbors affmat calculation job")
+            print("Launching nearest neighbors affmat calculation job")
             sys.stdout.flush()
 
         results = (Parallel(n_jobs=self.n_cores)                          
@@ -733,7 +733,7 @@ class FilterMaskFromCorrelation(object):
         neg_log_pvals = np.array(neg_log_pvals)
         mask_to_return = (correlations > self.correlation_threshold)
         if (self.verbose):
-            print("Filtered "+str(np.sum(mask_to_return))
+            print("Filtered down to "+str(np.sum(mask_to_return))
                   +" of "+str(len(mask_to_return)))
             sys.stdout.flush()
         return mask_to_return

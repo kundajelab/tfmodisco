@@ -700,7 +700,7 @@ class SimilarPatternsCollapser(object):
                                 alnmt=best_crosscorr_argmax)
                     if (merge): 
                         if (self.verbose):
-                            print("Collapsing "+str(i)+" & "+str(j+i)) 
+                            print("Collapsed "+str(i)+" & "+str(j+i)) 
                             sys.stdout.flush()
                         parent_pattern.merge_aggregated_seqlet(
                             agg_seqlet=child_pattern,
