@@ -7,6 +7,7 @@ from . import transformers
 import sys
 import time
 import itertools
+import scipy.stats
 from joblib import Parallel, delayed
 
 
@@ -221,26 +222,64 @@ class AbstractAffinityMatrixFromOneD(object):
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
+    def __init__(self, verbose):
+        self.verbose = verbose
+
     def __call__(self, vecs1, vecs2):
-        print("Computing similarity")
-        sys.stdout.flush()
+
+        start_time = time.time()
         normed_vecs1 = vecs1/np.linalg.norm(vecs1, axis=1)[:,None] 
         normed_vecs2 = vecs2/np.linalg.norm(vecs2, axis=1)[:,None] 
-        return np.dot(normed_vecs1,normed_vecs2.T)
+        to_return = np.dot(normed_vecs1,normed_vecs2.T)
+        end_time = time.time()
+    
+        if (self.verbose):
+            print("Cosine similarity mat computed in",
+                  round(end_time-start_time,2),"s")
+            sys.stdout.flush()
+
+        return to_return
 
 
-class AffmatFromEmbeddings(AbstractAffinityMatrixFromSeqlets):
+class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
 
-    def __init__(self, seqlets_to_1d_embedder, affinity_mat_from_1d):
+    def __init__(self, seqlets_to_1d_embedder,
+                       affinity_mat_from_1d, verbose):
         self.seqlets_to_1d_embedder = seqlets_to_1d_embedder
         self.affinity_mat_from_1d = affinity_mat_from_1d 
+        self.verbose = verbose
 
     def __call__(self, seqlets):
+
+        cp1_time = time.time()
+        if (self.verbose):
+            print("Beginning embedding computation")
+            sys.stdout.flush()
+
         embedding_fwd, embedding_rev = self.seqlets_to_1d_embedder(seqlets)
+
+        cp2_time = time.time()
+        if (self.verbose):
+            print("Finished embedding computation in",
+                  round(cp2_time-cp1_time,2),"s")
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("Starting affinity matrix computations")
+            sys.stdout.flush()
+
         affinity_mat_fwd = self.affinity_mat_from_1d(
                             vecs1=embedding_fwd, vecs2=embedding_fwd)  
         affinity_mat_rev = self.affinity_mat_from_1d(
                             vecs1=embedding_fwd, vecs2=embedding_rev)
+
+        cp3_time = time.time()
+
+        if (self.verbose):
+            print("Finished affinity matrix computations in",
+                  round(cp3_time-cp2_time,2),"s")
+            sys.stdout.flush()
+
         return np.maximum(affinity_mat_fwd, affinity_mat_rev) 
 
 
@@ -642,13 +681,7 @@ class CrossContinJaccardGPU(AbstractCrossMetric):
         return np.max(full_crosscontinjaccard, axis=-1) 
 
 
-class AbstractGetFilteredRowsMask(object):
-
-    def __call__(self, affinity_mat):
-        raise NotImplementedError()
-
-
-class FilterSparseRows(AbstractGetFilteredRowsMask):
+class FilterSparseRows(object):
 
     def __init__(self, affmat_transformer,
                        min_rows_before_applying_filtering,
@@ -676,3 +709,33 @@ class FilterSparseRows(AbstractGetFilteredRowsMask):
                   +str(len(passing_nodes)))
             sys.stdout.flush() 
         return passing_nodes
+
+
+class FilterMaskFromCorrelation(object):
+
+    def __init__(self, correlation_threshold, verbose=True):
+        self.correlation_threshold = correlation_threshold
+        self.verbose = verbose
+
+    def __call__(self, main_affmat, other_affmat):
+        correlations = []
+        neg_log_pvals = []
+        for main_affmat_row, other_affmat_row\
+            in zip(main_affmat, other_affmat):
+            #compare correlation on the nonzero rows
+            to_compare_mask = np.abs(main_affmat_row) > 0
+            corr = scipy.stats.spearmanr(
+                    main_affmat_row[to_compare_mask],
+                    other_affmat_row[to_compare_mask])
+            correlations.append(corr.correlation)
+            neg_log_pvals.append(-np.log(corr.pvalue)) 
+        correlations = np.array(correlations)
+        neg_log_pvals = np.array(neg_log_pvals)
+        mask_to_return = (correlations > self.correlation_threshold)
+        if (self.verbose):
+            print("Filtered "+str(np.sum(mask_to_return))
+                  +" of "+str(len(mask_to_return)))
+            sys.stdout.flush()
+        return mask_to_return
+
+

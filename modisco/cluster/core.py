@@ -63,9 +63,11 @@ class PhenographCluster(AbstractAffinityMatClusterer):
 
 class LouvainCluster(AbstractAffinityMatClusterer):
 
-    def __init__(self, affmat_transformer=None, min_cluster_size=10,
+    def __init__(self, level_to_return=-1,
+                       affmat_transformer=None, min_cluster_size=10,
                        q_tol=1e-3, louvain_time_limit=2000,
                        verbose=True):
+        self.level_to_return = level_to_return
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
         self.q_tol = q_tol
@@ -90,9 +92,13 @@ class LouvainCluster(AbstractAffinityMatClusterer):
                 q_tol=self.q_tol,
                 louvain_time_limit=self.louvain_time_limit)
 
+        level_to_return = min(self.level_to_return, hierarchy.shape[-1])
+        communities = hierarchy[:, level_to_return]  
+
         cluster_results = LouvainClusterResults(
                 cluster_indices=communities,
                 hierarchy=hierarchy,
+                level=level_to_return,
                 Q=Q)
 
         if (self.verbose):
