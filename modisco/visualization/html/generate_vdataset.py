@@ -2,8 +2,6 @@ from os import listdir
 from os.path import isfile, join
 import random
 import string
-import sys
-sys.path.append('../')
 from html_class import *
 
 def get_snippet(snippet_folder):
@@ -61,8 +59,11 @@ def generate_vdataset_from_folder(folder_name):
                     metaclusters=metaclusters,
                     title="example")
 
-    
+def generate_vdataset_on_the_fly():
+    pass
+
+
 if __name__=="__main__":
-    dataset=generate_vdataset_from_folder("/home/annashch/modisco_private/modisco/visualization/html/example_figures_modisco/")
+    dataset=generate_vdataset_from_folder("example_figures_modisco/")
     import pdb
-    pdb.set_trace()
+

@@ -86,11 +86,10 @@ def frac_to_rainbow_colour(frac):
 def plot_heatmap(data, log_transform=False, zero_center=False,
                       cmap=plt.cm.coolwarm, figsize=(15,15)):
     fig, ax = plt.subplots(figsize=figsize)
-    plot_heatmap_given_ax(ax, data , log_transform=log_transform,
+    ax=plot_heatmap_given_ax(ax, data , log_transform=log_transform,
                                 zero_center=zero_center,
                                 cmap=cmap)
-    plt.show()
-    return plt
+    return fig
 
 
 def plot_heatmap_given_ax(ax, data, log_transform=False,
@@ -107,8 +106,8 @@ def plot_heatmap_given_ax(ax, data, log_transform=False,
 def plot_cluster_heatmap(data, clustering_func, **kwargs):
     cluster_indices=clustering_func(data) 
     data = reorganize_rows_by_clusters(data, cluster_indices)
-    plot_heatmap(data=data, **kwargs) 
-
+    fig=plot_heatmap(data=data, **kwargs) 
+    return fig,data
 
 def reorganize_rows_by_clusters(rows, cluster_indices):
     unique_clusters = sorted(set(cluster_indices))
@@ -118,3 +117,4 @@ def reorganize_rows_by_clusters(rows, cluster_indices):
         cluster_idx_to_row_indices[cluster_idx].append(row_idx)
     new_indices = list(itertools.chain(*cluster_idx_to_row_indices.values()))
     return rows[new_indices]
+

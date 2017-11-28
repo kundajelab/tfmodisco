@@ -274,13 +274,19 @@ class MultiTaskSeqletCreation(object):
     def __call__(self, task_name_to_score_track,
                        task_name_to_labeler):
         task_name_to_seqlets = {}
+        task_name_to_coord_figure={}
+        task_name_to_threshold={}
+        task_name_to_num_above_threshold={} 
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
-            seqlets = self.track_set.create_seqlets(
-                        coords=self.coord_producer(score_track=score_track)) 
+            coords,coords_fig,cur_thresh=self.coord_producer(score_track=score_track)
+            seqlets = self.track_set.create_seqlets(coords)
             task_name_to_labeler[task_name].fit(seqlets)
             task_name_to_seqlets[task_name] = seqlets
+            task_name_to_coord_figure[task_name]=coords_fig
+            task_name_to_threshold[task_name]=cur_thresh
+            task_name_to_num_above_threshold[task_name]=len(coords) 
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
         if (self.verbose):
@@ -288,7 +294,7 @@ class MultiTaskSeqletCreation(object):
                   +str(len(final_seqlets))+" seqlets")
         for labeler in task_name_to_labeler.values():
             labeler.annotate(final_seqlets)
-        return final_seqlets 
+        return final_seqlets ,task_name_to_coord_figure,task_name_to_threshold,task_name_to_num_above_threshold
 
             
 class SeqletCoordinates(object):

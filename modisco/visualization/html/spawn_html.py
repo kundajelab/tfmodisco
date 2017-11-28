@@ -207,7 +207,7 @@ if __name__=="__main__":
     sys.path.append('tests')
     from generate_vdataset import *
     
-    vdataset=generate_vdataset_from_folder("/home/annashch/modisco_private/modisco/visualization/html/example_figures_modisco/")
+    vdataset=generate_vdataset_from_folder("example_figures_modisco/")
     test_out=generate_html_string(vdataset)
     outf=open('test_small.html','w')
     outf.write(test_out)

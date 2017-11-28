@@ -74,6 +74,7 @@ class MaxCurvatureThreshold(object):
             from matplotlib import pyplot as plt
             hist_y, _, _ = plt.hist(values, bins=self.bins)
             max_y = np.max(hist_y)
+            fig1=plt.figure() 
             plt.plot(midpoints, densities*(max_y/np.max(densities)))
             plt.plot(firstd_x, -firstd_y*(max_y/np.max(-firstd_y))*(firstd_y<0))
             #plt.plot(secondd_x, secondd_y*(max_y/np.max(secondd_y))*(secondd_y>0))
@@ -84,15 +85,16 @@ class MaxCurvatureThreshold(object):
             #plt.plot([maximum_c_x2, maximum_c_x2], [0, max_y])
             plt.xlim((0, maximum_c_x*5))
             plt.show()
+            fig2=plt.figure() 
             plt.plot(firstd_x, firstd_y)
             plt.plot(secondd_x, secondd_y*(secondd_y>0))
             plt.xlim((0, maximum_c_x*5))
             plt.show()
+            fig3=plt.figure()
             plt.plot(curvature_x[curvature_x>global_max_x], curvature_y[curvature_x>global_max_x])
             plt.xlim((0, maximum_c_x*5))
             plt.show()
-
-        return maximum_c_x
+        return maximum_c_x,fig1
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -226,31 +228,31 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         if (self.verbose):
             print("Got "+str(len(coords))+" coords")
             sys.stdout.flush()
-
+        
         vals_to_threshold = np.array([np.abs(x.score) for x in coords])
         if (self.thresholding_function is not None):
             if (self.verbose):
                 print("Computing thresholds")
                 sys.stdout.flush()
-            threshold = self.thresholding_function(vals_to_threshold) 
+            threshold,fig1 = self.thresholding_function(vals_to_threshold) 
             if (self.verbose):
                 print("Computed threshold "+str(threshold))
                 sys.stdout.flush()
         else:
             threshold = 0.0
-
+            fig1=None
         coords = [x for x in coords if x.score >= threshold]
         if (self.verbose):
             print(str(len(coords))+" coords remaining after thresholding")
             sys.stdout.flush()
-
+            
         if (len(coords) > self.max_seqlets_total):
             if (self.verbose):
                 print("Limiting to top "+str(self.max_seqlets_total))
                 sys.stdout.flush()
             coords = sorted(coords, key=lambda x: -x.score)\
                                [:self.max_seqlets_total]
-        return coords
+        return coords,fig1,threshold
 
 
 
