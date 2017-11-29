@@ -271,12 +271,5 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
                   +str(round(time.time()-start,2))+"s")
             sys.stdout.flush()
 
-        results = SeqletsToPatternsResults(patterns)
-        results.affinity_mat = affinity_mat
-        results.filtered_rows_mask = filtered_rows_mask
-        results.filtered_seqlets = filtered_seqlets
-        results.cluster_results = cluster_results
-        results.cluster
-
         return patterns 
 
