@@ -871,3 +871,38 @@ def project_onto_nonzero_filters(filters, track,
                             progress_update=progress_update))
 
     return final_scores
+
+
+def get_betas_from_tsne_conditional_probs(conditional_probs,
+                                          original_affmat, aff_to_dist_mat):
+    dist_mat = aff_to_dist_mat(original_affmat)
+    betas = []
+    for i,(prob_row, distances, affinities) in\
+        enumerate(zip(conditional_probs,
+                      dist_mat, original_affmat)):
+        nonzero_probs = prob_row[prob_row > 0.0]
+        nonzero_distances = distances[prob_row > 0.0]
+        prob1, dist1 = max(zip(nonzero_probs, nonzero_distances),
+                           key=lambda x: x[1])
+        prob2, dist2 = min(zip(nonzero_probs, nonzero_distances),
+                           key=lambda x: x[1])
+        beta = np.log(prob2/prob1)/(dist1-dist2)
+        betas.append(beta)
+        #sanity check
+        recomputed_probs = np.exp(-beta*(distances))*(affinities > 0.0)
+        recomputed_probs[i] = 0
+        recomputed_probs = recomputed_probs/np.sum(recomputed_probs)
+        test_recomputed_probs = recomputed_probs[prob_row > 0.0]/\
+                                 np.sum(recomputed_probs[prob_row > 0.0])
+        maxdiff = np.max(np.abs(prob_row[prob_row > 0.0]
+                                - test_recomputed_probs))
+        assert maxdiff < 10**-5,\
+               (np.sum(prob_row), maxdiff, test_recomputed_probs)
+    return np.array(betas)
+
+def convert_to_percentiles(vals):
+    to_return = np.zeros(len(vals))
+    sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
+    for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
+        to_return[orig_idx] = sort_idx/float(len(vals))
+    return to_return

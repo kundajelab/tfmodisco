@@ -3,11 +3,11 @@ import sklearn
 from . import matplotlibhelpers as mplh
 import numpy as np
 
-def get_tsne_embedding(affinity_mat, perplexity, **kwargs):
+def get_tsne_embedding(affinity_mat, aff_to_dist_mat, perplexity, **kwargs):
     from sklearn import manifold
     tsne = sklearn.manifold.TSNE(metric='precomputed', perplexity=perplexity,
                                  **kwargs)
-    dist_mat = np.max(affinity_mat)-affinity_mat
+    dist_mat = aff_to_dist_mat(affinity_mat)
     embedding = tsne.fit_transform(dist_mat)
     return embedding
 

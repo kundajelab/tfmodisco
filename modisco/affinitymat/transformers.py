@@ -7,12 +7,22 @@ import sklearn.manifold
 import scipy
 from scipy.sparse import csr_matrix
 from sklearn.neighbors import NearestNeighbors
+import sys
 
 
 class AbstractThresholder(object):
 
     def __call__(self, values):
         raise NotImplementedError()
+
+
+class FixedValueThreshold(AbstractThresholder):
+
+    def __init__(self, threshold):
+        self.threshold = threshold
+
+    def __call__(self, values=None):
+        return self.threshold
 
 
 class NonzeroMeanThreshold(AbstractThresholder):
@@ -93,14 +103,43 @@ class PerNodeThresholdBinarizer(AbstractAffMatTransformer):
     def __call__(self, affinity_mat):
         if (self.verbose):
             print("Starting thresholding preprocessing")
+            sys.stdout.flush()
+            
         start = time.time()
         #ignore affinity to self
         thresholds = np.array([self.thresholder(x) for x in affinity_mat])
-        thresholds = np.sum(affinity_mat,axis=1)/150
         to_return = (affinity_mat >= thresholds[:,None]).astype("int") 
         if (self.verbose):
             print("Thresholding preproc took "+str(time.time()-start)+" s")
+            sys.stdout.flush()
         return to_return
+
+
+class NearestNeighborsBinarizer(AbstractAffMatTransformer):
+
+    def __init__(self, n_neighbors, nearest_neighbors_object):
+        self.nearest_neighbors_object = nearest_neighbors_object 
+        self.n_neighbors = n_neighbors
+
+    def __call__(self, affinity_mat):
+        seqlet_neighbors = (self.nearest_neighbors_object.fit(-affinity_mat).
+                                 kneighbors(X=-affinity_mat,
+                                            n_neighbors=self.n_neighbors,
+                                            return_distance=False)) 
+        to_return = np.zeros_like(affinity_mat)
+        for i, neighbors in enumerate(seqlet_neighbors):
+            to_return[i,neighbors] = 1 
+        return to_return 
+
+
+class ProductOfTransformations(AbstractAffMatTransformer):
+
+    def __init__(self, transformer1, transformer2):
+        self.transformer1 = transformer1
+        self.transformer2 = transformer2
+
+    def __call__(self, affinity_mat):
+        return self.transformer1(affinity_mat)*self.transformer2(affinity_mat)
 
 
 class JaccardSimCPU(AbstractAffMatTransformer):
@@ -112,6 +151,7 @@ class JaccardSimCPU(AbstractAffMatTransformer):
 
         if (self.verbose):
             print("Starting Jaccard preprocessing via CPU matmul")
+            sys.stdout.flush()
         start = time.time()
  
         #perform a sanity check to ensure max is 1 and min is 0
@@ -129,8 +169,15 @@ class JaccardSimCPU(AbstractAffMatTransformer):
 
         if (self.verbose):
             print("Jaccard preproc took "+str(time.time()-start)+" s")
+            sys.stdout.flush()
 
         return jaccard_sim
+
+
+class SymmetrizeByElemwiseGeomMean(AbstractAffMatTransformer):
+
+    def __call__(self, affinity_mat):
+        return np.sqrt(affinity_mat*affinity_mat.T)
 
 
 class SymmetrizeByElemwiseMultiplying(AbstractAffMatTransformer):
@@ -176,16 +223,38 @@ class ApplyTransitions(AbstractAffMatTransformer):
                                              self.num_steps),affinity_mat)
 
 
+class AbstractAffToDistMat(object):
+
+    def __call__(self, affinity_mat):
+        raise NotImplementedError()
+
+
+class MaxToMin(AbstractAffToDistMat):
+
+    def __call__(self, affinity_mat):
+        return (np.max(affinity_mat) - affinity_mat)
+
+
+class AffToDistViaInvLogistic(AbstractAffToDistMat):
+
+    def __call__(self, affinity_mat):
+        to_return = -np.log((1.0/
+                           (1.0 - 0.5*np.maximum(affinity_mat, 0.0000001)))-1)
+        to_return = np.maximum(to_return, 0.0) #eliminate tiny neg floats
+        return to_return
+
+
 class AbstractTsneProbs(AbstractAffMatTransformer):
 
-    def __init__(self, perplexity, verbose=1):
+    def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
         self.perplexity = perplexity 
         self.verbose=verbose
+        self.aff_to_dist_mat = aff_to_dist_mat
     
     def __call__(self, affinity_mat):
 
         #make the affinity mat a distance mat
-        dist_mat = (np.max(affinity_mat) - affinity_mat)
+        dist_mat = self.aff_to_dist_mat(affinity_mat)
         dist_mat = sklearn.utils.check_array(dist_mat, ensure_min_samples=2,
                                              dtype=[np.float32, np.float64])
         n_samples = dist_mat.shape[0]

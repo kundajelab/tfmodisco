@@ -350,22 +350,36 @@ class AffmatFromSeqletsWithNNpairs(object):
         self.pattern_comparison_settings = pattern_comparison_settings 
         self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
 
-    def __call__(self, seqlet_neighbors, seqlets):
+    def __call__(self, seqlets, filter_seqlets=None, seqlet_neighbors=None):
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
                 track_names=self.pattern_comparison_settings.track_names,
                 track_transformer=
                     self.pattern_comparison_settings.track_transformer)
+
+        if (filter_seqlets is None):
+            filter_seqlets = seqlets
+        (filters_all_fwd_data, filters_all_rev_data) =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=filter_seqlets,
+                track_names=self.pattern_comparison_settings.track_names,
+                track_transformer=
+                    self.pattern_comparison_settings.track_transformer)
+
+        if (seqlet_neighbors is None):
+            seqlet_neighbors = np.array([list(range(len(filter_seqlets)))
+                                         for x in seqlets]) 
+
         #apply the cross metric
         affmat_fwd = self.sim_metric_on_nn_pairs(
                      neighbors_of_things_to_scan=seqlet_neighbors,
-                     filters=all_fwd_data,
+                     filters=filters_all_fwd_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
         affmat_rev = self.sim_metric_on_nn_pairs(
                      neighbors_of_things_to_scan=seqlet_neighbors,
-                     filters=all_rev_data,
+                     filters=filters_all_rev_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
         affmat = np.maximum(affmat_fwd, affmat_rev)
