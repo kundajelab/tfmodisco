@@ -268,5 +268,6 @@ class SeqletsToPatterns1(AbstractSeqletsToPatterns):
         results = SeqletsToPatternsResults(patterns)
         results.seqlets = seqlets #the filtered seqlets
 
-        return patterns 
+        return patterns,affinity_mat
+    
 
