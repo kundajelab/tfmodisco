@@ -728,13 +728,15 @@ class DynamicDistanceSimilarPatternsCollapser(object):
             for i,pattern1 in enumerate(patterns):
                 for j,pattern2 in enumerate(patterns):
                     if (i < j):
-                        dist_prob = (min(patterns_dist_probs[i,j],
-                                         patterns_dist_probs[j,i]))
+                        dist_prob = min(patterns_dist_probs[i,j],
+                                        patterns_dist_probs[j,i])
                         aligner_sim = patterns_to_patterns_aligner_sim[i,j]
                         if (collapse_condition(dist_prob=dist_prob,
                                                aligner_sim=aligner_sim)):
                             if (self.verbose):
-                                print("Collapsing "+str(i)+" & "+str(j)) 
+                                print("Collapsing "+str(i)+" & "+str(j)
+                                      +" with prob "+str(dist_prob)+" and"
+                                      +" sim "+str(aligner_sim)) 
                                 sys.stdout.flush()
                             indices_to_merge.append((i,j))
 
