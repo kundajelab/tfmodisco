@@ -36,8 +36,8 @@ def add_aggregate_motif(doc,tag,text,aggregate_motif,modal_image_function_calls)
     for track_index in range(len(aggregate_motif.tracks)):
         cur_track=aggregate_motif.tracks[track_index]
         with tag('h4'):
-            if cur_snippet.track_name!=None:
-                text("Track {track_name}".format(track_name=aggregate_motif.track_name))
+            if cur_track.track_name!=None:
+                text("Track {track_name}".format(track_name=cur_track.track_name))
             else:
                 text("Track {track_index}".format(track_index=track_index))
         with tag('h5'):
@@ -191,7 +191,6 @@ def generate_html_string(vdataset):
                 #generate a modal image for the all metacluster heatmap.
                 #add the modal function call to the list of all modal image function calls in the HTML doc 
                 modal_image_function_calls.append(add_modal_image(doc,tag,text,vdataset.metaclusters_heatmap.image,cur_id=len(modal_image_function_calls)))
-            with tag('div',klass='column'):
                 with tag('h2'):
                     text("Task-specific histograms")
                 #add the per-task histograms

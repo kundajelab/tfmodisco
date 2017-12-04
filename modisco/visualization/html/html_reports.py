@@ -12,7 +12,8 @@ def generate_html_report(vdataset,oprefix,css_source='modisco.css'):
         """
         outf=open(oprefix+'.html','w')
         outf.write(generate_html_string(vdataset))
-
+        outf.close()
+        
         #Copy the modisco css stylesheet to the output directory
         css_dest='modisco.css'
         if '/' in oprefix:

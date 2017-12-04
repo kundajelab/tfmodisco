@@ -135,7 +135,8 @@ def plot_weights(array,
                  colors=default_colors,
                  plot_funcs=default_plot_funcs,
                  highlight={},
-                 ylabel=""):
+                 ylabel="",
+                 show_plot=True):
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111) 
     plot_weights_given_ax(ax=ax, array=array,
@@ -146,6 +147,7 @@ def plot_weights(array,
         plot_funcs=plot_funcs,
         highlight=highlight,
         ylabel=ylabel)
-    plt.show()
+    if (show_plot==True):
+        plt.show()
     return fig
 

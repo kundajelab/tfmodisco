@@ -35,7 +35,8 @@ def load_image(image,data=None,im_category=None,dim='""'):
             plotly_fig['layout']['xaxis1']['autorange']=True
             plotly_fig['layout']['yaxis1']['autorange']=True
             plotly_fig['layout']['autosize']=False
-            plotly_fig['layout']['height']=400            
+            plotly_fig['layout']['height']=800
+            plotly_fig['layout']['width']=800            
             image_div=plot(plotly_fig, include_plotlyjs=True, output_type='div')
 
         elif (im_category in [ImCategory.SEQUENCE]):
@@ -367,8 +368,8 @@ def convert_Snippet_to_VSnippet(snippet_instance,track_name=None):
         Optionally, provide a name for the track 
         '''
         #generate images
-        fwd_image=plot_weights(snippet_instance.fwd)
-        rev_image=plot_weights(snippet_instance.rev)        
+        fwd_image=plot_weights(snippet_instance.fwd,show_plot=False)
+        rev_image=plot_weights(snippet_instance.rev,show_plot=False)        
         return VSnippet(track_name=track_name,
                         fwd_image=fwd_image,
                         rev_image=rev_image)
