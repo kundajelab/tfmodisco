@@ -34,6 +34,8 @@ def load_image(image,data=None,im_category=None,dim='""'):
             plotly_fig['data']=[dict(z=data, type="heatmap")]
             plotly_fig['layout']['xaxis1']['autorange']=True
             plotly_fig['layout']['yaxis1']['autorange']=True
+            plotly_fig['layout']['autosize']=False
+            plotly_fig['layout']['height']=400            
             image_div=plot(plotly_fig, include_plotlyjs=True, output_type='div')
 
         elif (im_category in [ImCategory.SEQUENCE]):
@@ -187,8 +189,8 @@ class VSnippet(object):
                  fwd_image=None,
                  rev_image=None):
         self.track_name=track_name
-        self.fwd_image=load_image(fwd_image,im_category=ImCategory.SEQUENCE,dim="width=\"700px\"")
-        self.rev_image=load_image(rev_image,im_category=ImCategory.SEQUENCE,dim="width=\"700px\"")
+        self.fwd_image=load_image(fwd_image,im_category=ImCategory.SEQUENCE,dim="width=\"1000px\"")
+        self.rev_image=load_image(rev_image,im_category=ImCategory.SEQUENCE,dim="width=\"1000px\"")
 
     
 class VHistogram(object):

@@ -4,9 +4,9 @@ from encode_js_functions import *
 def add_snippet(doc,tag,text,cur_snippet,snippet_index,modal_image_function_calls):
     with tag('h4'):
         if cur_snippet.track_name!=None:
-            text("Track_{snippet_name}".format(snippet_name=snippet.track_name))
+            text("Track {snippet_name}".format(snippet_name=cur_snippet.track_name))
         else:
-            text("Track_{snippet_index}".format(snippet_index=snippet_index))
+            text("Track {snippet_index}".format(snippet_index=snippet_index))
         with tag('h5'):
             text("Forward")
         modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_snippet.fwd_image,len(modal_image_function_calls)))
@@ -36,7 +36,10 @@ def add_aggregate_motif(doc,tag,text,aggregate_motif,modal_image_function_calls)
     for track_index in range(len(aggregate_motif.tracks)):
         cur_track=aggregate_motif.tracks[track_index]
         with tag('h4'):
-            text('Track_{track_index}'.format(track_index=track_index))
+            if cur_snippet.track_name!=None:
+                text("Track {track_name}".format(track_name=aggregate_motif.track_name))
+            else:
+                text("Track {track_index}".format(track_index=track_index))
         with tag('h5'):
             text("Forward:")
         modal_image_function_calls.append(add_modal_image(doc,tag,text,cur_track.fwd_image,len(modal_image_function_calls)))
