@@ -900,9 +900,49 @@ def get_betas_from_tsne_conditional_probs(conditional_probs,
                (np.sum(prob_row), maxdiff, test_recomputed_probs)
     return np.array(betas)
 
+
 def convert_to_percentiles(vals):
     to_return = np.zeros(len(vals))
     sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
     for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
         to_return[orig_idx] = sort_idx/float(len(vals))
     return to_return
+
+
+def binary_search_perplexity(desired_perplexity, distances):
+    
+    EPSILON_DBL = 1e-8
+    PERPLEXITY_TOLERANCE = 1e-5
+    n_steps = 100
+    
+    desired_entropy = np.log(desired_perplexity)
+    
+    beta_min = -np.inf
+    beta_max = np.inf
+    beta = 1.0
+    
+    for l in range(n_steps):
+        ps = np.exp(-distances * beta)
+        sum_ps = np.sum(ps)
+        ps = ps/(max(sum_ps,EPSILON_DBL))
+        sum_disti_Pi = np.sum(distances*ps)
+        entropy = np.log(sum_ps) + beta * sum_disti_Pi
+        
+        entropy_diff = entropy - desired_entropy
+        #print(beta, np.exp(entropy), entropy_diff)
+        if np.abs(entropy_diff) <= PERPLEXITY_TOLERANCE:
+            break
+        
+        if entropy_diff > 0.0:
+            beta_min = beta
+            if beta_max == np.inf:
+                beta *= 2.0
+            else:
+                beta = (beta + beta_max) / 2.0
+        else:
+            beta_max = beta
+            if beta_min == -np.inf:
+                beta /= 2.0
+            else:
+                beta = (beta + beta_min) / 2.0
+    return beta, ps
