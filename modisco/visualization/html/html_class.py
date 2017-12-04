@@ -13,6 +13,7 @@ class ImCategory(Enum):
     HEATMAP=0,
     SCATTERPLOT=1
     HISTOGRAM=2
+    SEQUENCE=3
     
 
 def load_image(image,data=None,im_category=None,dim='""'):
@@ -23,17 +24,32 @@ def load_image(image,data=None,im_category=None,dim='""'):
     Returns a string with a '<div>' entity for embedding into html. 
     """
     if type(image)==plt.Figure:
+        
+        #Using the approach below lead to very large HTML files. 
+        #Replacing for now in favor of smaller matplotlib static figures
         if im_category==ImCategory.HEATMAP:
             #special loading procedure for heatmaps, must also pass in source data.
             plotly_fig = plotly.tools.mpl_to_plotly(image)
             image_div=None
             plotly_fig['data']=[dict(z=data, type="heatmap")]
-            image_div=plot(plotly_fig, include_plotlyjs=False, output_type='div')
+            plotly_fig['layout']['xaxis1']['autorange']=True
+            plotly_fig['layout']['yaxis1']['autorange']=True
+            image_div=plot(plotly_fig, include_plotlyjs=True, output_type='div')
+
+        elif (im_category in [ImCategory.SEQUENCE]):
+            import StringIO
+            import urllib
+            imgdata = StringIO.StringIO()
+            image.savefig(imgdata, format='png')
+            imgdata.seek(0)  # rewind the data
+            encoded = base64.b64encode(imgdata.buf)
+            image_tag='<img src="data:image/png;base64,'+encoded+'" '+dim+'>'
+            image_div='<div>'+image_tag+'</div>'            
         else:
             image_div=plot_mpl(image,output_type='div')
     elif type(image)==str:
         encoded = base64.b64encode(open(image, "rb").read())
-        image_tag='<img src="data:image/png;base64,'+encoded+' '+dim+'>'
+        image_tag='<img src="data:image/png;base64,'+encoded+'" '+dim+'>'
         image_div='<div>'+image_tag+'</div>'
     else:
         raise(Exception("Invalid file format for image, must be either str or plt.Figure"))
@@ -137,13 +153,13 @@ class VPattern(object):
         self.tracks=tracks
 
         
-class VAggregatedSeqlet(VPattern):
+class VAggregateSeqlet(VPattern):
     """
     tracks is a list of Vsnippet objects -- corresponds to an aggregate motif 
     """
-    def __init__(self,original_aggregated_seqlet=None,
+    def __init__(self,original_pattern=None,
                  tracks=[]):
-        super(VAggregatedSeqlet,self).__init__(original_pattern=original_aggregated_seqlet,tracks=tracks)
+        super(VAggregateSeqlet,self).__init__(original_pattern=original_pattern,tracks=tracks)
          
 class VSeqlet(VPattern):
     """
@@ -171,8 +187,8 @@ class VSnippet(object):
                  fwd_image=None,
                  rev_image=None):
         self.track_name=track_name
-        self.fwd_image=load_image(fwd_image,dim="width=\"700px\"")
-        self.rev_image=load_image(rev_image,dim="width=\"700px\"")
+        self.fwd_image=load_image(fwd_image,im_category=ImCategory.SEQUENCE,dim="width=\"700px\"")
+        self.rev_image=load_image(rev_image,im_category=ImCategory.SEQUENCE,dim="width=\"700px\"")
 
     
 class VHistogram(object):
@@ -211,12 +227,14 @@ class VTsne(object):
 
         if image==None:
             #generate the tSNE scatterplot with provided embedding, clusters, colors
-            image=scatter_plot(coords=embedding,clusters=clusters,colors=colors)
-            #image=fig_output[0]
-            #colors=fig_output[1]
+            fig_output=scatter_plot(coords=embedding,clusters=clusters,colors=colors)
+            image=fig_output[0]
+            colors=fig_output[1]
             self.colors=colors 
         self.image=load_image(image,im_category=ImCategory.SCATTERPLOT)
 
+    def get_colors(self):
+        return self.colors 
             
         
 class VTsne_denoised(VTsne):
@@ -243,7 +261,8 @@ def generate_VMetaCluster(merged_patterns=[],
                           tsne_clusters=[],
                           tsne_colors=None,
                           num_pre_filtered=0,
-                          num_post_filtered=0):
+                          num_post_filtered=0,
+                          n=5):
     '''
     convert a merged_pattern object to a VMetaCluster 
     generate tSNE plots from provided tSNE images or emeddings
@@ -268,21 +287,19 @@ def generate_VMetaCluster(merged_patterns=[],
         aggregate_seqlet_instance=merged_patterns[cluster_index]
 
         tsne_embedding_cluster_index=None
-        colors_cluster_index=None
         tsne_cluster=None
         
         if (not (tsne_embedding is None)):
             tsne_embedding_cluster_index=tsne_embedding[clusters==cluster_index,:]
-            colors_cluster_index=vtsne_fig.colors[cluster_index]
             tsne_cluster=VTsne(embedding=tsne_embedding_cluster_index,
-                               clusters=[cluster_index],
-                               colors=colors_cluster_index)
+                               clusters=clusters[clusters==cluster_index],
+                               colors=vtsne_fig.get_colors())
             
         VClusters.append(generate_VCluster(aggregate_seqlet_instance=aggregate_seqlet_instance,
-                                           n=5,
+                                           n=n,
                                            tsne_embedding=tsne_cluster))            
     return VMetaCluster(clusters=VClusters,
-                        tsnse_embedding=vtsne_fig,
+                        tsne_embedding=vtsne_fig,
                         tsne_embedding_denoised=vtsne_denoised_fig)
     
 
@@ -292,10 +309,10 @@ def generate_VSnippet_list(pattern_instance):
         and child classes of VPattern
         '''
         vsnippet_tracks=[] 
-        for track_name in pattern_instance:
-                cur_snippet=pattern_instance[track_name]
-                cur_vsnippet=convert_Snippet_to_VSnippet(cur_snippet,track_name=track_name)
-                vsnippet_tracks.append(cur_vsnippet)
+        for track_name in pattern_instance.track_name_to_snippet:
+            cur_snippet=pattern_instance[track_name]
+            cur_vsnippet=convert_Snippet_to_VSnippet(cur_snippet,track_name=track_name)
+            vsnippet_tracks.append(cur_vsnippet)
         return vsnippet_tracks
     
 def generate_VHistograms(seqlet_hist,seqlet_thresh,seqlet_number_above_thresh):
@@ -310,17 +327,17 @@ def generate_VHistograms(seqlet_hist,seqlet_thresh,seqlet_number_above_thresh):
             for task in seqlet_hist.keys()]
 
         
-def generate_VCluster(aggregated_seqlet_instance,n=5,tsne_embedding=None):
+def generate_VCluster(aggregate_seqlet_instance,n=5,tsne_embedding=None):
         '''
-        generates a VCluster object from an AggregatedSeqlet object 
+        generates a VCluster object from an AggregateSeqlet object 
         n indicates how many sample seqlets to select (at random) from 
-        SeqletsAndAlignments attribute of aggregated_seqlet_instance. 
+        SeqletsAndAlignments attribute of aggregate_seqlet_instance. 
         '''
-        cur_VAggregatedSeqlet=convert_AggregatedSeqlet_to_VAggregatedSeqlet(aggregated_seqlet_instance)
-        seqlets=aggregated_seqlet_instance.seqlets_and_alnmts.arr
-        example_seqlets=[convert_Seqlet_to_VSeqlet(i) for i in np.random.choice(seqlets,n)]
+        cur_VAggregateSeqlet=convert_AggregateSeqlet_to_VAggregateSeqlet(aggregate_seqlet_instance)
+        seqlets=aggregate_seqlet_instance.seqlets_and_alnmts.arr
+        example_seqlets=[convert_Seqlet_to_VSeqlet(i.seqlet) for i in np.random.choice(seqlets,n)]
         return VCluster(tsne_embedding=tsne_embedding,
-                        aggregate_motif=cur_VAggregatedSeqlet,
+                        aggregate_motif=cur_VAggregateSeqlet,
                         example_seqlets=example_seqlets)
 
 def generate_VAllMetaclusterHeatmap(all_metaclusters_heatmap=None,
@@ -349,7 +366,7 @@ def convert_Snippet_to_VSnippet(snippet_instance,track_name=None):
         '''
         #generate images
         fwd_image=plot_weights(snippet_instance.fwd)
-        rev_image=plot_weights(snippet_instance.rev) 
+        rev_image=plot_weights(snippet_instance.rev)        
         return VSnippet(track_name=track_name,
                         fwd_image=fwd_image,
                         rev_image=rev_image)
@@ -370,15 +387,15 @@ def convert_Seqlet_to_VSeqlet(seqlet_instance):
         '''
         #create the VSnippet objects that compose the tracks
         vsnippet_tracks=generate_VSnippet_list(seqlet_instance)
-        return VSeqlet(original_pattern=pattern_instance,
+        return VSeqlet(original_seqlet=seqlet_instance,
                         tracks=vsnippet_tracks)
         
 
-def convert_AggregatedSeqlet_to_VAggregatedSeqlet(aggregated_seqlet_instance):
+def convert_AggregateSeqlet_to_VAggregateSeqlet(aggregate_seqlet_instance):
         '''
-        Converts an instance of the AggregateSeqlet class to an instance of the VAggregatedSeqlet class. 
+        Converts an instance of the AggregateSeqlet class to an instance of the VAggregateSeqlet class. 
         '''
-        aggregate_vsnippet_tracks=generate_VSnippet_list(aggregated_seqlet_instance)
-        return VAggregatedSeqlet(original_pattern=aggregated_seqlet_instance,
+        aggregate_vsnippet_tracks=generate_VSnippet_list(aggregate_seqlet_instance)
+        return VAggregateSeqlet(original_pattern=aggregate_seqlet_instance,
                                  tracks=aggregate_vsnippet_tracks)
 

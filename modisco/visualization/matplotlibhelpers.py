@@ -22,9 +22,9 @@ def scatter_plot(coords, clusters=None,
 
     if (clusters is None):
         if (coords.shape[1]==2):
-            f=ax.scatter(coords[:,0], coords[:,1], **kwargs)
+            ax.scatter(coords[:,0], coords[:,1], **kwargs)
         else:
-            f=ax.scatter(coords[:,0], coords[:,1], **kwargs)
+            ax.scatter(coords[:,0], coords[:,1], **kwargs)
             
     else:
         if (colors is None):
@@ -36,16 +36,16 @@ def scatter_plot(coords, clusters=None,
                     "\n".join(str(x[0])+": "+(",".join("%0.03f"%y for y in x[1]))
                               for x in enumerate(colors)))
         if (coords.shape[1]==2):
-            f=ax.scatter(coords[:,0], coords[:,1],
+            ax.scatter(coords[:,0], coords[:,1],
                         c=[colors[x] for x in clusters], **kwargs)
         else:
-            f=ax.scatter(coords[:,0], coords[:,1], coords[:,2],
+            ax.scatter(coords[:,0], coords[:,1], coords[:,2],
                        c=[colors[x] for x in clusters], **kwargs)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if (coords.shape[1]==3):
         ax.set_zlabel(zlabel)
-    return tuple([f,colors])
+    return tuple([fig,colors])
 
 def frac_to_rainbow_colour(frac):
     """
@@ -117,3 +117,5 @@ def reorganize_rows_by_clusters(rows, cluster_indices):
     new_indices = list(itertools.chain(*cluster_idx_to_row_indices.values()))
     return rows[new_indices]
 
+
+    

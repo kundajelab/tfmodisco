@@ -17,7 +17,7 @@ def get_vseqlet(seqlet_folder):
 def get_vaggregate_seqlet(vaggregate_seqlet_folder):
     track_folders=[vaggregate_seqlet_folder+'/'+f for f in listdir(vaggregate_seqlet_folder) if (not f.startswith('.'))]
     tracks=[get_snippet(f) for f in track_folders]
-    return VAggregatedSeqlet(tracks=tracks)
+    return VAggregateSeqlet(tracks=tracks)
 
 def get_cluster(cluster_folder):
     aggregate_motif=get_vaggregate_seqlet(cluster_folder+'/'+'aggregate_motif')
@@ -65,5 +65,5 @@ def generate_vdataset_on_the_fly():
 
 if __name__=="__main__":
     dataset=generate_vdataset_from_folder("example_figures_modisco/")
-    import pdb
+
 
