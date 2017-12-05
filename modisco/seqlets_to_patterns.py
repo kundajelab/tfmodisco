@@ -46,7 +46,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
-                       louvain_min_cluster_size=25,
+                       louvain_min_cluster_size=10,
                        louvain_level_to_return=1,
 
                        frac_support_to_trim_to=0.2,
@@ -57,7 +57,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                         (0.0001,0.8), (0.00001, 0.85), (0.000001, 0.9)],
 
                        min_similarity_for_seqlet_assignment=0.1,
-                       final_min_cluster_size=10,
+                       final_min_cluster_size=25,
 
                        final_flank_to_add=10,
                        verbose=True,
@@ -381,7 +381,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             print("Performing seqlet reassignment for small clusters")
             sys.stdout.flush()
         too_small_patterns = [x for x in merged_patterns if
-                              x.num_seqlets < self.min_cluster_size]
+                              x.num_seqlets < self.final_min_cluster_size]
         final_patterns = self.seqlet_reassigner(merged_patterns)
         final_patterns = self.final_postprocessor(final_patterns)
         if (self.verbose):
