@@ -180,7 +180,8 @@ def generate_html_string(vdataset):
     with tag('head'):
         with tag('title'):
             text(vdataset.title)
-        doc.asis('<link type=\'text/css\' rel=\'stylesheet\' href="modisco.css">')
+        with tag('style'):
+            doc.asis(open('modisco.css','r').read()) 
         with tag('script'):
             text(showHist())
     with tag('body'):
