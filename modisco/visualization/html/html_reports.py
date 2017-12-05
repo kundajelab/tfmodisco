@@ -3,7 +3,7 @@ from html_class import *
 from spawn_html import *
 from shutil import copyfile
 
-def generate_html_report(vdataset,oprefix,css_source='modisco.css'):
+def generate_html_report(vdataset,oprefix):
         """
         Inputs: 
         vdataset is an instance of VDataset object 
@@ -15,10 +15,11 @@ def generate_html_report(vdataset,oprefix,css_source='modisco.css'):
         outf.close()
         
         #Copy the modisco css stylesheet to the output directory
+        '''
         css_dest='modisco.css'
         if '/' in oprefix:
                 css_dest='/'.join(vdataset.split('/')[0:-1])+'/'+css_source
         print("source:"+str(css_source))
         print("dest:"+str(css_dest))
         copyfile(css_source,css_dest)
-        
+        '''
