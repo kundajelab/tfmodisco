@@ -255,6 +255,8 @@ class AbstractTsneProbs(AbstractAffMatTransformer):
 
         #make the affinity mat a distance mat
         dist_mat = self.aff_to_dist_mat(affinity_mat)
+        #make sure self-distances are 0
+        dist_mat = dist_mat*(1-np.eye(len(dist_mat)))
         dist_mat = sklearn.utils.check_array(dist_mat, ensure_min_samples=2,
                                              dtype=[np.float32, np.float64])
         n_samples = dist_mat.shape[0]
