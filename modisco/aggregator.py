@@ -676,6 +676,7 @@ class DynamicDistanceSimilarPatternsCollapser(object):
         self.pattern_to_pattern_sim_computer = pattern_to_pattern_sim_computer 
         self.aff_to_dist_mat = aff_to_dist_mat
         self.pattern_aligner = pattern_aligner
+        self.collapse_condition = collapse_condition
         self.postprocessor = postprocessor
         self.verbose = verbose
 
@@ -695,26 +696,30 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                 sys.stdout.flush()
             merge_occurred_last_iteration = False
 
-            patterns_to_seqlets_sim =\
-                self.pattern_to_pattern_sim_computer(
-                    seqlets=seqlets,
-                    filter_seqlets=patterns)
+            if (self.verbose):
+                print("Computing pattern to seqlet distances")
+                sys.stdout.flush()
             patterns_to_seqlets_dist =\
-                self.aff_to_dist_mat(patterns_to_seqlets_sim)
+                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
+                                        seqlets=seqlets,
+                                        filter_seqlets=patterns))
             desired_perplexities = [len(pattern.seqlets_and_alnmts)
                                     for pattern in patterns]
-            pattern_betas = [
+            pattern_betas = np.array([
                 util.binary_search_perplexity(
                     desired_perplexity=desired_perplexity,
-                    distances=distances)
+                    distances=distances)[0]
                 for desired_perplexity,distances
-                in zip(desired_perplexities, patterns_to_seqlets_dist.T)]
+                in zip(desired_perplexities, patterns_to_seqlets_dist.T)])
 
+            if (self.verbose):
+                print("Computing pattern to pattern distances")
+                sys.stdout.flush()
             patterns_to_patterns_dist =\
                 self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
                                      seqlets=patterns,
                                      filter_seqlets=patterns))
-            patterns_dist_probs = np.exp(-np.array(pattern_betas)[:,None]*
+            patterns_dist_probs = np.exp(-pattern_betas[:,None]*
                                          patterns_to_patterns_dist)
             patterns_to_patterns_aligner_sim =\
                 np.zeros((len(patterns), len(patterns))) 
@@ -731,14 +736,20 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                         dist_prob = min(patterns_dist_probs[i,j],
                                         patterns_dist_probs[j,i])
                         aligner_sim = patterns_to_patterns_aligner_sim[i,j]
-                        if (collapse_condition(dist_prob=dist_prob,
-                                               aligner_sim=aligner_sim)):
+                        if (self.collapse_condition(dist_prob=dist_prob,
+                                                    aligner_sim=aligner_sim)):
                             if (self.verbose):
-                                print("Collapsing "+str(i)+" & "+str(j)
+                                print("Collapsed "+str(i)+" & "+str(j)
                                       +" with prob "+str(dist_prob)+" and"
                                       +" sim "+str(aligner_sim)) 
                                 sys.stdout.flush()
                             indices_to_merge.append((i,j))
+                        else:
+                            if (self.verbose):
+                                print("Not collapsed "+str(i)+" & "+str(j)
+                                      +" with prob "+str(dist_prob)+" and"
+                                      +" sim "+str(aligner_sim)) 
+                                sys.stdout.flush()
 
             for i,j in indices_to_merge:
                 pattern1 = patterns[i]
@@ -759,8 +770,9 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                         if (patterns[k]==parent_pattern or
                             patterns[k]==child_pattern):
                             patterns[k]=new_parent_pattern
-                            new_patterns_ordered_dict[new_parent_pattern] = 1
             merge_occurred_last_iteration = (len(indices_to_merge) > 0)
+
+        return patterns
     
 
 class BasicSimilarPatternsCollapser(object):

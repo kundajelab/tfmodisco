@@ -39,26 +39,22 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        #gapped kmer embedding arguments
                        alphabet_size=4,
                        kmer_len=8, num_gaps=3, num_mismatches=2,
-                       embedding_track_names_and_signs=\
-                        embedding_track_names_and_signs,
-                       onehot_track_name="sequence",
 
                        nn_n_jobs=4,
-                       nearest_neighbors_multiplier=3,
+                       nearest_neighbors_to_compute=500,
 
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
-                       louvain_min_cluster_size=10,
+                       louvain_min_cluster_size=25,
                        louvain_level_to_return=1,
 
                        frac_support_to_trim_to=0.2,
                        trim_to_window_size=30,
                        initial_flank_to_add=10,
 
-                       prob_and_sim_merge_thresholds=[(0.0001,0.8),
-                                                      (0.00001, 0.85),
-                                                      (0.000001, 0.9)]
+                       prob_and_pertrack_sim_merge_thresholds=[
+                        (0.0001,0.8), (0.00001, 0.85), (0.000001, 0.9)],
 
                        min_similarity_for_seqlet_assignment=0.1,
                        final_min_cluster_size=10,
@@ -89,12 +85,12 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.num_mismatches = num_mismatches
 
         self.nn_n_jobs = nn_n_jobs
-        self.nearest_neighbors_multiplier = nearest_neighbors_multiplier
+        self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
 
         self.affmat_correlation_threshold = affmat_correlation_threshold
 
         #affinity mat to tsne dist mat setting
-        self.tsne_perplexity = tsne_perplexity
+        self.tsne_perplexities = tsne_perplexities
 
         #clustering settings
         self.louvain_min_cluster_size = louvain_min_cluster_size
@@ -104,6 +100,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.frac_support_to_trim_to = frac_support_to_trim_to
         self.trim_to_window_size = trim_to_window_size
         self.initial_flank_to_add = initial_flank_to_add 
+
+        #similarity settings for merging
+        self.prob_and_pertrack_sim_merge_thresholds =\
+            prob_and_pertrack_sim_merge_thresholds
+        self.prob_and_sim_merge_thresholds =\
+            [(x[0], x[1]*2*len(contrib_scores_track_names))
+             for x in self.prob_and_pertrack_sim_merge_thresholds]
 
         #reassignment settings
         self.min_similarity_for_seqlet_assignment =\
@@ -177,7 +180,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
         self.tsne_conditional_probs_transformers =\
             [affmat.transformers.TsneConditionalProbs(
-                    perplexity=perplexity, aff_to_dist_mat=aff_to_dist_mat)
+                    perplexity=perplexity,
+                    aff_to_dist_mat=self.aff_to_dist_mat)
              for perplexity in self.tsne_perplexities]
 
         self.clusterer = cluster.core.LouvainCluster(
@@ -210,7 +214,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                                track_name in self.contrib_scores_track_names]),
             postprocessor=self.postprocessor1)
 
-        self.patterns_to_pattern_sim_computer =\
+        self.pattern_to_pattern_sim_computer =\
             affmat.core.AffmatFromSeqletsWithNNpairs(
                 pattern_comparison_settings=self.pattern_comparison_settings,
                 sim_metric_on_nn_pairs=\
@@ -218,13 +222,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                         n_cores=self.n_cores,
                         cross_metric_single_region=\
                             affmat.core.CrossContinJaccardSingleRegion(),
-                        verbose=self.verbose))
+                        verbose=False))
         self.dynamic_distance_similar_patterns_collapser =\
             aggregator.DynamicDistanceSimilarPatternsCollapser(
-                patterns_to_pattern_sim_computer=\
-                    self.patterns_to_pattern_sim_computer,
+                pattern_to_pattern_sim_computer=\
+                    self.pattern_to_pattern_sim_computer,
                 aff_to_dist_mat=self.aff_to_dist_mat,
-                pattern_aligner=modisco.core.CrossCorrelationPatternAligner(
+                pattern_aligner=core.CrossCorrelationPatternAligner(
                     pattern_comparison_settings=
                         affmat.core.PatternComparisonSettings(
                             track_names=(
@@ -232,10 +236,10 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                                 self.contrib_scores_track_names), 
                             track_transformer=affmat.MeanNormalizer().chain(
                                               affmat.MagnitudeNormalizer()), 
-                            min_overlap=self.min_overlap)),
+                            min_overlap=self.min_overlap_while_sliding)),
                 collapse_condition=(lambda dist_prob, aligner_sim:
                     any([(dist_prob > x[0] and aligner_sim > x[1])
-                         for x in self.prob_and_sim_merge_thresholds]))
+                         for x in self.prob_and_sim_merge_thresholds])),
                 postprocessor=self.postprocessor1,
                 verbose=self.verbose) 
 
@@ -277,10 +281,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             self.nearest_neighbors_object.fit(
                 -affinity_mat_from_seqlet_embeddings).kneighbors(
                 X=-affinity_mat_from_seqlet_embeddings,
-                n_neighbors=
-                  min(self.nearest_neighbors_multiplier
-                      *3*self.tsne_perplexity+1,
-                      len(seqlets)),
+                n_neighbors=min(self.nearest_neighbors_to_compute+1,
+                                len(seqlets)),
                 return_distance=False)
 
         if (self.verbose):
@@ -298,6 +300,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("Computed affinity matrix on nearest neighbors in",
                   round(time.time()-nn_affmat_start,2),"s")
+            sys.stdout.flush()
 
         #filter by correlation
         filtered_rows_mask = self.filter_mask_from_correlation(
@@ -314,7 +317,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             sys.stdout.flush() 
 
         multiscale_tsne_conditional_probs =\
-            np.mean([conditional_prob_transformer(filtered_affmat)
+            np.mean([tsne_conditional_prob_transformer(filtered_affmat)
                      for tsne_conditional_prob_transformer in
                          self.tsne_conditional_probs_transformers], axis=0)
 
@@ -332,11 +335,18 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             print("Aggregating seqlets in each cluster")
             sys.stdout.flush()
 
+        cluster_to_seqlets = defaultdict(list) 
+        assert len(filtered_seqlets)==len(cluster_results.cluster_indices)
+        for seqlet,idx in zip(filtered_seqlets,
+                              cluster_results.cluster_indices):
+            cluster_to_seqlets[idx].append(seqlet)
+
         cluster_to_eliminated_motif = OrderedDict()
         cluster_to_motif = OrderedDict()
         for i in range(num_clusters):
             if (self.verbose):
-                print("Aggregating for cluster "+str(i))
+                print("Aggregating for cluster "+str(i)+" with "
+                      +str(len(cluster_to_seqlets[i]))+" seqlets")
                 sys.stdout.flush()
             motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
             motif = motifs[0]
@@ -349,8 +359,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             else:
                 if (self.verbose):
                     print("Dropping cluster "+str(i)+
-                          "with "+str(len(motifs[0].seqlets_and_alnmts))
-                          +" due to sign disagreement")
+                          " with "+str(motifs[0].num_seqlets)
+                          +" seqlets due to sign disagreement")
                 cluster_to_eliminated_motif[i] = motifs[0]
 
         #apply another round of filtering
@@ -370,10 +380,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("Performing seqlet reassignment for small clusters")
             sys.stdout.flush()
+        too_small_patterns = [x for x in merged_patterns if
+                              x.num_seqlets < self.min_cluster_size]
         final_patterns = self.seqlet_reassigner(merged_patterns)
         final_patterns = self.final_postprocessor(final_patterns)
         if (self.verbose):
-            print("Got "+str(len(patterns))+" patterns after reassignment")
+            print("Got "+str(len(final_patterns))
+                  +" patterns after reassignment")
             sys.stdout.flush()
 
         if (self.verbose):
@@ -382,7 +395,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             sys.stdout.flush()
 
         results = SeqletsToPatternsResults(
-            patterns=patterns,
+            patterns=final_patterns,
             affinity_mat_from_seqlet_embeddings=\
                 affinity_mat_from_seqlet_embeddings,
             seqlet_neighbors=seqlet_neighbors,
@@ -396,6 +409,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             filter_mask2=filter_mask2,
             filtered_seqlets2=filtered_seqlets2,
             merged_patterns=merged_patterns,
+            too_small_patterns=too_small_patterns,
             final_patterns=final_patterns)
 
         return results 
