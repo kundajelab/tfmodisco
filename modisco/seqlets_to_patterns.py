@@ -47,7 +47,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
                        tsne_perplexities = [10],
                        louvain_min_cluster_size=10,
-                       louvain_level_to_return=1,
 
                        frac_support_to_trim_to=0.2,
                        trim_to_window_size=30,
@@ -98,7 +97,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
         #clustering settings
         self.louvain_min_cluster_size = louvain_min_cluster_size
-        self.louvain_level_to_return = louvain_level_to_return
 
         #postprocessor1 settings
         self.frac_support_to_trim_to = frac_support_to_trim_to
@@ -274,113 +272,202 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         start = time.time()
 
         if (self.verbose):
-            print("Computing affinity matrix using seqlet embeddings")
+            print("(Round 1) Computing affinity matrix from seqlet embeddings")
             sys.stdout.flush()
 
-        affinity_mat_from_seqlet_embeddings =\
+        affinity_mat_from_seqlet_embeddings1 =\
             self.affinity_mat_from_seqlet_embeddings(seqlets)
 
-        nn_start = time.time() 
+        nn_start1 = time.time() 
         if (self.verbose):
-            print("Compute nearest neighbors using affmat embeddings")
+            print("(Round 1) Compute nearest neighbors from affmat embeddings")
             sys.stdout.flush()
 
-        seqlet_neighbors =\
+        seqlet_neighbors1 =\
             self.nearest_neighbors_object.fit(
-                -affinity_mat_from_seqlet_embeddings).kneighbors(
-                X=-affinity_mat_from_seqlet_embeddings,
+                -affinity_mat_from_seqlet_embeddings1).kneighbors(
+                X=-affinity_mat_from_seqlet_embeddings1,
                 n_neighbors=min(self.nearest_neighbors_to_compute+1,
                                 len(seqlets)),
                 return_distance=False)
 
         if (self.verbose):
             print("Computed nearest neighbors in",
-                  round(time.time()-nn_start,2),"s")
+                  round(time.time()-nn_start1,2),"s")
             sys.stdout.flush()
 
-        nn_affmat_start = time.time() 
+        nn_affmat_start1 = time.time() 
         if (self.verbose):
-            print("Computing affinity matrix on nearest neighbors")
+            print("(Round 1) Computing affinity matrix on nearest neighbors")
             sys.stdout.flush()
-        nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
-                                    seqlet_neighbors=seqlet_neighbors,
+        nn_affmat1 = self.affmat_from_seqlets_with_nn_pairs(
+                                    seqlet_neighbors=seqlet_neighbors1,
                                     seqlets=seqlets) 
         if (self.verbose):
-            print("Computed affinity matrix on nearest neighbors in",
-                  round(time.time()-nn_affmat_start,2),"s")
+            print("(Round 1) Computed affinity matrix on nearest neighbors in",
+                  round(time.time()-nn_affmat_start1,2),"s")
             sys.stdout.flush()
 
         #filter by correlation
-        filtered_rows_mask = self.filter_mask_from_correlation(
-                            main_affmat=nn_affmat,
-                            other_affmat=affinity_mat_from_seqlet_embeddings) 
+        filtered_rows_mask1 = self.filter_mask_from_correlation(
+                            main_affmat=nn_affmat1,
+                            other_affmat=affinity_mat_from_seqlet_embeddings1) 
 
-        filtered_seqlets = [x[0] for x in
-                            zip(seqlets, filtered_rows_mask) if (x[1])]
-        filtered_affmat =\
-            nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
+        filtered_seqlets1 = [x[0] for x in
+                             zip(seqlets, filtered_rows_mask1) if (x[1])]
+        filtered_affmat1 =\
+            nn_affmat1[filtered_rows_mask1][:,filtered_rows_mask1]
 
         if (self.verbose):
-            print("Computing tsne conditional probs")
+            print("(Round 1) Computing tsne conditional probs")
             sys.stdout.flush() 
 
-        multiscale_tsne_conditional_probs =\
-            np.mean([tsne_conditional_prob_transformer(filtered_affmat)
+        multiscale_tsne_conditional_probs1 =\
+            np.mean([tsne_conditional_prob_transformer(filtered_affmat1)
                      for tsne_conditional_prob_transformer in
                          self.tsne_conditional_probs_transformers], axis=0)
 
         if (self.verbose):
-            print("Computing clustering")
+            print("(Round 1) Computing clustering")
             sys.stdout.flush()
-        cluster_results = self.clusterer(multiscale_tsne_conditional_probs)
+        cluster_results1 = self.clusterer(multiscale_tsne_conditional_probs1)
 
-        num_clusters = max(cluster_results.cluster_indices+1)
+        num_clusters1 = max(cluster_results1.cluster_indices+1)
         if (self.verbose):
-            print("Got "+str(num_clusters)+" clusters initially")
+            print("Got "+str(num_clusters1)+" clusters after round 1")
             sys.stdout.flush()
 
         if (self.verbose):
-            print("Aggregating seqlets in each cluster")
+            print("(Round 1) Aggregating seqlets in each cluster")
             sys.stdout.flush()
 
-        cluster_to_seqlets = defaultdict(list) 
-        assert len(filtered_seqlets)==len(cluster_results.cluster_indices)
-        for seqlet,idx in zip(filtered_seqlets,
-                              cluster_results.cluster_indices):
-            cluster_to_seqlets[idx].append(seqlet)
+        cluster_to_seqlets1 = defaultdict(list) 
+        assert len(filtered_seqlets1)==len(cluster_results1.cluster_indices)
+        for seqlet,idx in zip(filtered_seqlets1,
+                              cluster_results1.cluster_indices):
+            cluster_to_seqlets1[idx].append(seqlet)
 
-        cluster_to_eliminated_motif = OrderedDict()
-        cluster_to_motif = OrderedDict()
-        for i in range(num_clusters):
+        cluster_to_eliminated_motif1 = OrderedDict()
+        cluster_to_motif1 = OrderedDict()
+        for i in range(num_clusters1):
             if (self.verbose):
                 print("Aggregating for cluster "+str(i)+" with "
-                      +str(len(cluster_to_seqlets[i]))+" seqlets")
+                      +str(len(cluster_to_seqlets1[i]))+" seqlets")
                 sys.stdout.flush()
-            motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
+            motifs = self.seqlet_aggregator(cluster_to_seqlets1[i])
             motif = motifs[0]
             motif_track_signs = [
                 np.sign(np.sum(motif[contrib_scores_track_name].fwd)) for
                 contrib_scores_track_name in self.contrib_scores_track_names] 
             if (all([(x==y) for x,y in
                     zip(motif_track_signs, self.track_signs)])):
-                cluster_to_motif[i] = motifs[0]
+                cluster_to_motif1[i] = motif
             else:
                 if (self.verbose):
                     print("Dropping cluster "+str(i)+
-                          " with "+str(motifs[0].num_seqlets)
+                          " with "+str(motif.num_seqlets)
                           +" seqlets due to sign disagreement")
-                cluster_to_eliminated_motif[i] = motifs[0]
+                cluster_to_eliminated_motif1[i] = motif
 
-        #apply another round of filtering
-        assert len(filtered_seqlets)==len(cluster_results.cluster_indices)
-        filter_mask2 = [(True if i in cluster_to_motif else False)
-                          for i in cluster_results.cluster_indices] 
-        filtered_seqlets2 = [seqlet for (seqlet, include) in
-                             zip(filtered_seqlets,filter_mask2) if include]
+        #Do another round of affinity matrix calculation and clustering on the
+        #seqlets from the newly recentered motifs
+        if (self.verbose):
+            print("Beginning round 2")
+            sys.stdout.flush()
         
+        seqlets2 = list(itertools.chain(*[[x.seqlet for x in                 
+                    motif.seqlets_and_alnmts] for motif in
+                    cluster_to_motif1.values()]))
+
+        if (self.verbose):
+            print("(Round 2) Computing affinity matrix from seqlet embeddings")
+            sys.stdout.flush()
+
+        affinity_mat_from_seqlet_embeddings2 =\
+            self.affinity_mat_from_seqlet_embeddings(seqlets2)
+
+        if (self.verbose):
+            print("(Round 2) Compute nearest neighbors from affmat embeddings")
+            sys.stdout.flush()
+
+        seqlet_neighbors2 =\
+            self.nearest_neighbors_object.fit(
+                -affinity_mat_from_seqlet_embeddings2).kneighbors(
+                X=-affinity_mat_from_seqlet_embeddings2,
+                n_neighbors=min(self.nearest_neighbors_to_compute+1,
+                                len(seqlets2)),
+                return_distance=False)
+
+        nn_affmat_start2 = time.time() 
+        if (self.verbose):
+            print("(Round 2) Computing affinity matrix on nearest neighbors")
+            sys.stdout.flush()
+        nn_affmat2 = self.affmat_from_seqlets_with_nn_pairs(
+                                    seqlet_neighbors=seqlet_neighbors2,
+                                    seqlets=seqlets2) 
+        if (self.verbose):
+            print("(Round 2) Computed affinity matrix on nearest neighbors in",
+                  round(time.time()-nn_affmat_start2,2),"s")
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("(Round 2) Computing tsne conditional probs")
+            sys.stdout.flush() 
+
+        multiscale_tsne_conditional_probs2 =\
+            np.mean([tsne_conditional_prob_transformer(nn_affmat2)
+                     for tsne_conditional_prob_transformer in
+                         self.tsne_conditional_probs_transformers], axis=0)
+
+        if (self.verbose):
+            print("(Round 2) Computing clustering")
+            sys.stdout.flush()
+        cluster_results2 = self.clusterer(multiscale_tsne_conditional_probs2)
+
+        num_clusters2 = max(cluster_results2.cluster_indices+1)
+        if (self.verbose):
+            print("Got "+str(num_clusters2)+" clusters after round 2")
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("(Round 2) Aggregating seqlets in each cluster")
+            sys.stdout.flush()
+
+        cluster_to_seqlets2 = defaultdict(list) 
+        assert len(seqlets2)==len(cluster_results2.cluster_indices)
+        for seqlet,idx in zip(seqlets2,
+                              cluster_results2.cluster_indices):
+            cluster_to_seqlets2[idx].append(seqlet)
+
+        cluster_to_eliminated_motif2 = OrderedDict()
+        cluster_to_motif2 = OrderedDict()
+        for i in range(num_clusters2):
+            if (self.verbose):
+                print("Aggregating for cluster "+str(i)+" with "
+                      +str(len(cluster_to_seqlets2[i]))+" seqlets")
+                sys.stdout.flush()
+            motifs = self.seqlet_aggregator(cluster_to_seqlets2[i])
+            motif = motifs[0]
+            motif_track_signs = [
+                np.sign(np.sum(motif[contrib_scores_track_name].fwd)) for
+                contrib_scores_track_name in self.contrib_scores_track_names] 
+            if (all([(x==y) for x,y in
+                    zip(motif_track_signs, self.track_signs)])):
+                cluster_to_motif2[i] = motif
+            else:
+                if (self.verbose):
+                    print("Dropping cluster "+str(i)+
+                          " with "+str(motif.num_seqlets)
+                          +" seqlets due to sign disagreement")
+                cluster_to_eliminated_motif2[i] = motif
+
+        #Now start merging patterns 
+        if (self.verbose):
+            print("Merging clusters")
+            sys.stdout.flush()
         merged_patterns = self.dynamic_distance_similar_patterns_collapser( 
-            patterns=cluster_to_motif.values(),
-            seqlets=filtered_seqlets2) 
+            patterns=cluster_to_motif2.values(),
+            seqlets=seqlets2) 
         merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")
@@ -405,17 +492,26 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
         results = SeqletsToPatternsResults(
             patterns=final_patterns,
-            affinity_mat_from_seqlet_embeddings=\
-                affinity_mat_from_seqlet_embeddings,
-            seqlet_neighbors=seqlet_neighbors,
-            nn_affmat=nn_affmat,   
-            filtered_mask1=filtered_rows_mask,
-            filtered_seqlets=filtered_seqlets,
-            filtered_affmat=filtered_affmat,
-            cluster_results=cluster_results,
-            cluster_to_motif=cluster_to_motif,
-            cluster_to_eliminated_motif=cluster_to_eliminated_motif,
-            filter_mask2=filter_mask2,
+
+            affinity_mat_from_seqlet_embeddings1=\
+                affinity_mat_from_seqlet_embeddings1,
+            seqlet_neighbors1=seqlet_neighbors1,
+            nn_affmat1=nn_affmat1,   
+            filtered_mask1=filtered_rows_mask1,
+            filtered_seqlets1=filtered_seqlets1,
+            filtered_affmat1=filtered_affmat1,
+            cluster_results1=cluster_results1,
+            cluster_to_motif1=cluster_to_motif1,
+
+            seqlets2=seqlets2,
+            affinity_mat_from_seqlet_embeddings2=\
+                affinity_mat_from_seqlet_embeddings2,
+            seqlet_neighbors2=seqlet_neighbors2,
+            nn_affmat2=nn_affmat2,   
+            cluster_results2=cluster_results2,
+            cluster_to_motif2=cluster_to_motif2,
+            cluster_to_eliminated_motif2=cluster_to_eliminated_motif2,
+
             merged_patterns=merged_patterns,
             too_small_patterns=too_small_patterns,
             final_patterns=final_patterns)

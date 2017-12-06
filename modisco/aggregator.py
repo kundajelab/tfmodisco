@@ -768,7 +768,7 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                                                 m1, m2]
                                         if (self.dealbreaker_condition(
                                                 dist_prob=min_dist_prob_here,
-                                                aligner_sim=aligner_sim)):
+                                                aligner_sim=aligner_sim_here)):
                                             collapse_passed=False                     
                                             if (self.verbose):
                                                 print("Aborting collapse as "
