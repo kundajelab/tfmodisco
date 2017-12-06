@@ -54,10 +54,14 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        initial_flank_to_add=10,
 
                        prob_and_pertrack_sim_merge_thresholds=[
-                        (0.0001,0.8), (0.00001, 0.85), (0.000001, 0.9)],
+                        (0.0001,0.84), (0.00001, 0.87), (0.000001, 0.9)],
 
-                       min_similarity_for_seqlet_assignment=0.1,
-                       final_min_cluster_size=25,
+                       prob_and_pertrack_sim_dealbreaker_thresholds=[
+                        (0.1,0.75), (0.01, 0.8), (0.001, 0.83),
+                        (0.0000001,0.9)],
+
+                       min_similarity_for_seqlet_assignment=0.2,
+                       final_min_cluster_size=10,
 
                        final_flank_to_add=10,
                        verbose=True,
@@ -102,11 +106,12 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.initial_flank_to_add = initial_flank_to_add 
 
         #similarity settings for merging
-        self.prob_and_pertrack_sim_merge_thresholds =\
-            prob_and_pertrack_sim_merge_thresholds
         self.prob_and_sim_merge_thresholds =\
             [(x[0], x[1]*2*len(contrib_scores_track_names))
-             for x in self.prob_and_pertrack_sim_merge_thresholds]
+             for x in prob_and_pertrack_sim_merge_thresholds]
+        self.prob_and_sim_dealbreaker_thresholds =\
+            [(x[0], x[1]*2*len(contrib_scores_track_names))
+             for x in prob_and_pertrack_sim_dealbreaker_thresholds]
 
         #reassignment settings
         self.min_similarity_for_seqlet_assignment =\
@@ -240,6 +245,9 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                 collapse_condition=(lambda dist_prob, aligner_sim:
                     any([(dist_prob > x[0] and aligner_sim > x[1])
                          for x in self.prob_and_sim_merge_thresholds])),
+                dealbreaker_condition=(lambda dist_prob, aligner_sim:
+                    any([(dist_prob < x[0] and aligner_sim < x[1])              
+                         for x in self.prob_and_sim_dealbreaker_thresholds])),
                 postprocessor=self.postprocessor1,
                 verbose=self.verbose) 
 
@@ -373,6 +381,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         merged_patterns = self.dynamic_distance_similar_patterns_collapser( 
             patterns=cluster_to_motif.values(),
             seqlets=filtered_seqlets2) 
+        merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")
             sys.stdout.flush()
@@ -400,14 +409,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                 affinity_mat_from_seqlet_embeddings,
             seqlet_neighbors=seqlet_neighbors,
             nn_affmat=nn_affmat,   
-            filtered_rows_mask=filtered_rows_mask,
+            filtered_mask1=filtered_rows_mask,
             filtered_seqlets=filtered_seqlets,
             filtered_affmat=filtered_affmat,
             cluster_results=cluster_results,
             cluster_to_motif=cluster_to_motif,
             cluster_to_eliminated_motif=cluster_to_eliminated_motif,
             filter_mask2=filter_mask2,
-            filtered_seqlets2=filtered_seqlets2,
             merged_patterns=merged_patterns,
             too_small_patterns=too_small_patterns,
             final_patterns=final_patterns)
