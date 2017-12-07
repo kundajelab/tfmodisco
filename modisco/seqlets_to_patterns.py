@@ -60,7 +60,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                         (0.0000001,0.9)],
 
                        min_similarity_for_seqlet_assignment=0.2,
-                       final_min_cluster_size=10,
+                       final_min_cluster_size=50,
 
                        final_flank_to_add=10,
                        verbose=True,
