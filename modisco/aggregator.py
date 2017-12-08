@@ -784,10 +784,9 @@ class DynamicDistanceSimilarPatternsCollapser(object):
 
                             if (collapse_passed):
                                 indices_to_merge.append((i,j))
-                                merge_partners_so_far[i] =\
-                                    merge_under_consideration
-                                merge_partners_so_far[j] =\
-                                    merge_under_consideration
+                                for an_idx in merge_under_consideration:
+                                    merge_partners_so_far[an_idx]=\
+                                        merge_under_consideration 
                         else:
                             if (self.verbose):
                                 print("Not collapsed "+str(i)+" & "+str(j)

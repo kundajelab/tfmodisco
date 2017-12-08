@@ -180,8 +180,8 @@ def graph2binary(filename, graph):
     print("Wrote graph to binary file in {} seconds".format(time.time() - tic))
 
 
-def runlouvain(filename, contin_runs=20,
-                         max_runs=100, time_limit=2000):
+def runlouvain(filename, tol=1e-3, contin_runs=20,
+                         max_runs=500, time_limit=2000):
     """
     From binary graph file filename.bin, optimize modularity by running multiple random re-starts of
     the Louvain C++ code.
@@ -262,7 +262,7 @@ def runlouvain(filename, contin_runs=20,
         run += 1
 
         # continue only if we've reached a higher modularity than before
-        if q[-1] - Q > 0:
+        if q[-1] - Q > tol:
 
             Q = q[-1]
             updated = run
@@ -293,3 +293,108 @@ def runlouvain(filename, contin_runs=20,
     print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
 
     return communities, Q, hierarchy
+
+
+def runlouvain_average_runs(filename, max_runs=100):
+
+    def get_modularity(msg):
+        # pattern = re.compile('modularity increased from -*0.\d+ to 0.\d+')
+        pattern = re.compile('modularity increased from -*\d.\d+e*-*\d+ to \d.\d+')
+        matches = pattern.findall(msg.decode())
+        q = list()
+        for line in matches:
+            q.append(line.split(" ")[-1])
+        return list(map(float, q))
+
+    print('Running Louvain modularity optimization')
+    
+    # Use package location to find Louvain code
+    # lpath = os.path.abspath(resource_filename(Requirement.parse("PhenoGraph"), 'louvain'))
+    lpath = os.path.join(os.path.dirname(__file__), 'louvain')
+    try:
+        assert os.path.isdir(lpath)
+    except AssertionError:
+        print("Could not find Louvain code, tried: {}".format(lpath))
+
+    # Determine if we're using Windows, Mac, or Linux
+    if sys.platform == "win32" or sys.platform == "cygwin":
+        convert_binary = "convert.exe"
+        community_binary = "community.exe"
+        hierarchy_binary = "hierarchy.exe"
+    elif sys.platform.startswith("linux"):
+        convert_binary = "linux-convert"
+        community_binary = "linux-community"
+        hierarchy_binary = "linux-hierarchy"
+    elif sys.platform == "darwin":
+        convert_binary = "convert"
+        community_binary = "community"
+        hierarchy_binary = "hierarchy"
+    else:
+        raise RuntimeError("Operating system could not be determined or is not supported. "
+                           "sys.platform == {}".format(sys.platform))
+    # Prepend appropriate path separator
+    convert_binary = os.path.sep + convert_binary
+    community_binary = os.path.sep + community_binary
+    hierarchy_binary = os.path.sep + hierarchy_binary
+
+    tic = time.time()
+
+    # run convert
+    args = [lpath + convert_binary, '-i', filename + '.bin', '-o',
+            filename + '_graph.bin', '-w', filename + '_graph.weights']
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out, err = p.communicate()
+    # check for errors from convert
+    if bool(out) or bool(err):
+        print("stdout from convert: {}".format(out.decode()))
+        print("stderr from convert: {}".format(err.decode()))
+
+    Q = 0
+    run = 0
+    updated = 0
+    coocc_count = None
+    while run < max_runs:
+
+        if (run%10==0):
+            print("Louvain completed {} runs in {} seconds".format(run,
+                  time.time() - tic))
+
+        # run community
+        fout = open(filename + '.tree', 'w')
+        args = [lpath + community_binary, filename + '_graph.bin', '-l', '-1', '-v', '-w', filename + '_graph.weights']
+        p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
+        # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
+        _, msg = p.communicate()
+        fout.close()
+        # get modularity from err msg
+        q = get_modularity(msg)
+        run += 1
+
+        updated = run
+
+        # run hierarchy
+        args = [lpath + hierarchy_binary, filename + '.tree']
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        # find number of levels in hierarchy and number of nodes in graph
+        nlevels = int(re.findall('\d+', out.decode())[0])
+        nnodes = int(re.findall('level 0: \d+', out.decode())[0].split(" ")[-1])
+
+        # get community assignments at each level in hierarchy
+        hierarchy = np.empty((nnodes, nlevels), dtype='int')
+        for level in range(nlevels):
+                args = [lpath + hierarchy_binary, filename + '.tree', '-l', str(level)]
+                p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out, err = p.communicate()
+                h = np.empty((nnodes,))
+                for i, line in enumerate(out.decode().splitlines()):
+                    h[i] = int(line.split(' ')[-1])
+                hierarchy[:, level] = h
+
+        communities = hierarchy[:, nlevels-1]
+        if (coocc_count) is None:
+            coocc_count = np.zeros((len(communities), len(communities)))
+        coocc_count += (communities[:,None] == communities[None,:])
+
+    print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
+    return coocc_count.astype("float32")/float(max_runs)

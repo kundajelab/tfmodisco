@@ -187,11 +187,22 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                     aff_to_dist_mat=self.aff_to_dist_mat)
              for perplexity in self.tsne_perplexities]
 
-        self.clusterer = cluster.core.LouvainCluster(
-            level_to_return=-1,
-            affmat_transformer=None,
-            min_cluster_size=self.louvain_min_cluster_size,
-            verbose=self.verbose)
+        #self.clusterer = cluster.core.LouvainCluster(
+        #    level_to_return=-1,
+        #    affmat_transformer=affmat.transformers.SymmetrizeByAddition(
+        #                            probability_normalize=True),
+        #    min_cluster_size=self.louvain_min_cluster_size,
+        #    verbose=self.verbose)
+
+
+        self.clusterer = cluster.core.CollectComponents(
+            dealbreaker_threshold=0.5,
+            join_threshold=0.75,
+            transformer=affmat.transformers.SymmetrizeByAddition(
+                                    probability_normalize=True).chain(
+                                affmat.transformers.LouvainMembershipAverage(
+                                    max_runs=100)),
+            min_cluster_size=self.louvain_min_cluster_size)
 
         self.expand_trim_expand1 =\
             aggregator.ExpandSeqletsToFillPattern(

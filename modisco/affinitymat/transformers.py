@@ -8,6 +8,7 @@ import scipy
 from scipy.sparse import csr_matrix
 from sklearn.neighbors import NearestNeighbors
 import sys
+from ..cluster import phenograph as ph
 
 
 class AbstractThresholder(object):
@@ -337,3 +338,14 @@ class TsneJointProbs(AbstractTsneProbs):
         return np.array(P.todense())
 
 
+class LouvainMembershipAverage(AbstractAffMatTransformer):
+
+    def __init__(self, max_runs, verbose=True):
+        self.max_runs = max_runs
+        self.verbose = verbose
+    
+    def __call__(self, affinity_mat):
+
+        return ph.cluster.runlouvain_average_runs_given_graph(
+                graph=affinity_mat,
+                max_runs=self.max_runs)

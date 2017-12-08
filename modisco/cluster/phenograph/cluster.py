@@ -4,7 +4,8 @@ from __future__ import absolute_import
 import numpy as np
 from scipy import sparse as sp
 from .core import (gaussian_kernel, parallel_jaccard_kernel, jaccard_kernel,
-                   find_neighbors, neighbor_graph, graph2binary, runlouvain)
+                   find_neighbors, neighbor_graph, graph2binary, runlouvain,
+                   runlouvain_average_runs)
 import time
 import re
 import os
@@ -117,14 +118,15 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
 
 
 def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
-                           min_cluster_size, tic=None):
+                           min_cluster_size, contin_runs=20, tic=None):
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
     # write to file with unique id
     uid = uuid.uuid1().hex
     graph2binary(uid, graph)
     communities, Q, hierarchy =\
-     runlouvain(uid, tol=q_tol, time_limit=louvain_time_limit)
+     runlouvain(uid, tol=q_tol, contin_runs=contin_runs, 
+                time_limit=louvain_time_limit)
     if (tic is not None):
         print("PhenoGraph complete in {} seconds".format(time.time() - tic))
     communities = sort_by_size(communities, min_cluster_size)
@@ -134,3 +136,21 @@ def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
             os.remove(f)
 
     return communities, graph, Q, hierarchy
+
+
+def runlouvain_average_runs_given_graph(graph, max_runs, tic=None):
+    if (not sp.issparse(graph)):
+        graph = sp.coo_matrix(graph) 
+    # write to file with unique id
+    uid = uuid.uuid1().hex
+    graph2binary(uid, graph)
+    coocc_count = runlouvain_average_runs(uid, max_runs=max_runs)
+    if (tic is not None):
+        print("PhenoGraph complete in {} seconds".format(time.time() - tic))
+    # clean up
+    for f in os.listdir(os.getcwd()):
+        if re.search(uid, f):
+            os.remove(f)
+
+    return coocc_count
+

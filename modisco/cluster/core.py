@@ -8,8 +8,9 @@ import sys
 
 class ClusterResults(object):
 
-    def __init__(self, cluster_indices):
+    def __init__(self, cluster_indices, **kwargs):
         self.cluster_indices = cluster_indices 
+        self.__dict__.update(kwargs)
 
     def remap(self, mapping):
         return ClusterResults(cluster_indices=
@@ -37,7 +38,7 @@ class PhenographCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, k=30, min_cluster_size=10, jaccard=True,
                        primary_metric='euclidean',
-                       n_jobs=-1, q_tol=1e-3, louvain_time_limit=2000,
+                       n_jobs=-1, q_tol=0.0, louvain_time_limit=2000,
                        nn_method='kdtree'):
         self.k = k
         self.min_cluster_size = min_cluster_size
@@ -66,12 +67,13 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, level_to_return=-1,
                        affmat_transformer=None, min_cluster_size=10,
-                       q_tol=1e-3, louvain_time_limit=2000,
+                       q_tol=0.0, contin_runs=100, louvain_time_limit=2000,
                        verbose=True):
         self.level_to_return = level_to_return
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
         self.q_tol = q_tol
+        self.contin_runs = contin_runs
         self.louvain_time_limit = louvain_time_limit
         self.verbose = verbose
     
@@ -91,6 +93,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
                 graph=affinity_mat,
                 min_cluster_size=self.min_cluster_size,
                 q_tol=self.q_tol,
+                contin_runs=self.contin_runs,
                 louvain_time_limit=self.louvain_time_limit)
 
         level_to_return = min(self.level_to_return, hierarchy.shape[-1])
@@ -107,3 +110,86 @@ class LouvainCluster(AbstractAffinityMatClusterer):
             sys.stdout.flush()
         return cluster_results
  
+
+class CollectComponents(AbstractAffinityMatClusterer):
+
+    def __init__(self, dealbreaker_threshold,
+                       join_threshold, min_cluster_size,
+                       max_neighbors_to_check=500, transformer=None):
+        self.dealbreaker_threshold = dealbreaker_threshold
+        self.join_threshold = join_threshold
+        self.min_cluster_size = min_cluster_size
+        self.transformer = transformer
+        self.max_neighbors_to_check = max_neighbors_to_check
+
+    def __call__(self, affinity_mat):
+
+        if (self.transformer is not None):
+            affinity_mat = self.transformer(affinity_mat)
+
+        #start off with each node in its own cluster
+        idx_to_others_in_cluster = dict([(i, set([i])) for i in
+                                         range(len(affinity_mat))])
+        cached_incompatibilities = (affinity_mat < self.dealbreaker_threshold) 
+
+        idx_traversal_order = [x[0] for x in 
+                               sorted(enumerate(np.sum(affinity_mat, axis=1)),
+                               key=lambda x: x[1])]
+
+        idx_neighbors = [np.nonzero(x >= self.join_threshold)[0]
+                         for x in affinity_mat]
+
+        count = 0
+        for i in idx_traversal_order:
+            for j in idx_neighbors[i]:
+                if (i not in idx_to_others_in_cluster[j] and
+                     cached_incompatibilities[i,j]==0):
+                    #try joining
+                    dealbreaker = False
+
+                    #for scalability, cap the number of neighbors we compare
+                    to_compare1 = idx_to_others_in_cluster[i]
+                    if (len(to_compare1) > self.max_neighbors_to_check):
+                        #take a subset
+                        to_compare1 = list(to_compare1)\
+                                       [:self.max_neighbors_to_check]
+
+                    to_compare2 = idx_to_others_in_cluster[i]
+                    if (len(to_compare2) > self.max_neighbors_to_check):
+                        #take a subset
+                        to_compare2 = list(to_compare2)\
+                                       [:self.max_neighbors_to_check]
+
+                    for n1 in to_compare1:
+                        if (dealbreaker):
+                            break
+                        for n2 in to_compare2:
+                            if (cached_incompatibilities[n1,n2]):
+                                dealbreaker = True
+                                break 
+                    if (dealbreaker == False):
+                        new_set = idx_to_others_in_cluster[i].union(
+                                   idx_to_others_in_cluster[j]) 
+                        for an_idx in new_set:
+                            idx_to_others_in_cluster[an_idx]=new_set  
+                    else:
+                        for n1 in idx_to_others_in_cluster[i]:
+                            for n2 in idx_to_others_in_cluster[j]:
+                                cached_incompatibilities[n1, n2] = 1
+                                cached_incompatibilities[n2, n1] = 1
+                                
+        distinct_sets = sorted(dict([(id(y), y) for y in 
+                                idx_to_others_in_cluster.values()
+                                if len(y) > self.min_cluster_size]).values(),
+                               key=lambda x: -len(x))
+        idx_to_cluster = {}
+        for set_idx, the_set in enumerate(distinct_sets):
+            for an_idx in the_set:
+                idx_to_cluster[an_idx] = set_idx
+        cluster_indices = np.array(
+                    [idx_to_cluster[i] if i in idx_to_cluster
+                     else -1 for i in range(len(affinity_mat))])
+
+        return ClusterResults(cluster_indices=cluster_indices,
+                    distinct_sets=distinct_sets)
+
