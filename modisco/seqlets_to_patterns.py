@@ -46,6 +46,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
+                       num_louvain_runs=100,
                        louvain_min_cluster_size=10,
 
                        frac_support_to_trim_to=0.2,
@@ -96,6 +97,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.tsne_perplexities = tsne_perplexities
 
         #clustering settings
+        self.num_louvain_runs = num_louvain_runs
         self.louvain_min_cluster_size = louvain_min_cluster_size
 
         #postprocessor1 settings
@@ -187,22 +189,24 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                     aff_to_dist_mat=self.aff_to_dist_mat)
              for perplexity in self.tsne_perplexities]
 
-        #self.clusterer = cluster.core.LouvainCluster(
-        #    level_to_return=-1,
-        #    affmat_transformer=affmat.transformers.SymmetrizeByAddition(
-        #                            probability_normalize=True),
-        #    min_cluster_size=self.louvain_min_cluster_size,
-        #    verbose=self.verbose)
+        self.clusterer = cluster.core.LouvainCluster(
+            level_to_return=-1,
+            affmat_transformer=affmat.transformers.SymmetrizeByAddition(
+                probability_normalize=True).chain(
+                affmat.transformers.LouvainMembershipAverage(
+                    max_runs=self.num_louvain_runs)),
+            min_cluster_size=self.louvain_min_cluster_size,
+            verbose=self.verbose)
 
 
-        self.clusterer = cluster.core.CollectComponents(
-            dealbreaker_threshold=0.5,
-            join_threshold=0.75,
-            transformer=affmat.transformers.SymmetrizeByAddition(
-                                    probability_normalize=True).chain(
-                                affmat.transformers.LouvainMembershipAverage(
-                                    max_runs=100)),
-            min_cluster_size=self.louvain_min_cluster_size)
+        #self.clusterer = cluster.core.CollectComponents(
+        #    dealbreaker_threshold=0.5,
+        #    join_threshold=0.75,
+        #    transformer=affmat.transformers.SymmetrizeByAddition(
+        #                            probability_normalize=True).chain(
+        #                        affmat.transformers.LouvainMembershipAverage(
+        #                            max_runs=100)),
+        #    min_cluster_size=self.louvain_min_cluster_size)
 
         self.expand_trim_expand1 =\
             aggregator.ExpandSeqletsToFillPattern(

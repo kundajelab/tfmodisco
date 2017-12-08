@@ -132,51 +132,52 @@ class CollectComponents(AbstractAffinityMatClusterer):
                                          range(len(affinity_mat))])
         cached_incompatibilities = (affinity_mat < self.dealbreaker_threshold) 
 
-        idx_traversal_order = [x[0] for x in 
-                               sorted(enumerate(np.sum(affinity_mat, axis=1)),
-                               key=lambda x: x[1])]
-
-        idx_neighbors = [np.nonzero(x >= self.join_threshold)[0]
-                         for x in affinity_mat]
+        sorted_pairs = sorted([(i,j,affinity_mat[i,j])
+                               for i in range(len(affinity_mat))
+                               for j in range(len(affinity_mat)) if
+                               ((i < j) and
+                                affinity_mat[i,j] >= self.join_threshold)],
+                              key=lambda x: -x[2])
 
         count = 0
-        for i in idx_traversal_order:
-            for j in idx_neighbors[i]:
-                if (i not in idx_to_others_in_cluster[j] and
-                     cached_incompatibilities[i,j]==0):
-                    #try joining
-                    dealbreaker = False
+        for (i,j,sim) in sorted_pairs:
+            if (i not in idx_to_others_in_cluster[j] and
+                 cached_incompatibilities[i,j]==0):
+                #try joining
 
-                    #for scalability, cap the number of neighbors we compare
-                    to_compare1 = idx_to_others_in_cluster[i]
-                    if (len(to_compare1) > self.max_neighbors_to_check):
-                        #take a subset
-                        to_compare1 = list(to_compare1)\
-                                       [:self.max_neighbors_to_check]
+                dealbreaker = False
+                #for scalability, cap the number of neighbors we compare
+                to_compare1 = idx_to_others_in_cluster[i]
+                if (len(to_compare1) > self.max_neighbors_to_check):
+                    #take a subset
+                    to_compare1 = list(to_compare1)\
+                                   [:self.max_neighbors_to_check]
 
-                    to_compare2 = idx_to_others_in_cluster[i]
-                    if (len(to_compare2) > self.max_neighbors_to_check):
-                        #take a subset
-                        to_compare2 = list(to_compare2)\
-                                       [:self.max_neighbors_to_check]
+                to_compare2 = idx_to_others_in_cluster[i]
+                if (len(to_compare2) > self.max_neighbors_to_check):
+                    #take a subset
+                    to_compare2 = list(to_compare2)\
+                                   [:self.max_neighbors_to_check]
 
-                    for n1 in to_compare1:
-                        if (dealbreaker):
-                            break
-                        for n2 in to_compare2:
-                            if (cached_incompatibilities[n1,n2]):
-                                dealbreaker = True
-                                break 
-                    if (dealbreaker == False):
-                        new_set = idx_to_others_in_cluster[i].union(
-                                   idx_to_others_in_cluster[j]) 
-                        for an_idx in new_set:
-                            idx_to_others_in_cluster[an_idx]=new_set  
-                    else:
-                        for n1 in idx_to_others_in_cluster[i]:
-                            for n2 in idx_to_others_in_cluster[j]:
-                                cached_incompatibilities[n1, n2] = 1
-                                cached_incompatibilities[n2, n1] = 1
+                for n1 in to_compare1:
+                    if (dealbreaker):
+                        break
+                    for n2 in to_compare2:
+                        if (cached_incompatibilities[n1,n2]):
+                            dealbreaker = True
+                            break 
+                if (dealbreaker == False):
+                    #if join, update all the neighbors
+                    new_set = idx_to_others_in_cluster[i].union(
+                               idx_to_others_in_cluster[j]) 
+                    for an_idx in new_set:
+                        idx_to_others_in_cluster[an_idx]=new_set 
+                else:
+                    #otherwise, update all the cached incompatibilities
+                    for n1 in idx_to_others_in_cluster[i]:
+                        for n2 in idx_to_others_in_cluster[j]:
+                            cached_incompatibilities[n1, n2] = 1
+                            cached_incompatibilities[n2, n1] = 1
                                 
         distinct_sets = sorted(dict([(id(y), y) for y in 
                                 idx_to_others_in_cluster.values()

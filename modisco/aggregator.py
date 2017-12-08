@@ -736,63 +736,67 @@ class DynamicDistanceSimilarPatternsCollapser(object):
 
             indices_to_merge = []
             merge_partners_so_far = defaultdict(set)
-            for i,pattern1 in enumerate(patterns):
-                for j,pattern2 in enumerate(patterns):
-                    if (i < j):
-                        dist_prob = min(patterns_dist_probs[i,j],
-                                        patterns_dist_probs[j,i])
-                        aligner_sim = patterns_to_patterns_aligner_sim[i,j]
-                        if (self.collapse_condition(dist_prob=dist_prob,
-                                                    aligner_sim=aligner_sim)):
-                            if (self.verbose):
-                                print("Collapsing "+str(i)
-                                      +" & "+str(j)
-                                      +" with prob "+str(dist_prob)+" and"
-                                      +" sim "+str(aligner_sim)) 
-                                sys.stdout.flush()
 
-                            collapse_passed = True
-                            #check compatibility for all indices that are
-                            #about to be merged
-                            merge_under_consideration = set(
-                                list(merge_partners_so_far[i])
-                                +list(merge_partners_so_far[j])+[i,j])
-                            for m1 in merge_under_consideration:
-                                for m2 in merge_under_consideration:
-                                    if (m1 < m2):
-                                        min_dist_prob_here =\
-                                            min(patterns_dist_probs[m1, m2],
-                                                patterns_dist_probs[m2, m1])
-                                        aligner_sim_here =\
-                                            patterns_to_patterns_aligner_sim[
-                                                m1, m2]
-                                        if (self.dealbreaker_condition(
-                                                dist_prob=min_dist_prob_here,
-                                                aligner_sim=aligner_sim_here)):
-                                            collapse_passed=False                     
-                                            if (self.verbose):
-                                                print("Aborting collapse as "
-                                                      +str(m1)
-                                                      +" & "+str(m2)
-                                                      +" have prob "
-                                                      +str(min_dist_prob_here)
-                                                      +" and"
-                                                      +" sim "
-                                                      +str(aligner_sim_here)) 
-                                                sys.stdout.flush()
-                                            break
+            #merge patterns with highest similarity first
+            sorted_pairs = sorted([(i,j,patterns_to_patterns_aligner_sim[i,j])
+                            for i in range(len(patterns))
+                            for j in range(len(patterns)) if (i < j)],
+                            key=lambda x: -x[2])
+            #iterate over pairs
+            for (i,j,aligner_sim) in sorted_pairs:
+                dist_prob = min(patterns_dist_probs[i,j],
+                                patterns_dist_probs[j,i])
+                if (self.collapse_condition(dist_prob=dist_prob,
+                                            aligner_sim=aligner_sim)):
+                    if (self.verbose):
+                        print("Collapsing "+str(i)
+                              +" & "+str(j)
+                              +" with prob "+str(dist_prob)+" and"
+                              +" sim "+str(aligner_sim)) 
+                        sys.stdout.flush()
 
-                            if (collapse_passed):
-                                indices_to_merge.append((i,j))
-                                for an_idx in merge_under_consideration:
-                                    merge_partners_so_far[an_idx]=\
-                                        merge_under_consideration 
-                        else:
-                            if (self.verbose):
-                                print("Not collapsed "+str(i)+" & "+str(j)
-                                      +" with prob "+str(dist_prob)+" and"
-                                      +" sim "+str(aligner_sim)) 
-                                sys.stdout.flush()
+                    collapse_passed = True
+                    #check compatibility for all indices that are
+                    #about to be merged
+                    merge_under_consideration = set(
+                        list(merge_partners_so_far[i])
+                        +list(merge_partners_so_far[j])+[i,j])
+                    for m1 in merge_under_consideration:
+                        for m2 in merge_under_consideration:
+                            if (m1 < m2):
+                                min_dist_prob_here =\
+                                    min(patterns_dist_probs[m1, m2],
+                                        patterns_dist_probs[m2, m1])
+                                aligner_sim_here =\
+                                    patterns_to_patterns_aligner_sim[
+                                        m1, m2]
+                                if (self.dealbreaker_condition(
+                                        dist_prob=min_dist_prob_here,
+                                        aligner_sim=aligner_sim_here)):
+                                    collapse_passed=False                     
+                                    if (self.verbose):
+                                        print("Aborting collapse as "
+                                              +str(m1)
+                                              +" & "+str(m2)
+                                              +" have prob "
+                                              +str(min_dist_prob_here)
+                                              +" and"
+                                              +" sim "
+                                              +str(aligner_sim_here)) 
+                                        sys.stdout.flush()
+                                    break
+
+                    if (collapse_passed):
+                        indices_to_merge.append((i,j))
+                        for an_idx in merge_under_consideration:
+                            merge_partners_so_far[an_idx]=\
+                                merge_under_consideration 
+                else:
+                    if (self.verbose):
+                        print("Not collapsed "+str(i)+" & "+str(j)
+                              +" with prob "+str(dist_prob)+" and"
+                              +" sim "+str(aligner_sim)) 
+                        sys.stdout.flush()
 
             for i,j in indices_to_merge:
                 pattern1 = patterns[i]
