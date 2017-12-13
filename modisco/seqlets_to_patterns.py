@@ -4,7 +4,7 @@ from . import cluster
 from . import aggregator
 from . import core
 from . import util
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, Counter
 from sklearn.neighbors import NearestNeighbors
 import numpy as np
 import itertools
@@ -46,7 +46,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
-                       num_louvain_runs=100,
+                       num_louvain_runs=[200,50],
                        louvain_min_cluster_size=10,
 
                        frac_support_to_trim_to=0.2,
@@ -189,24 +189,32 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                     aff_to_dist_mat=self.aff_to_dist_mat)
              for perplexity in self.tsne_perplexities]
 
-        self.clusterer = cluster.core.LouvainCluster(
-            level_to_return=-1,
-            affmat_transformer=affmat.transformers.SymmetrizeByAddition(
-                probability_normalize=True).chain(
-                affmat.transformers.LouvainMembershipAverage(
-                    max_runs=self.num_louvain_runs)),
-            min_cluster_size=self.louvain_min_cluster_size,
+
+        affmat_transformer = affmat.transformers.SymmetrizeByAddition(
+                                probability_normalize=True)
+        for n in self.num_louvain_runs:
+            affmat_transformer = affmat_transformer.chain(
+                affmat.transformers.LouvainMembershipAverage(n))
+
+        #self.clusterer = cluster.core.LouvainCluster(
+        #    level_to_return=-1,
+        #    affmat_transformer=affmat_transformer,
+        #    min_cluster_size=self.louvain_min_cluster_size,
+        #    verbose=self.verbose)
+
+        self.clusterer1 = cluster.core.CollectComponents(
+            dealbreaker_threshold=0.5,
+            join_threshold=0.9,
+            transformer=affmat_transformer,
+            min_cluster_size=0,
             verbose=self.verbose)
 
-
-        #self.clusterer = cluster.core.CollectComponents(
-        #    dealbreaker_threshold=0.5,
-        #    join_threshold=0.75,
-        #    transformer=affmat.transformers.SymmetrizeByAddition(
-        #                            probability_normalize=True).chain(
-        #                        affmat.transformers.LouvainMembershipAverage(
-        #                            max_runs=100)),
-        #    min_cluster_size=self.louvain_min_cluster_size)
+        self.clusterer2 = cluster.core.CollectComponents(
+            dealbreaker_threshold=1.0,
+            join_threshold=1.0,
+            transformer=affmat_transformer,
+            min_cluster_size=self.louvain_min_cluster_size,
+            verbose=self.verbose)
 
         self.expand_trim_expand1 =\
             aggregator.ExpandSeqletsToFillPattern(
@@ -345,11 +353,15 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("(Round 1) Computing clustering")
             sys.stdout.flush()
-        cluster_results1 = self.clusterer(multiscale_tsne_conditional_probs1)
+        cluster_results1 = self.clusterer1(multiscale_tsne_conditional_probs1)
 
         num_clusters1 = max(cluster_results1.cluster_indices+1)
+        cluster_idx_counts1 = Counter(cluster_results1.cluster_indices)
         if (self.verbose):
             print("Got "+str(num_clusters1)+" clusters after round 1")
+            print("Counts greater than",self.louvain_min_cluster_size,":")
+            print(dict([x for x in cluster_idx_counts1.items()
+                        if x[1] >= self.louvain_min_cluster_size]))
             sys.stdout.flush()
 
         if (self.verbose):
@@ -437,11 +449,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("(Round 2) Computing clustering")
             sys.stdout.flush()
-        cluster_results2 = self.clusterer(multiscale_tsne_conditional_probs2)
+        cluster_results2 = self.clusterer2(multiscale_tsne_conditional_probs2)
+        cluster_idx_counts2 = Counter(cluster_results2.cluster_indices)
 
         num_clusters2 = max(cluster_results2.cluster_indices+1)
         if (self.verbose):
             print("Got "+str(num_clusters2)+" clusters after round 2")
+            print("Counts:",cluster_idx_counts2)
             sys.stdout.flush()
 
         if (self.verbose):
@@ -480,9 +494,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("Merging clusters")
             sys.stdout.flush()
+        motif_seqlets2 = dict([
+            (y.exidx_start_end_string, y)
+             for x in cluster_to_motif2.values()
+             for y in x.seqlets]).values()
         merged_patterns = self.dynamic_distance_similar_patterns_collapser( 
             patterns=cluster_to_motif2.values(),
-            seqlets=seqlets2) 
+            seqlets=motif_seqlets2) 
         merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")

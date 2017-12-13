@@ -511,6 +511,9 @@ class SeqletsAndAlignments(object):
         self.arr.append(seqlet_and_alnmt)
         self.unique_seqlets[seqlet.exidx_start_end_string] = seqlet
 
+    def get_seqlets(self):
+        return self.unique_seqlets.values()
+
 
 class AggregatedSeqlet(Pattern):
 
@@ -619,6 +622,10 @@ class AggregatedSeqlet(Pattern):
     @property
     def seqlets_and_alnmts(self):
         return self._seqlets_and_alnmts
+
+    @property
+    def seqlets(self):
+        return self._seqlets_and_alnmts.get_seqlets()
 
     @seqlets_and_alnmts.setter
     def seqlets_and_alnmts(self, val):

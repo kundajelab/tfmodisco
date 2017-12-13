@@ -115,17 +115,25 @@ class CollectComponents(AbstractAffinityMatClusterer):
 
     def __init__(self, dealbreaker_threshold,
                        join_threshold, min_cluster_size,
-                       max_neighbors_to_check=500, transformer=None):
+                       max_neighbors_to_check=500, transformer=None,
+                       verbose=True):
         self.dealbreaker_threshold = dealbreaker_threshold
         self.join_threshold = join_threshold
         self.min_cluster_size = min_cluster_size
         self.transformer = transformer
         self.max_neighbors_to_check = max_neighbors_to_check
+        self.verbose = verbose
 
     def __call__(self, affinity_mat):
 
         if (self.transformer is not None):
+            if (self.verbose):
+                print("Applying transformation")
+                sys.stdout.flush()
             affinity_mat = self.transformer(affinity_mat)
+            if (self.verbose):
+                print("Transformation done")
+                sys.stdout.flush()
 
         #start off with each node in its own cluster
         idx_to_others_in_cluster = dict([(i, set([i])) for i in
