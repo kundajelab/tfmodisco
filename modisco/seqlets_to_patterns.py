@@ -46,7 +46,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
-                       num_louvain_runs=[200,50],
+                       num_louvain_runs=[(200,-1)],
                        louvain_min_cluster_size=10,
 
                        frac_support_to_trim_to=0.2,
@@ -192,29 +192,37 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
         affmat_transformer = affmat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
-        for n in self.num_louvain_runs:
+        for n_runs, level_to_return in self.num_louvain_runs:
             affmat_transformer = affmat_transformer.chain(
-                affmat.transformers.LouvainMembershipAverage(n))
+                affmat.transformers.LouvainMembershipAverage(
+                    n_runs=n_runs,
+                    level_to_return=level_to_return))
 
-        #self.clusterer = cluster.core.LouvainCluster(
-        #    level_to_return=-1,
-        #    affmat_transformer=affmat_transformer,
-        #    min_cluster_size=self.louvain_min_cluster_size,
-        #    verbose=self.verbose)
-
-        self.clusterer1 = cluster.core.CollectComponents(
-            dealbreaker_threshold=0.5,
-            join_threshold=0.9,
-            transformer=affmat_transformer,
+        self.clusterer1 = cluster.core.LouvainCluster(
+            level_to_return=-1,
+            affmat_transformer=affmat_transformer,
             min_cluster_size=0,
             verbose=self.verbose)
 
-        self.clusterer2 = cluster.core.CollectComponents(
-            dealbreaker_threshold=1.0,
-            join_threshold=1.0,
-            transformer=affmat_transformer,
+        self.clusterer2 = cluster.core.LouvainCluster(
+            level_to_return=-1,
+            affmat_transformer=affmat_transformer,
             min_cluster_size=self.louvain_min_cluster_size,
             verbose=self.verbose)
+
+        #self.clusterer1 = cluster.core.CollectComponents(
+        #    dealbreaker_threshold=0.5,
+        #    join_threshold=0.9,
+        #    transformer=affmat_transformer,
+        #    min_cluster_size=0,
+        #    verbose=self.verbose)
+
+        #self.clusterer2 = cluster.core.CollectComponents(
+        #    dealbreaker_threshold=1.0,
+        #    join_threshold=1.0,
+        #    transformer=affmat_transformer,
+        #    min_cluster_size=self.louvain_min_cluster_size,
+        #    verbose=self.verbose)
 
         self.expand_trim_expand1 =\
             aggregator.ExpandSeqletsToFillPattern(

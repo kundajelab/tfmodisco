@@ -68,7 +68,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
     def __init__(self, level_to_return=-1,
                        affmat_transformer=None, min_cluster_size=10,
                        q_tol=0.0, contin_runs=100, louvain_time_limit=2000,
-                       verbose=True):
+                       verbose=True, seed=1234):
         self.level_to_return = level_to_return
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
@@ -76,6 +76,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         self.contin_runs = contin_runs
         self.louvain_time_limit = louvain_time_limit
         self.verbose = verbose
+        self.seed=seed
     
     def __call__(self, orig_affinity_mat):
 
@@ -94,7 +95,8 @@ class LouvainCluster(AbstractAffinityMatClusterer):
                 min_cluster_size=self.min_cluster_size,
                 q_tol=self.q_tol,
                 contin_runs=self.contin_runs,
-                louvain_time_limit=self.louvain_time_limit)
+                louvain_time_limit=self.louvain_time_limit,
+                seed=self.seed)
 
         level_to_return = min(self.level_to_return, hierarchy.shape[-1])
         communities = hierarchy[:, level_to_return]  

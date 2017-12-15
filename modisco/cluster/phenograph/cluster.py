@@ -118,7 +118,8 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
 
 
 def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
-                           min_cluster_size, contin_runs=20, tic=None):
+                           min_cluster_size, contin_runs=20, tic=None,
+                           seed=1234):
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
     # write to file with unique id
@@ -126,7 +127,7 @@ def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
     graph2binary(uid, graph)
     communities, Q, hierarchy =\
      runlouvain(uid, tol=q_tol, contin_runs=contin_runs, 
-                time_limit=louvain_time_limit)
+                time_limit=louvain_time_limit, seed=seed)
     if (tic is not None):
         print("PhenoGraph complete in {} seconds".format(time.time() - tic))
     communities = sort_by_size(communities, min_cluster_size)
@@ -138,13 +139,16 @@ def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
     return communities, graph, Q, hierarchy
 
 
-def runlouvain_average_runs_given_graph(graph, max_runs, tic=None):
+def runlouvain_average_runs_given_graph(
+        graph, n_runs, level_to_return, tic=None, seed=1234):
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
     # write to file with unique id
     uid = uuid.uuid1().hex
     graph2binary(uid, graph)
-    coocc_count = runlouvain_average_runs(uid, max_runs=max_runs)
+    coocc_count = runlouvain_average_runs(
+                    uid, level_to_return=level_to_return, n_runs=n_runs,
+                    seed=seed)
     if (tic is not None):
         print("PhenoGraph complete in {} seconds".format(time.time() - tic))
     # clean up

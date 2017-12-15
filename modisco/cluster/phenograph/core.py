@@ -181,7 +181,7 @@ def graph2binary(filename, graph):
 
 
 def runlouvain(filename, tol=1e-3, contin_runs=20,
-                         max_runs=500, time_limit=2000):
+                         max_runs=500, time_limit=2000, seed=1234):
     """
     From binary graph file filename.bin, optimize modularity by running multiple random re-starts of
     the Louvain C++ code.
@@ -193,6 +193,9 @@ def runlouvain(filename, tol=1e-3, contin_runs=20,
     :return communities: community assignments
     :return Q: modularity score corresponding to `communities`
     """
+
+    rng = np.random.RandomState(seed)
+
     def get_modularity(msg):
         # pattern = re.compile('modularity increased from -*0.\d+ to 0.\d+')
         pattern = re.compile('modularity increased from -*\d.\d+e*-*\d+ to \d.\d+')
@@ -212,12 +215,8 @@ def runlouvain(filename, tol=1e-3, contin_runs=20,
     except AssertionError:
         print("Could not find Louvain code, tried: {}".format(lpath))
 
-    # Determine if we're using Windows, Mac, or Linux
-    if sys.platform == "win32" or sys.platform == "cygwin":
-        convert_binary = "convert.exe"
-        community_binary = "community.exe"
-        hierarchy_binary = "hierarchy.exe"
-    elif sys.platform.startswith("linux"):
+    # Determine if we're using Mac or Linux
+    if sys.platform.startswith("linux"):
         convert_binary = "linux-convert"
         community_binary = "linux-community"
         hierarchy_binary = "linux-hierarchy"
@@ -252,7 +251,9 @@ def runlouvain(filename, tol=1e-3, contin_runs=20,
 
         # run community
         fout = open(filename + '.tree', 'w')
-        args = [lpath + community_binary, filename + '_graph.bin', '-l', '-1', '-v', '-w', filename + '_graph.weights']
+        args = [lpath + community_binary, filename + '_graph.bin',
+                str(rng.random_integers(0,9999)), '-l', '-1', '-v',
+                '-w', filename + '_graph.weights']
         p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
         # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
         _, msg = p.communicate()
@@ -295,7 +296,9 @@ def runlouvain(filename, tol=1e-3, contin_runs=20,
     return communities, Q, hierarchy
 
 
-def runlouvain_average_runs(filename, max_runs=100):
+def runlouvain_average_runs(filename, n_runs, level_to_return, seed=1234):
+
+    rng = np.random.RandomState(seed)
 
     def get_modularity(msg):
         # pattern = re.compile('modularity increased from -*0.\d+ to 0.\d+')
@@ -316,12 +319,8 @@ def runlouvain_average_runs(filename, max_runs=100):
     except AssertionError:
         print("Could not find Louvain code, tried: {}".format(lpath))
 
-    # Determine if we're using Windows, Mac, or Linux
-    if sys.platform == "win32" or sys.platform == "cygwin":
-        convert_binary = "convert.exe"
-        community_binary = "community.exe"
-        hierarchy_binary = "hierarchy.exe"
-    elif sys.platform.startswith("linux"):
+    # Determine if we're using Mac or Linux
+    if sys.platform.startswith("linux"):
         convert_binary = "linux-convert"
         community_binary = "linux-community"
         hierarchy_binary = "linux-hierarchy"
@@ -353,7 +352,7 @@ def runlouvain_average_runs(filename, max_runs=100):
     run = 0
     updated = 0
     coocc_count = None
-    while run < max_runs:
+    while run < n_runs:
 
         if (run%10==0):
             print("Louvain completed {} runs in {} seconds".format(run,
@@ -361,7 +360,9 @@ def runlouvain_average_runs(filename, max_runs=100):
 
         # run community
         fout = open(filename + '.tree', 'w')
-        args = [lpath + community_binary, filename + '_graph.bin', '-l', '-1', '-v', '-w', filename + '_graph.weights']
+        args = [lpath + community_binary, filename + '_graph.bin',
+                str(rng.random_integers(0,9999)), '-l', '-1', '-v',
+                '-w', filename + '_graph.weights']
         p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
         # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
         _, msg = p.communicate()
@@ -391,10 +392,10 @@ def runlouvain_average_runs(filename, max_runs=100):
                     h[i] = int(line.split(' ')[-1])
                 hierarchy[:, level] = h
 
-        communities = hierarchy[:, nlevels-1]
+        communities = hierarchy[:, level_to_return]
         if (coocc_count) is None:
             coocc_count = np.zeros((len(communities), len(communities)))
         coocc_count += (communities[:,None] == communities[None,:])
 
     print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
-    return coocc_count.astype("float32")/float(max_runs)
+    return coocc_count.astype("float32")/float(n_runs)

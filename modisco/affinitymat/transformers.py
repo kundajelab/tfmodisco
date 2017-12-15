@@ -340,12 +340,15 @@ class TsneJointProbs(AbstractTsneProbs):
 
 class LouvainMembershipAverage(AbstractAffMatTransformer):
 
-    def __init__(self, max_runs, verbose=True):
-        self.max_runs = max_runs
+    def __init__(self, n_runs, level_to_return, verbose=True, seed=1234):
+        self.n_runs = n_runs
+        self.level_to_return = level_to_return
         self.verbose = verbose
+        self.seed=seed
     
     def __call__(self, affinity_mat):
 
         return ph.cluster.runlouvain_average_runs_given_graph(
                 graph=affinity_mat,
-                max_runs=self.max_runs)
+                n_runs=self.n_runs, level_to_return=self.level_to_return,
+                seed=self.seed)
