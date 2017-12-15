@@ -46,7 +46,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
-                       num_louvain_runs=[(200,-1)],
+                       louvain_num_runs_and_levels=[(200,-1)],
+                       final_louvain_level_to_return=1,
                        louvain_min_cluster_size=10,
 
                        frac_support_to_trim_to=0.2,
@@ -61,7 +62,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                         (0.0000001,0.9)],
 
                        min_similarity_for_seqlet_assignment=0.2,
-                       final_min_cluster_size=50,
+                       final_min_cluster_size=30,
 
                        final_flank_to_add=10,
                        verbose=True,
@@ -97,7 +98,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.tsne_perplexities = tsne_perplexities
 
         #clustering settings
-        self.num_louvain_runs = num_louvain_runs
+        self.louvain_num_runs_and_levels = louvain_num_runs_and_levels
+        self.final_louvain_level_to_return = final_louvain_level_to_return
         self.louvain_min_cluster_size = louvain_min_cluster_size
 
         #postprocessor1 settings
@@ -192,20 +194,20 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
 
         affmat_transformer = affmat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
-        for n_runs, level_to_return in self.num_louvain_runs:
+        for n_runs, level_to_return in self.louvain_num_runs_and_levels:
             affmat_transformer = affmat_transformer.chain(
                 affmat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
                     level_to_return=level_to_return))
 
         self.clusterer1 = cluster.core.LouvainCluster(
-            level_to_return=-1,
+            level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer,
             min_cluster_size=0,
             verbose=self.verbose)
 
         self.clusterer2 = cluster.core.LouvainCluster(
-            level_to_return=-1,
+            level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer,
             min_cluster_size=self.louvain_min_cluster_size,
             verbose=self.verbose)
