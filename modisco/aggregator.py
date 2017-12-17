@@ -4,7 +4,7 @@ from . import affinitymat
 from . import core
 from . import util
 from . import backend as B
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import itertools
 import sys
 
@@ -522,7 +522,35 @@ class AbstractSeqletsAggregator(object):
         raise NotImplementedError()
 
 
-class HierarchicalSeqletAggregator(object):
+class GreedySeqletAggregator(AbstractSeqletsAggregator):
+
+    def __init__(self, pattern_aligner,
+                       seqlet_sort_metric,
+                       postprocessor=None):
+        self.pattern_aligner = pattern_aligner
+        self.seqlet_sort_metric = seqlet_sort_metric
+        self.postprocessor = postprocessor
+
+    def __call__(self, seqlets):
+        sorted_seqlets = sorted(seqlets,
+                                key=self.seqlet_sort_metric) 
+        aggregated_seqlet = core.AggregatedSeqlet.from_seqlet(
+                                                   sorted_seqlets[0])
+        if (len(sorted_seqlets) > 1):
+            for seqlet in sorted_seqlets[1:]:
+                aggregated_seqlet.merge_aggregated_seqlet(
+                    agg_seqlet=core.AggregatedSeqlet.from_seqlet(seqlet),
+                    aligner=self.pattern_aligner) 
+        to_return = [aggregated_seqlet]
+        if (self.postprocessor is not None):
+            to_return = self.postprocessor(to_return)
+
+        #sort by number of seqlets in each 
+        return sorted(to_return,
+                      key=lambda x: -x.num_seqlets)
+
+
+class HierarchicalSeqletAggregator(AbstractSeqletsAggregator):
 
     def __init__(self, pattern_aligner, affinity_mat_from_seqlets,
                        postprocessor=None):
@@ -580,15 +608,229 @@ class HierarchicalSeqletAggregator(object):
                       key=lambda x: -x.num_seqlets)
 
 
-class SimilarPatternsCollapser(object):
+class AbstractMergeAlignedPatternsCondition(object):
 
-    def __init__(self, pattern_aligner,
-                       merging_threshold,
+    def __call__(self, parent_pattern, child_pattern, alnmt):
+        raise NotImplementedError()
+
+    def chain(self, other_merge_aligned_patterns_condition):
+        return AdhocMergeAlignedPatternsCondition( 
+                lambda parent_pattern, child_pattern, alnmt:
+                 (self(parent_pattern, child_pattern, alnmt) and
+                  other_merge_aligned_patterns_condition(
+                    parent_pattern=parent_pattern,
+                    child_pattern=child_pattern, alnmt=alnmt)))
+
+
+class AdhocMergeAlignedPatternsCondition(
+        AbstractMergeAlignedPatternsCondition):
+
+    def __init__(self, func):
+        self.func = func
+
+    def __call__(self, parent_pattern, child_pattern, alnmt):
+        return self.func(parent_pattern=parent_pattern,
+                         child_pattern=child_pattern, alnmt=alnmt)
+
+
+class SimilarityThreshold(AbstractMergeAlignedPatternsCondition):
+
+    def __init__(self, pattern_comparison_settings,
+                       comparison_metric, threshold, verbose):
+        self.pattern_comparison_settings = pattern_comparison_settings
+        self.comparison_metric = comparison_metric
+        self.threshold = threshold
+        self.verbose = verbose
+    
+    def __call__(self, parent_pattern, child_pattern, alnmt):
+        parent_data_fwd, patern_data_rev =\
+            core.get_2d_data_from_pattern(
+                pattern=parent_pattern,
+                track_names=self.pattern_comparison_settings.track_names,
+                track_transformer=
+                    self.pattern_comparison_settings.track_transformer)
+        child_data_fwd, child_data_rev =\
+            core.get_2d_data_from_pattern(
+                pattern=child_pattern,
+                track_names=self.pattern_comparison_settings.track_names,
+                track_transformer=
+                    self.pattern_comparison_settings.track_transformer)
+        metric = self.comparison_metric(
+                    in1=parent_data_fwd[max(alnmt,0):
+                                    min(len(parent_data_fwd),
+                                        (len(child_data_fwd)+alnmt))],
+                    in2=child_data_fwd[max(-alnmt,0):
+                                      min(len(child_data_fwd),
+                                          len(parent_data_fwd)-alnmt)])
+        if (self.verbose):
+            print("Metric",metric)
+        return (metric >= self.threshold)
+
+
+class DynamicDistanceSimilarPatternsCollapser(object):
+
+    def __init__(self, pattern_to_pattern_sim_computer,
+                       aff_to_dist_mat, pattern_aligner,
+                       collapse_condition, dealbreaker_condition,
                        postprocessor,
                        verbose=True):
+        self.pattern_to_pattern_sim_computer = pattern_to_pattern_sim_computer 
+        self.aff_to_dist_mat = aff_to_dist_mat
         self.pattern_aligner = pattern_aligner
-        self.merging_threshold = merging_threshold
-        self.verbose=verbose
+        self.collapse_condition = collapse_condition
+        self.dealbreaker_condition = dealbreaker_condition
+        self.postprocessor = postprocessor
+        self.verbose = verbose
+
+    def __call__(self, patterns, seqlets):
+
+        patterns = [x.copy() for x in patterns]
+        merge_occurred_last_iteration = True
+        merging_iteration = 0
+
+        #loop until no more patterns get merged
+        while (merge_occurred_last_iteration):
+            #sort by size
+            patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
+            #remove redundant patterns
+            patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
+            
+            merging_iteration += 1
+            if (self.verbose):
+                print("On merging iteration",merging_iteration) 
+                sys.stdout.flush()
+            merge_occurred_last_iteration = False
+
+            if (self.verbose):
+                print("Computing pattern to seqlet distances")
+                sys.stdout.flush()
+            patterns_to_seqlets_dist =\
+                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
+                                        seqlets=seqlets,
+                                        filter_seqlets=patterns))
+            desired_perplexities = [len(pattern.seqlets_and_alnmts)
+                                    for pattern in patterns]
+            pattern_betas = np.array([
+                util.binary_search_perplexity(
+                    desired_perplexity=desired_perplexity,
+                    distances=distances)[0]
+                for desired_perplexity,distances
+                in zip(desired_perplexities, patterns_to_seqlets_dist.T)])
+
+            if (self.verbose):
+                print("Computing pattern to pattern distances")
+                sys.stdout.flush()
+            patterns_to_patterns_dist =\
+                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
+                                     seqlets=patterns,
+                                     filter_seqlets=patterns))
+            patterns_dist_probs = np.exp(-pattern_betas[:,None]*
+                                         patterns_to_patterns_dist)
+            patterns_to_patterns_aligner_sim =\
+                np.zeros((len(patterns), len(patterns))) 
+            for i,pattern1 in enumerate(patterns):
+                for j,pattern2 in enumerate(patterns):
+                    (alnmt, rc, aligner_sim) =\
+                        self.pattern_aligner(pattern1, pattern2)
+                    patterns_to_patterns_aligner_sim[i,j] = aligner_sim
+
+            indices_to_merge = []
+            merge_partners_so_far = defaultdict(set)
+
+            #merge patterns with highest similarity first
+            sorted_pairs = sorted([(i,j,patterns_to_patterns_aligner_sim[i,j])
+                            for i in range(len(patterns))
+                            for j in range(len(patterns)) if (i < j)],
+                            key=lambda x: -x[2])
+            #iterate over pairs
+            for (i,j,aligner_sim) in sorted_pairs:
+                dist_prob = min(patterns_dist_probs[i,j],
+                                patterns_dist_probs[j,i])
+                if (self.collapse_condition(dist_prob=dist_prob,
+                                            aligner_sim=aligner_sim)):
+                    if (self.verbose):
+                        print("Collapsing "+str(i)
+                              +" & "+str(j)
+                              +" with prob "+str(dist_prob)+" and"
+                              +" sim "+str(aligner_sim)) 
+                        sys.stdout.flush()
+
+                    collapse_passed = True
+                    #check compatibility for all indices that are
+                    #about to be merged
+                    merge_under_consideration = set(
+                        list(merge_partners_so_far[i])
+                        +list(merge_partners_so_far[j])+[i,j])
+                    for m1 in merge_under_consideration:
+                        for m2 in merge_under_consideration:
+                            if (m1 < m2):
+                                min_dist_prob_here =\
+                                    min(patterns_dist_probs[m1, m2],
+                                        patterns_dist_probs[m2, m1])
+                                aligner_sim_here =\
+                                    patterns_to_patterns_aligner_sim[
+                                        m1, m2]
+                                if (self.dealbreaker_condition(
+                                        dist_prob=min_dist_prob_here,
+                                        aligner_sim=aligner_sim_here)):
+                                    collapse_passed=False                     
+                                    if (self.verbose):
+                                        print("Aborting collapse as "
+                                              +str(m1)
+                                              +" & "+str(m2)
+                                              +" have prob "
+                                              +str(min_dist_prob_here)
+                                              +" and"
+                                              +" sim "
+                                              +str(aligner_sim_here)) 
+                                        sys.stdout.flush()
+                                    break
+
+                    if (collapse_passed):
+                        indices_to_merge.append((i,j))
+                        for an_idx in merge_under_consideration:
+                            merge_partners_so_far[an_idx]=\
+                                merge_under_consideration 
+                else:
+                    if (self.verbose):
+                        print("Not collapsed "+str(i)+" & "+str(j)
+                              +" with prob "+str(dist_prob)+" and"
+                              +" sim "+str(aligner_sim)) 
+                        sys.stdout.flush()
+
+            for i,j in indices_to_merge:
+                pattern1 = patterns[i]
+                pattern2 = patterns[j]
+                if (pattern1 != pattern2): #if not the same object
+                    if (pattern1.num_seqlets < pattern2.num_seqlets):
+                        parent_pattern, child_pattern = pattern2, pattern1
+                    else:
+                        parent_pattern, child_pattern = pattern1, pattern2
+                    parent_pattern.merge_aggregated_seqlet(
+                        agg_seqlet=child_pattern,
+                        aligner=self.pattern_aligner) 
+                    new_parent_pattern =\
+                        self.postprocessor([parent_pattern])
+                    assert len(new_parent_pattern)==1
+                    new_parent_pattern = new_parent_pattern[0]
+                    for k in range(len(patterns)):
+                        if (patterns[k]==parent_pattern or
+                            patterns[k]==child_pattern):
+                            patterns[k]=new_parent_pattern
+            merge_occurred_last_iteration = (len(indices_to_merge) > 0)
+
+        return patterns
+    
+
+class BasicSimilarPatternsCollapser(object):
+
+    def __init__(self, pattern_aligner,
+                       merge_aligned_patterns_condition,
+                       postprocessor,
+                       verbose=True):
+        self.merge_aligned_patterns_condition = merge_aligned_patterns_condition
+        self.pattern_aligner = pattern_aligner
+        self.verbose = verbose
         self.postprocessor = postprocessor
 
     def __call__(self, original_patterns):
@@ -605,11 +847,15 @@ class SimilarPatternsCollapser(object):
                         parent_pattern, child_pattern = pattern1, pattern2
                     (best_crosscorr_argmax, is_revcomp, best_crosscorr) =\
                         self.pattern_aligner(parent_pattern=parent_pattern,
-                                             child_pattern=child_pattern)  
-                    if (best_crosscorr > self.merging_threshold): 
+                                             child_pattern=child_pattern) 
+                    merge = self.merge_aligned_patterns_condition(
+                                parent_pattern=parent_pattern,
+                                child_pattern=(child_pattern.revcomp()
+                                  if is_revcomp else child_pattern),
+                                alnmt=best_crosscorr_argmax)
+                    if (merge): 
                         if (self.verbose):
-                            print("Collapsing "+str(i)+" & "+str(j+i)
-                                 +" with similarity "+str(best_crosscorr)) 
+                            print("Collapsed "+str(i)+" & "+str(j+i)) 
                             sys.stdout.flush()
                         parent_pattern.merge_aggregated_seqlet(
                             agg_seqlet=child_pattern,
@@ -624,8 +870,7 @@ class SimilarPatternsCollapser(object):
                                 original_patterns[k]=new_parent_pattern
                     else:
                         if (self.verbose):
-                            print("Not collapsing "+str(i)+" & "+str(j+i)
-                                 +" with similarity "+str(best_crosscorr)) 
+                            print("Not collapsing "+str(i)+" & "+str(j+i)) 
                             sys.stdout.flush()
 
         return sorted(self.postprocessor(list(set(original_patterns))),

@@ -2,12 +2,28 @@ from __future__ import division, print_function, absolute_import
 import numpy as np
 import time
 from modisco import util
+import sklearn
+import sklearn.manifold
+import scipy
+from scipy.sparse import csr_matrix
+from sklearn.neighbors import NearestNeighbors
+import sys
+from ..cluster import phenograph as ph
 
 
 class AbstractThresholder(object):
 
     def __call__(self, values):
         raise NotImplementedError()
+
+
+class FixedValueThreshold(AbstractThresholder):
+
+    def __init__(self, threshold):
+        self.threshold = threshold
+
+    def __call__(self, values=None):
+        return self.threshold
 
 
 class NonzeroMeanThreshold(AbstractThresholder):
@@ -88,14 +104,43 @@ class PerNodeThresholdBinarizer(AbstractAffMatTransformer):
     def __call__(self, affinity_mat):
         if (self.verbose):
             print("Starting thresholding preprocessing")
+            sys.stdout.flush()
+            
         start = time.time()
         #ignore affinity to self
         thresholds = np.array([self.thresholder(x) for x in affinity_mat])
-        thresholds = np.sum(affinity_mat,axis=1)/150
         to_return = (affinity_mat >= thresholds[:,None]).astype("int") 
         if (self.verbose):
             print("Thresholding preproc took "+str(time.time()-start)+" s")
+            sys.stdout.flush()
         return to_return
+
+
+class NearestNeighborsBinarizer(AbstractAffMatTransformer):
+
+    def __init__(self, n_neighbors, nearest_neighbors_object):
+        self.nearest_neighbors_object = nearest_neighbors_object 
+        self.n_neighbors = n_neighbors
+
+    def __call__(self, affinity_mat):
+        seqlet_neighbors = (self.nearest_neighbors_object.fit(-affinity_mat).
+                                 kneighbors(X=-affinity_mat,
+                                            n_neighbors=self.n_neighbors,
+                                            return_distance=False)) 
+        to_return = np.zeros_like(affinity_mat)
+        for i, neighbors in enumerate(seqlet_neighbors):
+            to_return[i,neighbors] = 1 
+        return to_return 
+
+
+class ProductOfTransformations(AbstractAffMatTransformer):
+
+    def __init__(self, transformer1, transformer2):
+        self.transformer1 = transformer1
+        self.transformer2 = transformer2
+
+    def __call__(self, affinity_mat):
+        return self.transformer1(affinity_mat)*self.transformer2(affinity_mat)
 
 
 class JaccardSimCPU(AbstractAffMatTransformer):
@@ -107,6 +152,7 @@ class JaccardSimCPU(AbstractAffMatTransformer):
 
         if (self.verbose):
             print("Starting Jaccard preprocessing via CPU matmul")
+            sys.stdout.flush()
         start = time.time()
  
         #perform a sanity check to ensure max is 1 and min is 0
@@ -124,14 +170,33 @@ class JaccardSimCPU(AbstractAffMatTransformer):
 
         if (self.verbose):
             print("Jaccard preproc took "+str(time.time()-start)+" s")
+            sys.stdout.flush()
 
         return jaccard_sim
 
 
-class SymmetrizeByMultiplying(AbstractAffMatTransformer):
+class SymmetrizeByElemwiseGeomMean(AbstractAffMatTransformer):
+
+    def __call__(self, affinity_mat):
+        return np.sqrt(affinity_mat*affinity_mat.T)
+
+
+class SymmetrizeByElemwiseMultiplying(AbstractAffMatTransformer):
 
     def __call__(self, affinity_mat):
         return affinity_mat*affinity_mat.T
+
+
+class SymmetrizeByAddition(AbstractAffMatTransformer):
+
+    def __init__(self, probability_normalize=False):
+        self.probability_normalize = probability_normalize
+
+    def __call__(self, affinity_mat):
+        to_return = affinity_mat + affinity_mat.T
+        if (self.probability_normalize):
+            to_return = to_return/np.sum(to_return).astype("float")
+        return to_return
 
 
 class MinVal(AbstractAffMatTransformer):
@@ -143,21 +208,56 @@ class MinVal(AbstractAffMatTransformer):
         return affinity_mat*(affinity_mat >= self.min_val)
 
 
-class TsneJointProbs(AbstractAffMatTransformer):
+class DistToSymm(AbstractAffMatTransformer):
 
-    def __init__(self, perplexity, verbose=1):
+    def __call__(self, affinity_mat):
+        return np.max(affinity_mat)-affinity_mat
+
+
+class ApplyTransitions(AbstractAffMatTransformer):
+
+    def __init__(self, num_steps):
+        self.num_steps = num_steps
+
+    def __call__(self, affinity_mat):
+        return np.dot(np.linalg.matrix_power(affinity_mat.T,
+                                             self.num_steps),affinity_mat)
+
+
+class AbstractAffToDistMat(object):
+
+    def __call__(self, affinity_mat):
+        raise NotImplementedError()
+
+
+class MaxToMin(AbstractAffToDistMat):
+
+    def __call__(self, affinity_mat):
+        return (np.max(affinity_mat) - affinity_mat)
+
+
+class AffToDistViaInvLogistic(AbstractAffToDistMat):
+
+    def __call__(self, affinity_mat):
+        to_return = -np.log((1.0/
+                           (1.0 - 0.5*np.maximum(affinity_mat, 0.0000001)))-1)
+        to_return = np.maximum(to_return, 0.0) #eliminate tiny neg floats
+        return to_return
+
+
+class AbstractTsneProbs(AbstractAffMatTransformer):
+
+    def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
         self.perplexity = perplexity 
         self.verbose=verbose
+        self.aff_to_dist_mat = aff_to_dist_mat
     
     def __call__(self, affinity_mat):
-        import sklearn
-        import sklearn.manifold
-        import scipy
-        from scipy.sparse import csr_matrix
-        from sklearn.neighbors import NearestNeighbors
 
         #make the affinity mat a distance mat
-        dist_mat = (np.max(affinity_mat) - affinity_mat)
+        dist_mat = self.aff_to_dist_mat(affinity_mat)
+        #make sure self-distances are 0
+        dist_mat = dist_mat*(1-np.eye(len(dist_mat)))
         dist_mat = sklearn.utils.check_array(dist_mat, ensure_min_samples=2,
                                              dtype=[np.float32, np.float64])
         n_samples = dist_mat.shape[0]
@@ -195,9 +295,60 @@ class TsneJointProbs(AbstractAffMatTransformer):
         # Free the memory
         del knn
 
+        P = self.tsne_probs_calc(distances_nn, neighbors_nn)
+        return P
+
+    def tsne_probs_calc(self, distances_nn, neighbors_nn):
+        raise NotImplementedError()
+
+
+class TsneConditionalProbs(AbstractTsneProbs):
+
+    def tsne_probs_calc(self, distances_nn, neighbors_nn):
+        t0 = time.time()
+        # Compute conditional probabilities such that they approximately match
+        # the desired perplexity
+        n_samples, k = neighbors_nn.shape
+        distances = distances_nn.astype(np.float32, copy=False)
+        neighbors = neighbors_nn.astype(np.int64, copy=False)
+        conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+            distances, neighbors, self.perplexity, self.verbose)
+        #for some reason, likely a sklearn bug, a few of
+        #the rows don't sum to 1...for now, fix by making them sum to 1
+        #print(np.sum(np.sum(conditional_P, axis=1) > 1.1))
+        #print(np.sum(np.sum(conditional_P, axis=1) < 0.9))
+        assert np.all(np.isfinite(conditional_P)), \
+            "All probabilities should be finite"
+
+        # Symmetrize the joint probability distribution using sparse operations
+        P = csr_matrix((conditional_P.ravel(), neighbors.ravel(),
+                        range(0, n_samples * k + 1, k)),
+                       shape=(n_samples, n_samples))
+        to_return = np.array(P.todense())
+        to_return = to_return/np.sum(to_return,axis=1)[:,None]
+        return to_return
+
+
+class TsneJointProbs(AbstractTsneProbs):
+
+    def tsne_probs_calc(self, distances_nn, neighbors_nn):
         P = sklearn.manifold.t_sne._joint_probabilities_nn(
                                     distances_nn, neighbors_nn,
                                     self.perplexity, self.verbose)
         return np.array(P.todense())
 
 
+class LouvainMembershipAverage(AbstractAffMatTransformer):
+
+    def __init__(self, n_runs, level_to_return, verbose=True, seed=1234):
+        self.n_runs = n_runs
+        self.level_to_return = level_to_return
+        self.verbose = verbose
+        self.seed=seed
+    
+    def __call__(self, affinity_mat):
+
+        return ph.cluster.runlouvain_average_runs_given_graph(
+                graph=affinity_mat,
+                n_runs=self.n_runs, level_to_return=self.level_to_return,
+                seed=self.seed)

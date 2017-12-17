@@ -11,6 +11,13 @@ import traceback
 from sklearn.neighbors.kde import KernelDensity
 
 
+def factorial(val):
+    to_return = 1
+    for i in range(1,val+1):
+        to_return *= i
+    return to_return
+
+
 def first_curvature_max(values, bins, bandwidth):
     kde = KernelDensity(kernel="gaussian", bandwidth=bandwidth).fit(
                 [[x,0] for x in values])
@@ -864,3 +871,78 @@ def project_onto_nonzero_filters(filters, track,
                             progress_update=progress_update))
 
     return final_scores
+
+
+def get_betas_from_tsne_conditional_probs(conditional_probs,
+                                          original_affmat, aff_to_dist_mat):
+    dist_mat = aff_to_dist_mat(original_affmat)
+    betas = []
+    for i,(prob_row, distances, affinities) in\
+        enumerate(zip(conditional_probs,
+                      dist_mat, original_affmat)):
+        nonzero_probs = prob_row[prob_row > 0.0]
+        nonzero_distances = distances[prob_row > 0.0]
+        prob1, dist1 = max(zip(nonzero_probs, nonzero_distances),
+                           key=lambda x: x[1])
+        prob2, dist2 = min(zip(nonzero_probs, nonzero_distances),
+                           key=lambda x: x[1])
+        beta = np.log(prob2/prob1)/(dist1-dist2)
+        betas.append(beta)
+        #sanity check
+        recomputed_probs = np.exp(-beta*(distances))*(affinities > 0.0)
+        recomputed_probs[i] = 0
+        recomputed_probs = recomputed_probs/np.sum(recomputed_probs)
+        test_recomputed_probs = recomputed_probs[prob_row > 0.0]/\
+                                 np.sum(recomputed_probs[prob_row > 0.0])
+        maxdiff = np.max(np.abs(prob_row[prob_row > 0.0]
+                                - test_recomputed_probs))
+        assert maxdiff < 10**-5,\
+               (np.sum(prob_row), maxdiff, test_recomputed_probs)
+    return np.array(betas)
+
+
+def convert_to_percentiles(vals):
+    to_return = np.zeros(len(vals))
+    sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
+    for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
+        to_return[orig_idx] = sort_idx/float(len(vals))
+    return to_return
+
+
+def binary_search_perplexity(desired_perplexity, distances):
+    
+    EPSILON_DBL = 1e-8
+    PERPLEXITY_TOLERANCE = 1e-5
+    n_steps = 100
+    
+    desired_entropy = np.log(desired_perplexity)
+    
+    beta_min = -np.inf
+    beta_max = np.inf
+    beta = 1.0
+    
+    for l in range(n_steps):
+        ps = np.exp(-distances * beta)
+        sum_ps = np.sum(ps)
+        ps = ps/(max(sum_ps,EPSILON_DBL))
+        sum_disti_Pi = np.sum(distances*ps)
+        entropy = np.log(sum_ps) + beta * sum_disti_Pi
+        
+        entropy_diff = entropy - desired_entropy
+        #print(beta, np.exp(entropy), entropy_diff)
+        if np.abs(entropy_diff) <= PERPLEXITY_TOLERANCE:
+            break
+        
+        if entropy_diff > 0.0:
+            beta_min = beta
+            if beta_max == np.inf:
+                beta *= 2.0
+            else:
+                beta = (beta + beta_max) / 2.0
+        else:
+            beta_max = beta
+            if beta_min == -np.inf:
+                beta /= 2.0
+            else:
+                beta = (beta + beta_min) / 2.0
+    return beta, ps

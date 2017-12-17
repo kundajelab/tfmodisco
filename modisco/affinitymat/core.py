@@ -1,10 +1,14 @@
 from __future__ import division, print_function, absolute_import
 from .. import backend as B
 import numpy as np
+from .. import util as modiscoutil
 from .. import core as modiscocore
 from . import transformers
 import sys
 import time
+import itertools
+import scipy.stats
+from joblib import Parallel, delayed
 
 
 class AbstractTrackTransformer(object):
@@ -81,6 +85,204 @@ class AbstractAffinityMatrixFromSeqlets(object):
         raise NotImplementedError()
 
 
+class AbstractSeqletsToOnedEmbedder(object):
+
+    def __call__(seqlets):
+        raise NotImplementedError()
+
+
+class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
+    
+    def __init__(self, alphabet_size,
+                       kmer_len,
+                       num_gaps,
+                       num_mismatches,
+                       toscore_track_names_and_signs,
+                       normalizer,
+                       num_filters_to_retain=None,
+                       onehot_track_name=None,
+                       batch_size=50,
+                       progress_update=None):
+        self.alphabet_size = alphabet_size
+        self.kmer_len = kmer_len
+        self.num_gaps = num_gaps
+        self.num_mismatches = num_mismatches
+        self.num_filters_to_retain = num_filters_to_retain
+        self.filters, self.biases = self.prepare_gapped_kmer_filters()
+        self.onehot_track_name = onehot_track_name
+        self.toscore_track_names_and_signs = toscore_track_names_and_signs
+        assert len(toscore_track_names_and_signs) >= 0,\
+            "toscore_track_names_and_signs length is 0"
+        self.normalizer = normalizer
+        self.batch_size = batch_size
+        self.progress_update = progress_update
+        self.require_onehot_match = (True if self.onehot_track_name
+                                     is not None else False)
+        self.gapped_kmer_embedding_func =\
+            B.get_gapped_kmer_embedding_func(
+                    filters=self.filters,
+                    biases=self.biases,
+                    require_onehot_match=self.require_onehot_match)
+
+    def prepare_gapped_kmer_filters(self):
+        nonzero_position_combos = list(itertools.combinations(
+                            iterable=range(self.kmer_len),
+                            r=(self.kmer_len-self.num_gaps)))
+        letter_permutations = list(itertools.product(
+                                *[list(range(self.alphabet_size)) for x in
+                                  range(self.kmer_len-self.num_gaps)]))
+        filters = []
+        biases = []
+        unique_nonzero_positions = set()
+        for nonzero_positions in nonzero_position_combos:
+            string_representation = [" " for x in range(self.kmer_len)]
+            for nonzero_position in nonzero_positions:
+                string_representation[nonzero_position] = "X"
+            nonzero_positions_string =\
+                ("".join(string_representation)).lstrip().rstrip()
+            if (nonzero_positions_string not in unique_nonzero_positions):
+                unique_nonzero_positions.add(nonzero_positions_string) 
+                for letter_permutation in letter_permutations:
+                    assert len(nonzero_positions)==len(letter_permutation)
+                    the_filter = np.zeros((self.kmer_len, self.alphabet_size)) 
+                    for nonzero_position, letter\
+                        in zip(nonzero_positions, letter_permutation):
+                        the_filter[nonzero_position, letter] = 1 
+                    filters.append(the_filter)
+                    biases.append(-(len(nonzero_positions)-1
+                                    -self.num_mismatches))
+        return np.array(filters), np.array(biases)
+
+    def __call__(self, seqlets):
+        print("Computing embeddings")
+        sys.stdout.flush()
+        if (self.require_onehot_match):
+            onehot_track_fwd, onehot_track_rev =\
+                modiscocore.get_2d_data_from_patterns(
+                    patterns=seqlets,
+                    track_names=[self.onehot_track_name],
+                    track_transformer=None)
+
+        data_to_embed_fwd = np.zeros((len(seqlets),
+                                     len(seqlets[0]), self.alphabet_size))\
+                                     .astype("float32")
+        data_to_embed_rev = np.zeros((len(seqlets),
+                                     len(seqlets[0]), self.alphabet_size))\
+                                     .astype("float32")
+        for (track_name, sign) in self.toscore_track_names_and_signs:
+            fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=[track_name], track_transformer=None)  
+            data_to_embed_fwd += fwd_data*sign
+            data_to_embed_rev += rev_data*sign
+        data_to_embed_fwd = np.array([self.normalizer(x) for x in
+                                      data_to_embed_fwd])
+        data_to_embed_rev = np.array([self.normalizer(x) for x in
+                                      data_to_embed_rev])
+        common_args = {'batch_size': self.batch_size,
+                       'progress_update': self.progress_update}
+        if (self.require_onehot_match):
+            embedding_fwd = self.gapped_kmer_embedding_func(
+                                  onehot=onehot_track_fwd,
+                                  to_embed=data_to_embed_fwd,
+                                  **common_args)
+            embedding_rev = self.gapped_kmer_embedding_func(
+                                  onehot=onehot_track_rev,
+                                  to_embed=data_to_embed_rev,
+                                  **common_args)
+        else:
+            embedding_fwd = self.gapped_kmer_embedding_func(
+                                  to_embed=data_to_embed_fwd,
+                                  **common_args)
+            embedding_rev = self.gapped_kmer_embedding_func(
+                                  to_embed=data_to_embed_rev,
+                                  **common_args)
+        if (self.num_filters_to_retain is not None):
+            all_embeddings = np.concatenate(
+                             [embedding_fwd, embedding_rev], axis=0)
+            embeddings_denominators =\
+                np.sum(np.abs(all_embeddings) > 0, axis=0).astype("float")
+            embeddings_denominators += 10.0
+            embeddings_mean_impact =\
+                (np.sum(np.abs(all_embeddings), axis=0)/
+                 embeddings_denominators)
+            top_embedding_indices = [
+                x[0] for x in sorted(enumerate(embeddings_mean_impact),
+                key=lambda x: -x[1])][:self.num_filters_to_retain]
+            embedding_fwd = embedding_fwd[:,top_embedding_indices]
+            embedding_rev = embedding_rev[:,top_embedding_indices]
+        return embedding_fwd, embedding_rev
+
+
+class AbstractAffinityMatrixFromOneD(object):
+
+    def __call__(self, vecs1, vecs2):
+        raise NotImplementedError()
+
+
+class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
+
+    def __init__(self, verbose):
+        self.verbose = verbose
+
+    def __call__(self, vecs1, vecs2):
+
+        start_time = time.time()
+        normed_vecs1 = vecs1/np.linalg.norm(vecs1, axis=1)[:,None] 
+        normed_vecs2 = vecs2/np.linalg.norm(vecs2, axis=1)[:,None] 
+        to_return = np.dot(normed_vecs1,normed_vecs2.T)
+        end_time = time.time()
+    
+        if (self.verbose):
+            print("Cosine similarity mat computed in",
+                  round(end_time-start_time,2),"s")
+            sys.stdout.flush()
+
+        return to_return
+
+
+class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, seqlets_to_1d_embedder,
+                       affinity_mat_from_1d, verbose):
+        self.seqlets_to_1d_embedder = seqlets_to_1d_embedder
+        self.affinity_mat_from_1d = affinity_mat_from_1d 
+        self.verbose = verbose
+
+    def __call__(self, seqlets):
+
+        cp1_time = time.time()
+        if (self.verbose):
+            print("Beginning embedding computation")
+            sys.stdout.flush()
+
+        embedding_fwd, embedding_rev = self.seqlets_to_1d_embedder(seqlets)
+
+        cp2_time = time.time()
+        if (self.verbose):
+            print("Finished embedding computation in",
+                  round(cp2_time-cp1_time,2),"s")
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("Starting affinity matrix computations")
+            sys.stdout.flush()
+
+        affinity_mat_fwd = self.affinity_mat_from_1d(
+                            vecs1=embedding_fwd, vecs2=embedding_fwd)  
+        affinity_mat_rev = self.affinity_mat_from_1d(
+                            vecs1=embedding_fwd, vecs2=embedding_rev)
+
+        cp3_time = time.time()
+
+        if (self.verbose):
+            print("Finished affinity matrix computations in",
+                  round(cp3_time-cp2_time,2),"s")
+            sys.stdout.flush()
+
+        return np.maximum(affinity_mat_fwd, affinity_mat_rev) 
+
+
 class MaxCrossMetricAffinityMatrixFromSeqlets(
         AbstractAffinityMatrixFromSeqlets):
 
@@ -107,6 +309,169 @@ class MaxCrossMetricAffinityMatrixFromSeqlets(
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
         cross_metrics = np.maximum(cross_metrics_fwd, cross_metrics_rev)
         return cross_metrics
+
+
+class MaxCrossCorrAffinityMatrixFromSeqlets(
+        MaxCrossMetricAffinityMatrixFromSeqlets):
+
+    def __init__(self, pattern_comparison_settings, **kwargs):
+        super(MaxCrossCorrAffinityMatrixFromSeqlets, self).__init__(
+            pattern_comparison_settings=pattern_comparison_settings,
+            cross_metric=CrossCorrMetricGPU(**kwargs))
+
+
+class TwoTierAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, fast_affmat_from_seqlets,
+                       nearest_neighbors_object,
+                       n_neighbors,
+                       affmat_from_seqlets_with_nn_pairs):
+        self.fast_affmat_from_seqlets = fast_affmat_from_seqlets
+        self.nearest_neighbors_object = nearest_neighbors_object
+        self.n_neighbors = n_neighbors
+        self.affmat_from_seqlets_with_nn_pairs =\
+            affmat_from_seqlets_with_nn_pairs
+
+    def __call__(self, seqlets):
+        fast_affmat = self.fast_affmat_from_seqlets(seqlets) 
+        neighbors = self.nearest_neighbors_object.fit(-fast_affmat)\
+                        .kneighbors(X=-fast_affmat,
+                                    n_neighbors=self.n_neighbors,
+                                    return_distance=False) 
+        final_affmat = self.affmat_from_seqlets_with_nn_pairs(
+                         seqlet_neighbors=neighbors,
+                         seqlets=seqlets)
+
+
+class AffmatFromSeqletsWithNNpairs(object):
+
+    def __init__(self, pattern_comparison_settings,
+                       sim_metric_on_nn_pairs):
+        self.pattern_comparison_settings = pattern_comparison_settings 
+        self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
+
+    def __call__(self, seqlets, filter_seqlets=None, seqlet_neighbors=None):
+        (all_fwd_data, all_rev_data) =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=self.pattern_comparison_settings.track_names,
+                track_transformer=
+                    self.pattern_comparison_settings.track_transformer)
+
+        if (filter_seqlets is None):
+            filter_seqlets = seqlets
+        (filters_all_fwd_data, filters_all_rev_data) =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=filter_seqlets,
+                track_names=self.pattern_comparison_settings.track_names,
+                track_transformer=
+                    self.pattern_comparison_settings.track_transformer)
+
+        if (seqlet_neighbors is None):
+            seqlet_neighbors = np.array([list(range(len(filter_seqlets)))
+                                         for x in seqlets]) 
+
+        #apply the cross metric
+        affmat_fwd = self.sim_metric_on_nn_pairs(
+                     neighbors_of_things_to_scan=seqlet_neighbors,
+                     filters=filters_all_fwd_data,
+                     things_to_scan=all_fwd_data,
+                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+        affmat_rev = self.sim_metric_on_nn_pairs(
+                     neighbors_of_things_to_scan=seqlet_neighbors,
+                     filters=filters_all_rev_data,
+                     things_to_scan=all_fwd_data,
+                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+        affmat = np.maximum(affmat_fwd, affmat_rev)
+        return affmat
+        
+
+
+class AbstractSimMetricOnNNpairs(object):
+
+    def __call__(self, neighbors_of_things_to_scan,
+                       filters, things_to_scan, min_overlap):
+        raise NotImplementedError()
+
+
+class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
+
+    def __init__(self, n_cores, cross_metric_single_region, verbose=True):
+        self.n_cores = n_cores
+        self.cross_metric_single_region = cross_metric_single_region
+        self.verbose = verbose
+
+    def __call__(self, neighbors_of_things_to_scan,
+                       filters, things_to_scan, min_overlap):
+        assert neighbors_of_things_to_scan.shape[0]==things_to_scan.shape[0]
+        assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
+        assert len(things_to_scan.shape)==3
+        assert len(filters.shape)==3
+       
+        filter_length = filters.shape[1]
+        padding_amount = int((filter_length)*(1-min_overlap))
+        things_to_scan = np.pad(array=things_to_scan,
+                              pad_width=((0,0),
+                                         (padding_amount, padding_amount),
+                                         (0,0)),
+                              mode="constant")
+ 
+        to_return = np.zeros((things_to_scan.shape[0], filters.shape[0]))
+        job_arguments = []
+
+        for neighbors_of_thing_to_scan, thing_to_scan\
+            in zip(neighbors_of_things_to_scan, things_to_scan): 
+            args = (filters[neighbors_of_thing_to_scan], thing_to_scan) 
+            job_arguments.append(args)
+        
+         
+        start = time.time()
+        if (self.verbose):
+            print("Launching nearest neighbors affmat calculation job")
+            sys.stdout.flush()
+
+        results = (Parallel(n_jobs=self.n_cores)                          
+                   (delayed(self.cross_metric_single_region)
+                           (job_args[0], job_args[1])
+                    for job_args in job_arguments))
+
+        for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
+             in enumerate(zip(results, neighbors_of_things_to_scan)):
+            to_return[thing_to_scan_idx,
+                      thing_to_scan_neighbor_indices] = result
+
+        end = time.time()
+        if (self.verbose):
+            print("Job completed in:",round(end-start,2),"s")
+            sys.stdout.flush()
+
+        return to_return
+
+
+class AbstractCrossMetricSingleRegion(object):
+
+    def __call__(self, filters, thing_to_scan):
+        raise NotImplementedError()
+
+
+class CrossContinJaccardSingleRegion(AbstractCrossMetricSingleRegion):
+
+    def __call__(self, filters, thing_to_scan):
+        assert len(thing_to_scan.shape)==2
+        assert len(filters.shape)==3
+        len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
+        full_crossmetric = np.zeros((filters.shape[0],len_output))
+    
+        for idx in range(len_output):
+            snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
+            full_crossmetric[:,idx] =\
+                (np.sum(np.minimum(np.abs(snapshot[None,:,:]),
+                                   np.abs(filters[:,:,:]))*
+                        (np.sign(snapshot[None,:,:])
+                         *np.sign(filters[:,:,:])),axis=(1,2))/
+                 np.sum(np.maximum(np.abs(snapshot[None,:,:]),
+                                   np.abs(filters[:,:,:])),axis=(1,2)))
+        return np.max(full_crossmetric, axis=-1) 
 
 
 class AbstractCrossMetric(object):
@@ -151,21 +516,21 @@ class CrossContinJaccardOneCoreCPU(AbstractCrossMetric):
                               mode="constant") for x in things_to_scan])
 
         len_output = 1+padded_input.shape[1]-filters.shape[1]
-        full_crossabsdiffs = np.zeros((filters.shape[0], padded_input.shape[0],
+        full_crossmetric = np.zeros((filters.shape[0], padded_input.shape[0],
                                        len_output))
         for idx in range(len_output):
             if (self.verbose):
                 print("On offset",idx,"of",len_output-1)
                 sys.stdout.flush()
             snapshot = padded_input[:,idx:idx+filters.shape[1],:]
-            full_crossabsdiffs[:,:,idx] =\
+            full_crossmetric[:,:,idx] =\
                 (np.sum(np.minimum(np.abs(snapshot[None,:,:,:]),
                                   np.abs(filters[:,None,:,:]))*
                        (np.sign(snapshot[None,:,:,:])
                         *np.sign(filters[:,None,:,:])),axis=(2,3))/
                  np.sum(np.maximum(np.abs(snapshot[None,:,:,:]),
                                    np.abs(filters[:,None,:,:])),axis=(2,3)))
-        return np.max(full_crossabsdiffs, axis=-1)
+        return np.max(full_crossmetric, axis=-1)
 
 
 def jaccard_sim_func(filters, snapshot):
@@ -330,13 +695,7 @@ class CrossContinJaccardGPU(AbstractCrossMetric):
         return np.max(full_crosscontinjaccard, axis=-1) 
 
 
-class AbstractGetFilteredRowsMask(object):
-
-    def __call__(self, affinity_mat):
-        raise NotImplementedError()
-
-
-class FilterSparseRows(AbstractGetFilteredRowsMask):
+class FilterSparseRows(object):
 
     def __init__(self, affmat_transformer,
                        min_rows_before_applying_filtering,
@@ -364,3 +723,33 @@ class FilterSparseRows(AbstractGetFilteredRowsMask):
                   +str(len(passing_nodes)))
             sys.stdout.flush() 
         return passing_nodes
+
+
+class FilterMaskFromCorrelation(object):
+
+    def __init__(self, correlation_threshold, verbose=True):
+        self.correlation_threshold = correlation_threshold
+        self.verbose = verbose
+
+    def __call__(self, main_affmat, other_affmat):
+        correlations = []
+        neg_log_pvals = []
+        for main_affmat_row, other_affmat_row\
+            in zip(main_affmat, other_affmat):
+            #compare correlation on the nonzero rows
+            to_compare_mask = np.abs(main_affmat_row) > 0
+            corr = scipy.stats.spearmanr(
+                    main_affmat_row[to_compare_mask],
+                    other_affmat_row[to_compare_mask])
+            correlations.append(corr.correlation)
+            neg_log_pvals.append(-np.log(corr.pvalue)) 
+        correlations = np.array(correlations)
+        neg_log_pvals = np.array(neg_log_pvals)
+        mask_to_return = (correlations > self.correlation_threshold)
+        if (self.verbose):
+            print("Filtered down to "+str(np.sum(mask_to_return))
+                  +" of "+str(len(mask_to_return)))
+            sys.stdout.flush()
+        return mask_to_return
+
+
