@@ -5,6 +5,7 @@ from collections import defaultdict
 import numpy as np
 import scipy
 import itertools
+from . import util
 
 
 class Snippet(object):
@@ -22,6 +23,11 @@ class Snippet(object):
         new_rev = self.rev[len(self)-end_idx:len(self)-start_idx]
         return Snippet(fwd=new_fwd, rev=new_rev,
                        has_pos_axis=self.has_pos_axis)
+
+    def save_hdf5(self, grp):
+        grp.create_dataset("fwd", data=self.fwd)  
+        grp.create_dataset("rev", data=self.rev)
+        grp.attr["has_pos_axis"] = self.has_pos_axis
 
     def __len__(self):
         return len(self.fwd)
@@ -512,7 +518,13 @@ class SeqletsAndAlignments(object):
         self.unique_seqlets[seqlet.exidx_start_end_string] = seqlet
 
     def get_seqlets(self):
-        return self.unique_seqlets.values()
+        return [x.seqlet for x in self.arr]
+
+    def save_hdf5(self, grp):
+        util.save_seqlet_coords(seqlets=self.seqlets,
+                                dset_name="seqlets", grp=grp) 
+        grp.create_dataset("alnmts",
+                           data=np.array([x.alnmt for x in self.arr]))
 
 
 class AggregatedSeqlet(Pattern):
@@ -527,6 +539,13 @@ class AggregatedSeqlet(Pattern):
                 alnmt=x.alnmt-start_idx) for x in seqlets_and_alnmts_arr] 
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
+
+    def save_hdf5(self, grp):
+        for track_name,snippet in self.track_name_to_snippet.items():
+            snippet.save_hdf5(grp.create_group(track_name))
+        self._seqlets_and_alnmts.save_hdf5(
+             grp.create_group("seqlets_and_alnmts"))
+        
 
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=

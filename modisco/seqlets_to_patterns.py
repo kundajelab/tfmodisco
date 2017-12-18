@@ -10,13 +10,31 @@ import numpy as np
 import itertools
 import time
 import sys
+import h5py
+import json
 
 
 class SeqletsToPatternsResults(object):
 
-    def __init__(self, patterns, **kwargs):
+    def __init__(self,
+                 patterns, seqlets, affmat, cluster_results,
+                 total_time_taken,
+                 jsonable_config, **kwargs):
         self.patterns = patterns
+        self.seqlets = seqlets
+        self.affmat = affmat
+        self.cluster_results = cluster_results
+        self.total_time_taken = total_time_taken
+        self.jsonable_config = jsonable_config
         self.__dict__.update(**kwargs)
+
+    def save_hdf5(self, grp):
+        util.save_patterns(grp.create_group("patterns"))
+        grp.create_dataset("affmat", data=self.affmat) 
+        grp.create_dataset("cluster_results", data=self.cluster_results)   
+        grp.attrs['total_time_taken'] = self.total_time_taken
+        grp.attrs['jsonable_config'] =\
+            json.dumps(self.jsonable_config, indent=4, separators=(',', ': '))
 
 
 class AbstractSeqletsToPatterns(object):
@@ -108,9 +126,13 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.initial_flank_to_add = initial_flank_to_add 
 
         #similarity settings for merging
+        self.prob_and_pertrack_sim_merge_thresholds =\
+            prob_and_pertrack_sim_merge_thresholds
         self.prob_and_sim_merge_thresholds =\
             [(x[0], x[1]*2*len(contrib_scores_track_names))
              for x in prob_and_pertrack_sim_merge_thresholds]
+        self.prob_and_pertrack_sim_dealbreaker_thresholds =\
+            prob_and_pertrack_sim_dealbreaker_thresholds
         self.prob_and_sim_dealbreaker_thresholds =\
             [(x[0], x[1]*2*len(contrib_scores_track_names))
              for x in prob_and_pertrack_sim_dealbreaker_thresholds]
@@ -128,6 +150,46 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.batch_size = batch_size
 
         self.build() 
+
+    def get_jsonable_config(self):
+        to_return =  OrderedDict([
+                ('track_set', self.track_set),
+                ('onehot_track_name', self.onehot_track_name),
+                ('contrib_scores_track_names',
+                 self.contrib_scores_track_names),
+                ('hypothetical_contribs_track_names',
+                 self.hypothetical_contribs_track_names),
+                ('track_signs', self.track_signs),
+                ('n_cores', self.n_cores),
+                ('min_overlap_while_sliding', self.min_overlap_while_sliding),
+                ('alphabet_size', self.alphabet_size),
+                ('kmer_len', self.kmer_len),
+                ('num_gaps', self.num_gaps),
+                ('num_mismatches', self.num_mismatches),
+                ('nn_n_jobs', self.nn_n_jobs),
+                ('nearest_neighbors_to_compute',
+                 self.nearest_neighbors_to_compute),
+                ('affmat_correlation_threshold',
+                 self.affmat_correlation_threshold),
+                ('tsne_perplexities', self.tsne_perplexities),
+                ('louvain_num_runs_and_levels',
+                 self.louvain_num_runs_and_levels),
+                ('final_louvain_level_to_return',
+                 self.final_louvain_level_to_return),
+                ('louvain_min_cluster_size', self.louvain_min_cluster_size),
+                ('frac_support_to_trim_to', self.frac_support_to_trim_to),
+                ('trim_to_window_size', self.trim_to_window_size),
+                ('initial_flank_to_add', self.initial_flank_to_add),
+                ('prob_and_pertrack_sim_merge_thresholds',
+                 self.prob_and_pertrack_sim_merge_thresholds),
+                ('prob_and_pertrack_sim_dealbreaker_thresholds',
+                 self.prob_and_pertrack_sim_dealbreaker_thresholds),
+                ('min_similarity_for_seqlet_assignment',
+                 self.min_similarity_for_seqlet_assignment),
+                ('final_min_cluster_size', self.final_min_cluster_size),
+                ('final_flank_to_add', self.final_flank_to_add),
+                ('batch_size', self.batch_size)]) 
+        return to_return
 
     def build(self):
 
@@ -528,13 +590,18 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                   +" patterns after reassignment")
             sys.stdout.flush()
 
+        total_time_taken = round(time.time()-start,2)
         if (self.verbose):
             print("Total time taken is "
-                  +str(round(time.time()-start,2))+"s")
+                  +str(total_time_taken)+"s")
             sys.stdout.flush()
 
         results = SeqletsToPatternsResults(
             patterns=final_patterns,
+            seqlets=seqlets2,
+            affmat=nn_affmat2,
+            cluster_results=cluster_results2, 
+            total_time_taken=total_time_taken,
 
             affinity_mat_from_seqlet_embeddings1=\
                 affinity_mat_from_seqlet_embeddings1,
