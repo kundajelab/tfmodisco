@@ -180,7 +180,7 @@ def graph2binary(filename, graph):
     print("Wrote graph to binary file in {} seconds".format(time.time() - tic))
 
 
-def runlouvain(filename, tol=1e-3, contin_runs=20,
+def runlouvain(filename, tol=1e-3, contin_runs=50,
                          max_runs=500, time_limit=2000, seed=1234):
     """
     From binary graph file filename.bin, optimize modularity by running multiple random re-starts of

@@ -104,6 +104,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        thresholding_function=MaxCurvatureThreshold(
                             bins=100, bandwidth=0.1,
                             num_to_consider=1000000, verbose=True),
+                       take_abs=True, 
                        min_ratio_top_peak=0.0,
                        min_ratio_over_bg=0.0,
                        apply_recentering=False,
@@ -140,6 +141,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             progress_update=
              (self.progress_update if self.verbose else None))).astype("float") 
         summed_score_track = original_summed_score_track.copy()
+        if (self.take_abs):
+            summed_score_track = np.abs(summed_score_track)
 
         #As we extract seqlets, we will zero out the values at those positions
         #so that the mean of the background can be updated to exclude
@@ -182,11 +185,13 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                         and (np.abs(chunk_height) >=
                              np.abs(bg_avg_per_track[example_idx])
                              *self.min_ratio_over_bg)):
+                        score = (original_summed_score_track
+                                 [example_idx][argmax])
                         coord = SeqletCoordsFWAP(
                             example_idx=example_idx,
                             start=argmax-self.flank,
                             end=argmax+self.sliding+self.flank,
-                            score=chunk_height) 
+                            score=score) 
                         if (self.apply_recentering):
                             half_sliding = int(0.5*self.sliding)
                             if ((argmax+half_sliding+self.flank <=
@@ -251,6 +256,4 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             coords = sorted(coords, key=lambda x: -x.score)\
                                [:self.max_seqlets_total]
         return coords
-
-
 

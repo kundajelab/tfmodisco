@@ -64,7 +64,10 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_correlation_threshold=0.15,
 
                        tsne_perplexities = [10],
-                       louvain_num_runs_and_levels=[(200,-1)],
+                       louvain_num_runs_and_levels_r1=[(50,-1)],
+                       louvain_num_runs_and_levels_r2=[(200,-1)],
+                       louvain_contin_runs_r1 = 20,
+                       louvain_contin_runs_r2 = 50,
                        final_louvain_level_to_return=1,
                        louvain_min_cluster_size=10,
 
@@ -116,7 +119,10 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.tsne_perplexities = tsne_perplexities
 
         #clustering settings
-        self.louvain_num_runs_and_levels = louvain_num_runs_and_levels
+        self.louvain_num_runs_and_levels_r1 = louvain_num_runs_and_levels_r1
+        self.louvain_num_runs_and_levels_r2 = louvain_num_runs_and_levels_r2
+        self.louvain_contin_runs_r1 = louvain_contin_runs_r1
+        self.louvain_contin_runs_r2 = louvain_contin_runs_r2
         self.final_louvain_level_to_return = final_louvain_level_to_return
         self.louvain_min_cluster_size = louvain_min_cluster_size
 
@@ -172,10 +178,16 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                 ('affmat_correlation_threshold',
                  self.affmat_correlation_threshold),
                 ('tsne_perplexities', self.tsne_perplexities),
-                ('louvain_num_runs_and_levels',
-                 self.louvain_num_runs_and_levels),
+                ('louvain_num_runs_and_levels_r1',
+                 self.louvain_num_runs_and_levels_r1),
+                ('louvain_num_runs_and_levels_r2',
+                 self.louvain_num_runs_and_levels_r2),
                 ('final_louvain_level_to_return',
                  self.final_louvain_level_to_return),
+                ('louvain_contin_runs_r1',
+                 self.louvain_contin_runs_r1),
+                ('louvain_contin_runs_r2',
+                 self.louvain_contin_runs_r2),
                 ('louvain_min_cluster_size', self.louvain_min_cluster_size),
                 ('frac_support_to_trim_to', self.frac_support_to_trim_to),
                 ('trim_to_window_size', self.trim_to_window_size),
@@ -254,24 +266,32 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
              for perplexity in self.tsne_perplexities]
 
 
-        affmat_transformer = affmat.transformers.SymmetrizeByAddition(
+        affmat_transformer1 = affmat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
-        for n_runs, level_to_return in self.louvain_num_runs_and_levels:
-            affmat_transformer = affmat_transformer.chain(
+        for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
+            affmat_transformer1 = affmat_transformer1.chain(
                 affmat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
                     level_to_return=level_to_return))
-
         self.clusterer1 = cluster.core.LouvainCluster(
             level_to_return=self.final_louvain_level_to_return,
-            affmat_transformer=affmat_transformer,
+            affmat_transformer=affmat_transformer1,
+            contin_runs=self.louvain_contin_runs_r1,
             min_cluster_size=0,
             verbose=self.verbose)
 
+        affmat_transformer2 = affmat.transformers.SymmetrizeByAddition(
+                                probability_normalize=True)
+        for n_runs, level_to_return in self.louvain_num_runs_and_levels_r2:
+            affmat_transformer2 = affmat_transformer2.chain(
+                affmat.transformers.LouvainMembershipAverage(
+                    n_runs=n_runs,
+                    level_to_return=level_to_return))
         self.clusterer2 = cluster.core.LouvainCluster(
             level_to_return=self.final_louvain_level_to_return,
-            affmat_transformer=affmat_transformer,
-            min_cluster_size=self.louvain_min_cluster_size,
+            affmat_transformer=affmat_transformer2,
+            contin_runs=self.louvain_contin_runs_r2,
+            min_cluster_size=0,
             verbose=self.verbose)
 
         #self.clusterer1 = cluster.core.CollectComponents(
