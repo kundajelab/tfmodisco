@@ -667,6 +667,25 @@ class SimilarityThreshold(AbstractMergeAlignedPatternsCondition):
         return (metric >= self.threshold)
 
 
+class PatternMergeHierarchy(object)
+
+    def __init__(root_nodes):
+        self.root_nodes = root_nodes
+
+    def add_level(self, level_arr):
+        self.levels.append(level_arr)
+
+
+class PatternMergeHierarchyNode(object):
+
+    def __init__(self, pattern, child_nodes=None, parent_node=None): 
+        self.pattern = pattern 
+        if (child_nodes is None):
+            child_nodes = []
+        self.child_nodes = child_nodes
+        self.parent_node = parent_node
+
+
 class DynamicDistanceSimilarPatternsCollapser(object):
 
     def __init__(self, pattern_to_pattern_sim_computer,
@@ -685,15 +704,16 @@ class DynamicDistanceSimilarPatternsCollapser(object):
     def __call__(self, patterns, seqlets):
 
         patterns = [x.copy() for x in patterns]
+        merge_hierarchy_levels = []        
+        current_level_nodes = [
+            PatternMergeHierarchy(pattern=x) for x in patterns]
+        merge_hierarchy_levels.append(current_level_nodes)
+
         merge_occurred_last_iteration = True
         merging_iteration = 0
 
         #loop until no more patterns get merged
         while (merge_occurred_last_iteration):
-            #sort by size
-            patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
-            #remove redundant patterns
-            patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
             
             merging_iteration += 1
             if (self.verbose):
@@ -735,7 +755,8 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                     patterns_to_patterns_aligner_sim[i,j] = aligner_sim
 
             indices_to_merge = []
-            merge_partners_so_far = defaultdict(set)
+            merge_partners_so_far = dict([(i, set([i])) for i in
+                                          range(len(patterns))])
 
             #merge patterns with highest similarity first
             sorted_pairs = sorted([(i,j,patterns_to_patterns_aligner_sim[i,j])
@@ -760,7 +781,7 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                     #about to be merged
                     merge_under_consideration = set(
                         list(merge_partners_so_far[i])
-                        +list(merge_partners_so_far[j])+[i,j])
+                        +list(merge_partners_so_far[j]))
                     for m1 in merge_under_consideration:
                         for m2 in merge_under_consideration:
                             if (m1 < m2):
@@ -806,20 +827,49 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                         parent_pattern, child_pattern = pattern2, pattern1
                     else:
                         parent_pattern, child_pattern = pattern1, pattern2
-                    parent_pattern.merge_aggregated_seqlet(
+                    new_pattern = parent_pattern.copy()
+                    new_pattern.merge_aggregated_seqlet(
                         agg_seqlet=child_pattern,
                         aligner=self.pattern_aligner) 
-                    new_parent_pattern =\
-                        self.postprocessor([parent_pattern])
-                    assert len(new_parent_pattern)==1
-                    new_parent_pattern = new_parent_pattern[0]
+                    new_pattern =\
+                        self.postprocessor([new_pattern])
+                    assert len(new_pattern)==1
+                    new_pattern = new_pattern[0]
                     for k in range(len(patterns)):
                         if (patterns[k]==parent_pattern or
                             patterns[k]==child_pattern):
-                            patterns[k]=new_parent_pattern
+                            patterns[k]=new_pattern
             merge_occurred_last_iteration = (len(indices_to_merge) > 0)
 
-        return patterns
+            if (merge_occurred_last_iteration):
+                #Once we are out of this loop, each element of 'patterns'
+                #will have the new parent of the corresponding element
+                #of 'old_patterns'
+                old_to_new_pattern_mapping = patterns
+
+                #sort by size and remove redundant patterns 
+                patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
+                patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
+
+                #update the hierarchy
+                next_level_nodes = [PatternMergeHierarchyNode(x)
+                                    for x in patterns]
+                for next_level_node in next_level_nodes:
+                    #iterate over all the old patterns and their new parent
+                    for old_pattern_node, corresp_new_pattern\
+                        in zip(current_level_nodes,
+                               old_to_new_pattern_mapping):
+                        #if the node has a new parent
+                        if (old_pattern_node.pattern != corresp_new_pattern):
+                            if (next_level_node.pattern==corresp_new_pattern):
+                                next_level_node.child_nodes.append(
+                                                old_pattern_node) 
+                                assert old_pattern_node.parent is None
+                                old_pattern_node.parent = next_level_node
+
+                current_level_nodes=next_level_nodes
+
+        return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
     
 
 class BasicSimilarPatternsCollapser(object):

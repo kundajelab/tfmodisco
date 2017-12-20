@@ -526,6 +526,12 @@ class SeqletsAndAlignments(object):
         grp.create_dataset("alnmts",
                            data=np.array([x.alnmt for x in self.arr]))
 
+    def copy(self):
+        the_copy = SeqletsAndAlignments()
+        for seqlet_and_alnmt in self:
+            the_copy.append(seqlet_and_alnmt)
+        return the_copy
+
 
 class AggregatedSeqlet(Pattern):
 
@@ -549,7 +555,7 @@ class AggregatedSeqlet(Pattern):
 
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=
-                                self._seqlets_and_alnmts)
+                                self._seqlets_and_alnmts.copy())
 
     def get_fwd_seqlet_data(self, track_names, track_transformer):
         to_return = []

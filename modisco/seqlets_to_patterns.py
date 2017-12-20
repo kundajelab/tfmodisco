@@ -595,9 +595,10 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             (y.exidx_start_end_string, y)
              for x in cluster_to_motif2.values()
              for y in x.seqlets]).values()
-        merged_patterns = self.dynamic_distance_similar_patterns_collapser( 
-            patterns=cluster_to_motif2.values(),
-            seqlets=motif_seqlets2) 
+        merged_patterns, pattern_merge_hierarchy =\
+            self.dynamic_distance_similar_patterns_collapser( 
+                patterns=cluster_to_motif2.values(),
+                seqlets=motif_seqlets2) 
         merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")
@@ -649,6 +650,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             cluster_to_eliminated_motif2=cluster_to_eliminated_motif2,
 
             merged_patterns=merged_patterns,
+            pattern_merge_hierarchy=pattern_merge_hierarchy,
             too_small_patterns=too_small_patterns,
             final_patterns=final_patterns)
 
