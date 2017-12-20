@@ -57,6 +57,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        #gapped kmer embedding arguments
                        alphabet_size=4,
                        kmer_len=8, num_gaps=3, num_mismatches=2,
+                       gpu_batch_size=200,
 
                        nn_n_jobs=4,
                        nearest_neighbors_to_compute=500,
@@ -109,6 +110,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.kmer_len = kmer_len
         self.num_gaps = num_gaps
         self.num_mismatches = num_mismatches
+        self.gpu_batch_size = gpu_batch_size
 
         self.nn_n_jobs = nn_n_jobs
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
@@ -218,6 +220,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             kmer_len=self.kmer_len,
             num_gaps=self.num_gaps,
             num_mismatches=self.num_mismatches,
+            batch_size=self.gpu_batch_size,
             num_filters_to_retain=None,
             onehot_track_name=self.onehot_track_name,
             toscore_track_names_and_signs=list(
@@ -230,7 +233,9 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             affmat.core.AffmatFromSeqletEmbeddings(
                 seqlets_to_1d_embedder=self.gkmer_embedder,
                 affinity_mat_from_1d=\
-                    affmat.core.NumpyCosineSimilarity(verbose=self.verbose),
+                    affmat.core.NumpyCosineSimilarity(
+                        verbose=self.verbose,
+                        gpu_batch_size=self.gpu_batch_size),
                 verbose=self.verbose)
 
         self.nearest_neighbors_object = NearestNeighbors( 
@@ -622,6 +627,7 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             affmat=nn_affmat2,
             cluster_results=cluster_results2, 
             total_time_taken=total_time_taken,
+            jsonable_config=self.get_jsonable_config(),
 
             affinity_mat_from_seqlet_embeddings1=\
                 affinity_mat_from_seqlet_embeddings1,

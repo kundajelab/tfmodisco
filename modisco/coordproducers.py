@@ -119,6 +119,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.suppress = suppress
         self.max_seqlets_per_seq = max_seqlets_per_seq
         self.thresholding_function = thresholding_function
+        self.take_abs = take_abs
         self.min_ratio_top_peak = min_ratio_top_peak
         self.min_ratio_over_bg = min_ratio_over_bg
         self.apply_recentering = apply_recentering
@@ -244,7 +245,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         else:
             threshold = 0.0
 
-        coords = [x for x in coords if x.score >= threshold]
+        coords = [x for x in coords if np.abs(x.score) >= threshold]
         if (self.verbose):
             print(str(len(coords))+" coords remaining after thresholding")
             sys.stdout.flush()
@@ -253,7 +254,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             if (self.verbose):
                 print("Limiting to top "+str(self.max_seqlets_total))
                 sys.stdout.flush()
-            coords = sorted(coords, key=lambda x: -x.score)\
+            coords = sorted(coords, key=lambda x: -np.abs(x.score))\
                                [:self.max_seqlets_total]
         return coords
 

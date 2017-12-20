@@ -99,9 +99,9 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                        num_mismatches,
                        toscore_track_names_and_signs,
                        normalizer,
+                       batch_size,
                        num_filters_to_retain=None,
                        onehot_track_name=None,
-                       batch_size=50,
                        progress_update=None):
         self.alphabet_size = alphabet_size
         self.kmer_len = kmer_len
@@ -222,15 +222,25 @@ class AbstractAffinityMatrixFromOneD(object):
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
-    def __init__(self, verbose):
+    def __init__(self, verbose, gpu_batch_size=200):
         self.verbose = verbose
+        self.gpu_batch_size = gpu_batch_size
 
     def __call__(self, vecs1, vecs2):
 
         start_time = time.time()
         normed_vecs1 = vecs1/np.linalg.norm(vecs1, axis=1)[:,None] 
         normed_vecs2 = vecs2/np.linalg.norm(vecs2, axis=1)[:,None] 
-        to_return = np.dot(normed_vecs1,normed_vecs2.T)
+        if (self.verbose):
+            print("Normalization computed in",
+                  round(time.time()-start_time,2),"s")
+            sys.stdout.flush()
+        if (self.gpu_batch_size is not None):
+            to_return = B.matrix_dot_product(normed_vecs1, normed_vecs2.T,
+                                             batch_size=self.gpu_batch_size)
+        else:
+            #do the multiplication on the CPU
+            to_return = np.dot(normed_vecs1,normed_vecs2.T)
         end_time = time.time()
     
         if (self.verbose):

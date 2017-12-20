@@ -146,6 +146,19 @@ def get_gapped_kmer_embedding_func(filters, biases, require_onehot_match):
     return batchwise_func
 
 
+def matrix_dot_product(mat1, mat2, batch_size):
+    mat1_tensor = theano.tensor.TensorType(dtype=theano.config.floatX,
+                                         broadcastable=[False]*2)("mat1")
+    result = theano.tensor.dot(mat1_tensor, mat2.astype("float32"))
+    dot_product_func = theano.function([mat1_tensor], result,
+                                       allow_input_downcast=True)
+    return np.array(run_function_in_batches(
+                        func=dot_product_func,
+                        input_data_list=[mat1],
+                        batch_size=batch_size,
+                        progress_update=None))
+
+
 def max_cross_corrs(filters, things_to_scan, min_overlap,
                        batch_size=50,
                        func_params_size=1000000,
