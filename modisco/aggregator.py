@@ -669,7 +669,7 @@ class SimilarityThreshold(AbstractMergeAlignedPatternsCondition):
 
 class PatternMergeHierarchy(object):
 
-    def __init__(root_nodes):
+    def __init__(self, root_nodes):
         self.root_nodes = root_nodes
 
     def add_level(self, level_arr):
@@ -706,7 +706,7 @@ class DynamicDistanceSimilarPatternsCollapser(object):
         patterns = [x.copy() for x in patterns]
         merge_hierarchy_levels = []        
         current_level_nodes = [
-            PatternMergeHierarchy(pattern=x) for x in patterns]
+            PatternMergeHierarchyNode(pattern=x) for x in patterns]
         merge_hierarchy_levels.append(current_level_nodes)
 
         merge_occurred_last_iteration = True
@@ -864,8 +864,8 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                             if (next_level_node.pattern==corresp_new_pattern):
                                 next_level_node.child_nodes.append(
                                                 old_pattern_node) 
-                                assert old_pattern_node.parent is None
-                                old_pattern_node.parent = next_level_node
+                                assert old_pattern_node.parent_node is None
+                                old_pattern_node.parent_node = next_level_node
 
                 current_level_nodes=next_level_nodes
 
