@@ -32,7 +32,8 @@ def sort_by_size(clusters, min_size):
     return relabeled
 
 
-def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccard=True,
+def cluster(data, 
+            k=30, directed=False, prune=False, min_cluster_size=10, jaccard=True,
             primary_metric='euclidean', n_jobs=-1, q_tol=1e-3, louvain_time_limit=2000,
             nn_method='kdtree'):
     """
@@ -112,12 +113,12 @@ def cluster(data, k=30, directed=False, prune=False, min_cluster_size=10, jaccar
             sg = graph.multiply(graph.transpose())
         # retain lower triangle (for efficiency)
         graph = sp.tril(sg, -1)
-    return runlouvain_given_graph(graph,
+    return runlouvain_given_graph(graph, level_to_return=-1,
             q_tol=q_tol, louvain_time_limit=louvain_time_limit,
             min_cluster_size=min_cluster_size, tic=tic)
 
 
-def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
+def runlouvain_given_graph(graph, level_to_return, q_tol, louvain_time_limit,
                            min_cluster_size, contin_runs=20, tic=None,
                            seed=1234):
     if (not sp.issparse(graph)):
@@ -125,18 +126,19 @@ def runlouvain_given_graph(graph, q_tol, louvain_time_limit,
     # write to file with unique id
     uid = uuid.uuid1().hex
     graph2binary(uid, graph)
-    communities, Q, hierarchy =\
-     runlouvain(uid, tol=q_tol, contin_runs=contin_runs, 
+    communities, Q, =\
+     runlouvain(uid, level_to_return=level_to_return,
+                tol=q_tol, contin_runs=contin_runs, 
                 time_limit=louvain_time_limit, seed=seed)
     if (tic is not None):
         print("PhenoGraph complete in {} seconds".format(time.time() - tic))
-    communities = sort_by_size(communities, min_cluster_size)
+    communities = sort_by_size(communities, min_size=0)
     # clean up
     for f in os.listdir(os.getcwd()):
         if re.search(uid, f):
             os.remove(f)
 
-    return communities, graph, Q, hierarchy
+    return communities, graph, Q
 
 
 def runlouvain_average_runs_given_graph(

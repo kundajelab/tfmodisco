@@ -70,7 +70,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                        louvain_contin_runs_r1 = 20,
                        louvain_contin_runs_r2 = 50,
                        final_louvain_level_to_return=1,
-                       louvain_min_cluster_size=10,
 
                        frac_support_to_trim_to=0.2,
                        trim_to_window_size=30,
@@ -126,7 +125,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         self.louvain_contin_runs_r1 = louvain_contin_runs_r1
         self.louvain_contin_runs_r2 = louvain_contin_runs_r2
         self.final_louvain_level_to_return = final_louvain_level_to_return
-        self.louvain_min_cluster_size = louvain_min_cluster_size
 
         #postprocessor1 settings
         self.frac_support_to_trim_to = frac_support_to_trim_to
@@ -190,7 +188,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                  self.louvain_contin_runs_r1),
                 ('louvain_contin_runs_r2',
                  self.louvain_contin_runs_r2),
-                ('louvain_min_cluster_size', self.louvain_min_cluster_size),
                 ('frac_support_to_trim_to', self.frac_support_to_trim_to),
                 ('trim_to_window_size', self.trim_to_window_size),
                 ('initial_flank_to_add', self.initial_flank_to_add),
@@ -282,7 +279,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer1,
             contin_runs=self.louvain_contin_runs_r1,
-            min_cluster_size=0,
             verbose=self.verbose)
 
         affmat_transformer2 = affmat.transformers.SymmetrizeByAddition(
@@ -296,7 +292,6 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer2,
             contin_runs=self.louvain_contin_runs_r2,
-            min_cluster_size=0,
             verbose=self.verbose)
 
         #self.clusterer1 = cluster.core.CollectComponents(
@@ -456,9 +451,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
         cluster_idx_counts1 = Counter(cluster_results1.cluster_indices)
         if (self.verbose):
             print("Got "+str(num_clusters1)+" clusters after round 1")
-            print("Counts greater than",self.louvain_min_cluster_size,":")
-            print(dict([x for x in cluster_idx_counts1.items()
-                        if x[1] >= self.louvain_min_cluster_size]))
+            print("Counts:")
+            print(dict([x for x in cluster_idx_counts1.items()]))
             sys.stdout.flush()
 
         if (self.verbose):

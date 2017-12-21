@@ -667,7 +667,7 @@ class SimilarityThreshold(AbstractMergeAlignedPatternsCondition):
         return (metric >= self.threshold)
 
 
-class PatternMergeHierarchy(object)
+class PatternMergeHierarchy(object):
 
     def __init__(root_nodes):
         self.root_nodes = root_nodes
