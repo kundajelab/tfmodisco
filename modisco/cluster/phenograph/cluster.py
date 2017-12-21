@@ -142,7 +142,7 @@ def runlouvain_given_graph(graph, level_to_return, q_tol, louvain_time_limit,
 
 
 def runlouvain_average_runs_given_graph(
-        graph, n_runs, level_to_return, tic=None, seed=1234):
+        graph, n_runs, level_to_return, parallel_threads, tic=None, seed=1234):
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
     # write to file with unique id
@@ -150,7 +150,7 @@ def runlouvain_average_runs_given_graph(
     graph2binary(uid, graph)
     coocc_count = runlouvain_average_runs(
                     uid, level_to_return=level_to_return, n_runs=n_runs,
-                    seed=seed)
+                    seed=seed, parallel_threads=parallel_threads)
     if (tic is not None):
         print("PhenoGraph complete in {} seconds".format(time.time() - tic))
     # clean up

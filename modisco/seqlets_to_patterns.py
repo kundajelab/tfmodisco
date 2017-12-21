@@ -274,7 +274,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             affmat_transformer1 = affmat_transformer1.chain(
                 affmat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
-                    level_to_return=level_to_return))
+                    level_to_return=level_to_return,
+                    parallel_threads=self.n_cores))
         self.clusterer1 = cluster.core.LouvainCluster(
             level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer1,
@@ -287,7 +288,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
             affmat_transformer2 = affmat_transformer2.chain(
                 affmat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
-                    level_to_return=level_to_return))
+                    level_to_return=level_to_return,
+                    parallel_threads=self.n_cores))
         self.clusterer2 = cluster.core.LouvainCluster(
             level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer2,

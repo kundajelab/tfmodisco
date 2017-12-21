@@ -14,6 +14,7 @@ import os
 import sys
 from .bruteforce_nn import knnsearch
 from collections import defaultdict
+from joblib import Parallel, delayed
 
 
 def find_neighbors(data, k=30, metric='minkowski', p=2, method='brute', n_jobs=-1):
@@ -323,7 +324,49 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3, contin_runs=50,
     return communities, Q
 
 
-def runlouvain_average_runs(filename, n_runs, level_to_return, seed=1234):
+def single_louvain_run(lpath, community_binary, hierarchy_binary,
+                       filename, level_to_return, seed):
+    # run community
+    fout = open(filename + '.tree_'+str(seed), 'w')
+    args = [lpath + community_binary, filename + '_graph.bin',
+            str(seed), '-l',
+            str(level_to_return),
+            '-v', '-w', filename + '_graph.weights']
+    p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
+    # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
+    _, msg = p.communicate()
+    fout.close()
+    # get modularity from err msg
+    q = get_modularity(msg)
+
+    if (len(q)==0):
+        print(msg)
+        sys.stdout.flush()
+        raise RuntimeError("No levels found with louvain; stderr above")
+
+    if (level_to_return==-1):
+        nlevels = len(q)
+        #get the topmost level
+        args = [lpath + hierarchy_binary,
+                filename + '.tree_'+str(seed), '-l', str(nlevels-1)]
+        p = subprocess.Popen(args, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        communities = []
+        for i, line in enumerate(out.decode().splitlines()):
+            communities.append(int(line.split(' ')[-1]))
+        communities = np.array(communities)
+    else:
+        args = ['cat', filename + '.tree_'+str(seed)]
+        p = subprocess.Popen(args, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        communities = parse_l1_clusters(out.decode())
+    return communities
+
+
+def runlouvain_average_runs(filename, n_runs,
+                            level_to_return, seed=1234, parallel_threads=1):
 
     assert level_to_return==-1 or level_to_return==1
 
@@ -335,59 +378,18 @@ def runlouvain_average_runs(filename, n_runs, level_to_return, seed=1234):
     (lpath, community_binary, hierarchy_binary) =\
         get_paths_and_run_convert(filename) 
 
-    Q = 0
-    run = 0
-    updated = 0
     coocc_count = None
-    while run < n_runs:
-
-        if (run%10==0):
-            print("Louvain completed {} runs in {} seconds".format(run,
-                  time.time() - tic))
-
-        # run community
-        fout = open(filename + '.tree', 'w')
-        args = [lpath + community_binary, filename + '_graph.bin',
-                str(rng.random_integers(0,9999)), '-l',
-                str(level_to_return),
-                '-v', '-w', filename + '_graph.weights']
-        p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
-        # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
-        _, msg = p.communicate()
-        fout.close()
-        # get modularity from err msg
-        q = get_modularity(msg)
-        run += 1
-
-        if (len(q)==0):
-            print(msg)
-            sys.stdout.flush()
-            raise RuntimeError("No levels found with louvain; stderr above")
-
-        updated = run
-
-        if (level_to_return==-1):
-            nlevels = len(q)
-            #get the topmost level
-            args = [lpath + hierarchy_binary,
-                    filename + '.tree', '-l', str(nlevels-1)]
-            p = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
-            out, err = p.communicate()
-            communities = []
-            for i, line in enumerate(out.decode().splitlines()):
-                communities.append(int(line.split(' ')[-1]))
-            communities = np.array(communities)
-        else:
-            args = ['cat', filename + '.tree']
-            p = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE)
-            out, err = p.communicate()
-            communities = parse_l1_clusters(out.decode())
-
-        if (coocc_count) is None:
-            coocc_count = np.zeros((len(communities), len(communities)))
+    communities_list = (Parallel(n_jobs=parallel_threads, verbose=51)                          
+                           (delayed(single_louvain_run)
+                                   (lpath, community_binary, hierarchy_binary,
+                                    filename, level_to_return,
+                                    rng.random_integers(0,9999))
+                            for i in range(n_runs)))
+    coocc_count = np.zeros((len(communities_list[0]),
+                            len(communities_list[0])))
+    for communities in communities_list:
         coocc_count += (communities[:,None] == communities[None,:])
+    print("Louvain completed {} runs in {} seconds".format(
+          n_runs, time.time() - tic))
 
-    print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
     return coocc_count.astype("float32")/float(n_runs)
