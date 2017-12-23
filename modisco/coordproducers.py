@@ -27,6 +27,17 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
+class MaxCurvatureThresholdingResults(object):
+
+    def __init__(self, threshold, densities):
+        self.densities = densities 
+        self.threshold = threshold
+
+    def save_hdf5(self, grp):
+        grp.create_dataset("densities", data=self.densities) 
+        grp.attrs['threshold'] = self.threshold
+
+
 class MaxCurvatureThreshold(object):
 
     def __init__(self, bins, bandwidth, num_to_consider, verbose):
@@ -92,7 +103,25 @@ class MaxCurvatureThreshold(object):
             plt.xlim((0, maximum_c_x*5))
             plt.show()
 
-        return maximum_c_x
+        return MaxCurvatureThresholdingResults(
+                threshold=maximum_c_x, densities=densities)
+
+
+class CoordProducerResults(object):
+
+    def __init__(self, coords, vals_to_threshold, thresholding_results):
+        self.coords
+        self.vals_to_threshold
+        self.thresholding_results = thresholding_results
+
+    def save_hdf5(self, grp):
+        util.save_string_list(
+            string_list=[str(x) for x in self.coords],
+            dset_name="coords",
+            grp=grp) 
+        grp.create_dataset("vals_to_threshold", data=vals_to_threshold)
+        self.thresholding_results.save_hdf5(
+              grp=grp.create_group("thresholding_results"))
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -238,12 +267,15 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             if (self.verbose):
                 print("Computing thresholds")
                 sys.stdout.flush()
-            threshold = self.thresholding_function(vals_to_threshold) 
-            if (self.verbose):
-                print("Computed threshold "+str(threshold))
-                sys.stdout.flush()
+            thresholding_results =\
+                self.thresholding_function(vals_to_threshold) 
         else:
-            threshold = 0.0
+            thresholding_results = MaxCurvatureThresholdingResults(
+                                    threshold=0.0, densities=None)
+        threshold = thresholding_results.threshold
+        if (self.verbose):
+            print("Computed threshold "+str(threshold))
+            sys.stdout.flush()
 
         coords = [x for x in coords if np.abs(x.score) >= threshold]
         if (self.verbose):
@@ -256,5 +288,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 sys.stdout.flush()
             coords = sorted(coords, key=lambda x: -np.abs(x.score))\
                                [:self.max_seqlets_total]
-        return coords
+        return CoordProducerResults(
+                    coords=coords, vals_to_threshold=vals_to_threshold,
+                    thresholding_results=thresholding_results) 
 

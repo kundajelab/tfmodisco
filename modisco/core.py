@@ -268,6 +268,22 @@ class SignedContribThresholdLabeler(AbstractThresholdLabeler):
         #return (threshold <= np.abs(val))*np.sign(val)
 
 
+class MultiTaskSeqletCreationResults(object):
+
+    def __init__(self, final_seqlets, task_name_to_coord_producer_results): 
+        self.final_seqlets = final_seqlets
+        self.task_name_to_coord_producer_results =\
+            task_name_to_coord_producer_results
+
+    def save_hdf5(self, grp):
+        util.save_seqlet_coords(seqlets=self.final_seqlets,
+                                dset_name="final_seqlets", grp=grp)  
+        tntcpg = grp.create_group("task_name_to_coord_producer_results")
+        for task_name,coord_producer_results in\
+            self.task_name_to_coord_producer_results.items():
+            coord_producer_results.save_hdf5(tntcpg.create_group(task_name))
+
+
 class MultiTaskSeqletCreation(object):
 
     def __init__(self, coord_producer,
@@ -280,12 +296,17 @@ class MultiTaskSeqletCreation(object):
 
     def __call__(self, task_name_to_score_track,
                        task_name_to_labeler):
+        task_name_to_coord_producer_results = {}
         task_name_to_seqlets = {}
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
+            coord_producer_results =\
+                self.coord_producer(score_track=score_track)
+            task_name_to_coord_producer_results[task_name] =\
+                coord_producer_results
             seqlets = self.track_set.create_seqlets(
-                        coords=self.coord_producer(score_track=score_track)) 
+                        coords=coord_producer_results.coords) 
             task_name_to_labeler[task_name].fit(seqlets)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
@@ -295,7 +316,11 @@ class MultiTaskSeqletCreation(object):
                   +str(len(final_seqlets))+" seqlets")
         for labeler in task_name_to_labeler.values():
             labeler.annotate(final_seqlets)
-        return final_seqlets 
+        return MultiTaskSeqletCreationResults(
+                final_seqlets=final_seqlets,
+                task_name_to_coord_producer_results=
+                 task_name_to_coord_producer_results)
+                 
 
             
 class SeqletCoordinates(object):

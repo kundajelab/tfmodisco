@@ -16,11 +16,16 @@ def save_patterns(patterns, grp):
         pattern.save_hdf5(pattern_grp)
 
 
-def save_seqlet_coords(seqlets, dset_name, grp):
+def save_string_list(string_list, dset_name, grp):
     dset = grp.create_dataset(dset_name, (len(self.seqlets),),
                               dtype=h5py.special_dtype(vlen=bytes))
+    dset[:] = string_list
+
+
+def save_seqlet_coords(seqlets, dset_name, grp):
     coords_strings = [str(x.coor) for x in seqlets] 
-    dset[:] = coords
+    save_string_list(string_list=coords_strings,
+                     dset_name=dset_name, grp=grp)
 
 
 def factorial(val):
