@@ -4,6 +4,7 @@ from .. import nearest_neighbors
 from .. import cluster
 from .. import aggregator
 from .. import core
+from collections import defaultdict, OrderedDict, Counter
 import numpy as np
 import time
 import sys
@@ -17,7 +18,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        #gapped kmer embedding arguments
                        alphabet_size=4,
                        kmer_len=8, num_gaps=3, num_mismatches=2,
-                       gpu_batch_size=200,
+                       gpu_batch_size=50,
 
                        nn_n_jobs=4,
                        nearest_neighbors_to_compute=500,
@@ -256,6 +257,12 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                track_name in contrib_scores_track_names]),
             postprocessor=postprocessor1)
 
+        def sign_consistency_func(motif):
+            motif_track_signs = [
+                np.sign(np.sum(motif[contrib_scores_track_name].fwd)) for
+                contrib_scores_track_name in contrib_scores_track_names]
+            return all([(x==y) for x,y in zip(motif_track_signs, track_signs)])
+
         #prepare the similar patterns collapser
         pattern_to_pattern_sim_computer =\
             affinitymat.core.AffmatFromSeqletsWithNNpairs(
@@ -311,7 +318,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 individual_aligner_metric=
                     core.get_best_alignment_crosscontinjaccard,
                 matrix_affinity_metric=
-                    affmat.core.CrossContinJaccardMultiCoreCPU(
+                    affinitymat.core.CrossContinJaccardMultiCoreCPU(
                         verbose=self.verbose, n_cores=self.n_cores),
                 min_similarity=self.min_similarity_for_seqlet_assignment),
             min_cluster_size=self.final_min_cluster_size,
@@ -332,6 +339,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                     density_adapted_affmat_transformer,
                 clusterer_per_round=clusterer_per_round,
                 seqlet_aggregator=seqlet_aggregator,
+                sign_consistency_func=sign_consistency_func,
                 similar_patterns_collapser=similar_patterns_collapser,
                 seqlet_reassigner=seqlet_reassigner,
                 final_postprocessor=final_postprocessor,
@@ -379,6 +387,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        density_adapted_affmat_transformer,
                        clusterer_per_round,
                        seqlet_aggregator,
+                       sign_consistency_func,
                        similar_patterns_collapser,
                        seqlet_reassigner,
                        final_postprocessor,
@@ -393,6 +402,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             density_adapted_affmat_transformer
         self.clusterer_per_round = clusterer_per_round 
         self.seqlet_aggregator = seqlet_aggregator
+        self.sign_consistency_func = sign_consistency_func
         
         self.similar_patterns_collapser = similar_patterns_collapser
         self.seqlet_reassigner = seqlet_reassigner
@@ -424,7 +434,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             if (self.verbose):
                 print("Computed nearest neighbors in",
-                      round(time.time()-nn_start1,2),"s")
+                      round(time.time()-nn_start,2),"s")
                 sys.stdout.flush()
 
             nn_affmat_start = time.time() 
@@ -500,11 +510,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
                 assert len(motifs)==1
                 motif = motifs[0]
-                motif_track_signs = [
-                    np.sign(np.sum(motif[contrib_scores_track_name].fwd)) for
-                    contrib_scores_track_name in contrib_scores_track_names] 
-                if (all([(x==y) for x,y in
-                        zip(motif_track_signs, track_signs)])):
+                if (self.sign_consistency_func(motif)):
                     cluster_to_motif[i] = motif
                 else:
                     if (self.verbose):

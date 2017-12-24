@@ -20,6 +20,6 @@ class ScikitNearestNeighbors(AbstractNearestNeighborsComputer):
     def __call__(self, affinity_mat):
         return self.nn_object.fit(-affinity_mat).kneighbors(
                 X=-affinity_mat,
-                n_neighbors=min(self.nearest_neighbors_to_compute+1,
+                n_neighbors=min(self.n_neighbors+1,
                                 len(affinity_mat)),
                 return_distance=False)
