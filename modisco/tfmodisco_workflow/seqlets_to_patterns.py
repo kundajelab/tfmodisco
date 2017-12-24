@@ -8,6 +8,7 @@ from collections import defaultdict, OrderedDict, Counter
 import numpy as np
 import time
 import sys
+import gc
 
 
 class TfModiscoSeqletsToPatternsFactory(object):
@@ -176,7 +177,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 affinity_mat_from_1d=\
                     affinitymat.core.NumpyCosineSimilarity(
                         verbose=self.verbose,
-                        gpu_batch_size=self.gpu_batch_size),
+                        gpu_batch_size=None),
                 verbose=self.verbose)
 
         nearest_neighbors_computer = nearest_neighbors.ScikitNearestNeighbors(
@@ -354,8 +355,7 @@ class SeqletsToPatternsResults(object):
 
     def __init__(self,
                  patterns, seqlets, affmat, cluster_results,
-                 total_time_taken,
-                 jsonable_config, **kwargs):
+                 total_time_taken, **kwargs):
         self.patterns = patterns
         self.seqlets = seqlets
         self.affmat = affmat
@@ -416,10 +416,13 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         start = time.time()
 
         for round_idx, clusterer in enumerate(self.clusterer_per_round):
+            for i in range(3): gc.collect()
 
             round_num = round_idx+1
 
             if (self.verbose):
+                print("(Round "+str(round_num)+
+                      ") num seqlets: "+str(len(seqlets)))
                 print("(Round "+str(round_num)+") Computing coarse affmat")
                 sys.stdout.flush()
             coarse_affmat = self.coarse_affmat_computer(seqlets)

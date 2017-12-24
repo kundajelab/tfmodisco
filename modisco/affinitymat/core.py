@@ -222,7 +222,7 @@ class AbstractAffinityMatrixFromOneD(object):
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
-    def __init__(self, verbose, gpu_batch_size=200):
+    def __init__(self, verbose, gpu_batch_size=None):
         self.verbose = verbose
         self.gpu_batch_size = gpu_batch_size
 
