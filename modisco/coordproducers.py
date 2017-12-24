@@ -110,8 +110,8 @@ class MaxCurvatureThreshold(object):
 class CoordProducerResults(object):
 
     def __init__(self, coords, vals_to_threshold, thresholding_results):
-        self.coords
-        self.vals_to_threshold
+        self.coords = coords
+        self.vals_to_threshold = vals_to_threshold
         self.thresholding_results = thresholding_results
 
     def save_hdf5(self, grp):

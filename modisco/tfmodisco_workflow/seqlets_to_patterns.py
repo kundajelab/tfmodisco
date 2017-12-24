@@ -1,7 +1,15 @@
+from __future__ import division, absolute_import, print_function
+from .. import affinitymat
 from .. import nearest_neighbors
+from .. import cluster
+from .. import aggregator
+from .. import core
+import numpy as np
+import time
+import sys
 
 
-class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
+class TfModiscoSeqletsToPatternsFactory(object):
 
     def __init__(self, n_cores=20,
                        min_overlap_while_sliding=0.7,
@@ -72,21 +80,11 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
         self.trim_to_window_size = trim_to_window_size
         self.initial_flank_to_add = initial_flank_to_add 
 
-        #similarity settings for merging
+        #merging similar patterns
         self.prob_and_pertrack_sim_merge_thresholds =\
             prob_and_pertrack_sim_merge_thresholds
-        self.prob_and_sim_merge_thresholds =\
-            [(x[0], x[1]*(len(contrib_scores_track_names)
-                          +len(hypothetical_contribs_track_names)
-                          +len(other_comparison_track_names))
-             for x in prob_and_pertrack_sim_merge_thresholds]
         self.prob_and_pertrack_sim_dealbreaker_thresholds =\
             prob_and_pertrack_sim_dealbreaker_thresholds
-        self.prob_and_sim_dealbreaker_thresholds =\
-            [(x[0], x[1]*(len(contrib_scores_track_names)
-                          +len(hypothetical_contribs_track_names)
-                          +len(other_comparison_track_names)))
-             for x in prob_and_pertrack_sim_dealbreaker_thresholds]
 
         #reassignment settings
         self.min_similarity_for_seqlet_assignment =\
@@ -143,21 +141,21 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
                        contrib_scores_track_names,
                        hypothetical_contribs_track_names,
                        track_signs,
-                       other_comparison_track_names):
+                       other_comparison_track_names=[]):
 
         assert len(track_signs)==len(hypothetical_contribs_track_names)
         assert len(track_signs)==len(contrib_scores_track_names)
 
         pattern_comparison_settings =\
-            affmat.core.PatternComparisonSettings(
+            affinitymat.core.PatternComparisonSettings(
                 track_names=hypothetical_contribs_track_names
                             +contrib_scores_track_names
                             +other_comparison_track_names, 
-                track_transformer=affmat.L1Normalizer(), 
+                track_transformer=affinitymat.L1Normalizer(), 
                 min_overlap=self.min_overlap_while_sliding)
 
         #gapped kmer embedder
-        gkmer_embedder = affmat.core.GappedKmerEmbedder(
+        gkmer_embedder = affinitymat.core.GappedKmerEmbedder(
             alphabet_size=self.alphabet_size,
             kmer_len=self.kmer_len,
             num_gaps=self.num_gaps,
@@ -168,14 +166,14 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
             toscore_track_names_and_signs=list(
                 zip(hypothetical_contribs_track_names,
                     [np.sign(x) for x in track_signs])),
-            normalizer=affmat.core.MeanNormalizer())
+            normalizer=affinitymat.core.MeanNormalizer())
 
         #affinity matrix from embeddings
         coarse_affmat_computer =\
-            affmat.core.AffmatFromSeqletEmbeddings(
+            affinitymat.core.AffmatFromSeqletEmbeddings(
                 seqlets_to_1d_embedder=gkmer_embedder,
                 affinity_mat_from_1d=\
-                    affmat.core.NumpyCosineSimilarity(
+                    affinitymat.core.NumpyCosineSimilarity(
                         verbose=self.verbose,
                         gpu_batch_size=self.gpu_batch_size),
                 verbose=self.verbose)
@@ -185,31 +183,31 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
             nn_n_jobs=self.nn_n_jobs)  
 
         affmat_from_seqlets_with_nn_pairs =\
-            affmat.core.AffmatFromSeqletsWithNNpairs(
+            affinitymat.core.AffmatFromSeqletsWithNNpairs(
                 pattern_comparison_settings=pattern_comparison_settings,
                 sim_metric_on_nn_pairs=\
-                    affmat.core.ParallelCpuCrossMetricOnNNpairs(
+                    affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
                         n_cores=self.n_cores,
                         cross_metric_single_region=
-                            affmat.core.CrossContinJaccardSingleRegion()))
+                            affinitymat.core.CrossContinJaccardSingleRegion()))
 
         filter_mask_from_correlation =\
-            affmat.core.FilterMaskFromCorrelation(
+            affinitymat.core.FilterMaskFromCorrelation(
                 correlation_threshold=self.affmat_correlation_threshold,
                 verbose=self.verbose)
 
-        aff_to_dist_mat = affmat.transformers.AffToDistViaInvLogistic() 
+        aff_to_dist_mat = affinitymat.transformers.AffToDistViaInvLogistic() 
         density_adapted_affmat_transformer =\
-            affmat.transformers.TsneConditionalProbs(
-                perplexity=tsne_perplexity,
+            affinitymat.transformers.TsneConditionalProbs(
+                perplexity=self.tsne_perplexity,
                 aff_to_dist_mat=aff_to_dist_mat)
 
         #prepare the clusterers for the different rounds
-        affmat_transformer_r1 = affmat.transformers.SymmetrizeByAddition(
+        affmat_transformer_r1 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
         for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
             affmat_transformer_r1 = affmat_transformer_r1.chain(
-                affmat.transformers.LouvainMembershipAverage(
+                affinitymat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
                     level_to_return=level_to_return,
                     parallel_threads=self.n_cores))
@@ -219,11 +217,11 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
             contin_runs=self.louvain_contin_runs_r1,
             verbose=self.verbose)
 
-        affmat_transformer_r2 = affmat.transformers.SymmetrizeByAddition(
+        affmat_transformer_r2 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
         for n_runs, level_to_return in self.louvain_num_runs_and_levels_r2:
             affmat_transformer_r2 = affmat_transformer_r2.chain(
-                affmat.transformers.LouvainMembershipAverage(
+                affinitymat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
                     level_to_return=level_to_return,
                     parallel_threads=self.n_cores))
@@ -260,14 +258,27 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
 
         #prepare the similar patterns collapser
         pattern_to_pattern_sim_computer =\
-            affmat.core.AffmatFromSeqletsWithNNpairs(
+            affinitymat.core.AffmatFromSeqletsWithNNpairs(
                 pattern_comparison_settings=pattern_comparison_settings,
                 sim_metric_on_nn_pairs=\
-                    affmat.core.ParallelCpuCrossMetricOnNNpairs(
+                    affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
                         n_cores=self.n_cores,
                         cross_metric_single_region=\
-                            affmat.core.CrossContinJaccardSingleRegion(),
+                            affinitymat.core.CrossContinJaccardSingleRegion(),
                         verbose=False))
+
+        #similarity settings for merging
+        prob_and_sim_merge_thresholds =\
+            [(x[0], x[1]*(len(contrib_scores_track_names)
+                          +len(hypothetical_contribs_track_names)
+                          +len(other_comparison_track_names)))
+             for x in self.prob_and_pertrack_sim_merge_thresholds]
+        prob_and_sim_dealbreaker_thresholds =\
+            [(x[0], x[1]*(len(contrib_scores_track_names)
+                          +len(hypothetical_contribs_track_names)
+                          +len(other_comparison_track_names)))
+             for x in self.prob_and_pertrack_sim_dealbreaker_thresholds]
+
         similar_patterns_collapser =\
             aggregator.DynamicDistanceSimilarPatternsCollapser(
                 pattern_to_pattern_sim_computer=
@@ -275,20 +286,21 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
                 aff_to_dist_mat=aff_to_dist_mat,
                 pattern_aligner=core.CrossCorrelationPatternAligner(
                     pattern_comparison_settings=
-                        affmat.core.PatternComparisonSettings(
+                        affinitymat.core.PatternComparisonSettings(
                             track_names=(
                                 hypothetical_contribs_track_names+
                                 contrib_scores_track_names+
                                 other_comparison_track_names), 
-                            track_transformer=affmat.MeanNormalizer().chain(
-                                              affmat.MagnitudeNormalizer()), 
+                            track_transformer=
+                                affinitymat.MeanNormalizer().chain(
+                                affinitymat.MagnitudeNormalizer()), 
                             min_overlap=self.min_overlap_while_sliding)),
                 collapse_condition=(lambda dist_prob, aligner_sim:
                     any([(dist_prob > x[0] and aligner_sim > x[1])
-                         for x in self.prob_and_sim_merge_thresholds])),
+                         for x in prob_and_sim_merge_thresholds])),
                 dealbreaker_condition=(lambda dist_prob, aligner_sim:
                     any([(dist_prob < x[0] and aligner_sim < x[1])              
-                         for x in self.prob_and_sim_dealbreaker_thresholds])),
+                         for x in prob_and_sim_dealbreaker_thresholds])),
                 postprocessor=postprocessor1,
                 verbose=self.verbose) 
 
@@ -303,7 +315,7 @@ class TfModiscoSeqletsToPatternsFactory(AbstractSeqletsToPatterns):
                         verbose=self.verbose, n_cores=self.n_cores),
                 min_similarity=self.min_similarity_for_seqlet_assignment),
             min_cluster_size=self.final_min_cluster_size,
-            postprocessor=self.expand_trim_expand1,
+            postprocessor=expand_trim_expand1,
             verbose=self.verbose) 
 
         final_postprocessor = aggregator.ExpandSeqletsToFillPattern(
@@ -352,6 +364,12 @@ class SeqletsToPatternsResults(object):
         grp.attrs['total_time_taken'] = self.total_time_taken
 
 
+class AbstractSeqletsToPatterns(object):
+
+    def __call__(self, seqlets):
+        raise NotImplementedError()
+
+
 class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
     def __init__(self, coarse_affmat_computer,
@@ -387,7 +405,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
         start = time.time()
 
-        for round_num, clusterer in enumerate(self.clusterer_per_round)):
+        for round_idx, clusterer in enumerate(self.clusterer_per_round):
+
+            round_num = round_idx+1
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing coarse affmat")

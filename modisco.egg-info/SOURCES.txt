@@ -2,6 +2,8 @@ modisco/__init__.py
 modisco/aggregator.py
 modisco/coordproducers.py
 modisco/core.py
+modisco/metaclusterers.py
+modisco/nearest_neighbors.py
 modisco/util.py
 modisco.egg-info/PKG-INFO
 modisco.egg-info/SOURCES.txt
@@ -13,6 +15,9 @@ modisco/affinitymat/core.py
 modisco/affinitymat/transformers.py
 modisco/cluster/__init__.py
 modisco/cluster/core.py
+modisco/tfmodisco_workflow/__init__.py
+modisco/tfmodisco_workflow/seqlets_to_patterns.py
+modisco/tfmodisco_workflow/workflow.py
 modisco/visualization/__init__.py
 modisco/visualization/matplotlibhelpers.py
 modisco/visualization/tsne.py
