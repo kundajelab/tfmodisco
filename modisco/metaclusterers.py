@@ -1,5 +1,8 @@
 from __future__ import division, print_function, absolute_import
 import sys
+import itertools
+from collections import defaultdict
+import numpy as np
 
 
 class MetaclusteringResults(object):
@@ -87,7 +90,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
              >= self.min_cluster_size)]
         
         activity_patterns = []
-        final_activity_pattern_to_attribute)vectors = defaultdict(list)
+        final_activity_pattern_to_vectors = defaultdict(list)
         for vector in attribute_vectors:
             vector_pattern = self.weak_vector_to_pattern(vector) #be liberal
             compatible_activity_patterns =\
@@ -97,12 +100,12 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                 max(compatible_activity_patterns,
                 key=lambda x: np.sum(np.abs(x))))
             activity_patterns.append(best_pattern)
-            final_activity_pattern_to_attribute_vectors[best_pattern].append(vector)
+            final_activity_pattern_to_vectors[best_pattern].append(vector)
             
         final_surviving_activity_patterns = set([
             self.pattern_to_str(activity_pattern) for activity_pattern in 
             all_possible_activity_patterns if
-            (len(final_activity_pattern_to_attribute_vectors[
+            (len(final_activity_pattern_to_vectors[
                  self.pattern_to_str(activity_pattern)])
              >= self.min_cluster_size)])
 
@@ -114,7 +117,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                   +" possible patterns") 
         
         #sort activity patterns by most to least support
-        sorted_acitivity_patterns = sorted(
+        sorted_activity_patterns = sorted(
             final_surviving_activity_patterns,
             key=lambda x: -len(final_activity_pattern_to_vectors[x]))
         activity_pattern_to_cluster_idx = dict(
@@ -123,10 +126,10 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             [(x[0],x[1]) for x in enumerate(sorted_activity_patterns)])
 
         metacluster_indices = [
-             activity_pattern_to_cluster_idx[pattern] if activity_pattern
-             in final_surviving_activity_patterns else -1 for
-             activity_pattern in activity_patterns]
-        return MetaclusterResults(
+             activity_pattern_to_cluster_idx[activity_pattern]
+             if activity_pattern in final_surviving_activity_patterns
+             else -1 for activity_pattern in activity_patterns]
+        return MetaclusteringResults(
                 metacluster_indices=np.array(metacluster_indices),
                 metacluster_idx_to_activity_pattern=
                     metacluster_idx_to_activity_pattern)

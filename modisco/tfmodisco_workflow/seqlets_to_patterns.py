@@ -19,12 +19,13 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        #gapped kmer embedding arguments
                        alphabet_size=4,
                        kmer_len=8, num_gaps=3, num_mismatches=2,
-                       gpu_batch_size=50,
+                       gpu_batch_size=20,
 
                        nn_n_jobs=4,
                        nearest_neighbors_to_compute=500,
 
                        affmat_correlation_threshold=0.15,
+                       filter_beyond_first_round=False,
 
                        tsne_perplexity = 10,
                        louvain_num_runs_and_levels_r1=[(50,-1)],
@@ -48,8 +49,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        final_min_cluster_size=30,
 
                        final_flank_to_add=10,
-                       verbose=True,
-                       batch_size=50):
+                       verbose=True):
 
         #affinity_mat calculation
         self.n_cores = n_cores
@@ -66,6 +66,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
 
         self.affmat_correlation_threshold = affmat_correlation_threshold
+        self.filter_beyond_first_round = filter_beyond_first_round
 
         #affinity mat to tsne dist mat setting
         self.tsne_perplexity = tsne_perplexity
@@ -98,7 +99,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         #other settings
         self.verbose = verbose
-        self.batch_size = batch_size
 
     def get_jsonable_config(self):
         to_return =  OrderedDict([
@@ -114,6 +114,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                  self.nearest_neighbors_to_compute),
                 ('affmat_correlation_threshold',
                  self.affmat_correlation_threshold),
+                ('filter_beyond_first_round', filter_beyond_first_round),
                 ('tsne_perplexity', self.tsne_perplexity),
                 ('louvain_num_runs_and_levels_r1',
                  self.louvain_num_runs_and_levels_r1),
@@ -135,8 +136,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 ('min_similarity_for_seqlet_assignment',
                  self.min_similarity_for_seqlet_assignment),
                 ('final_min_cluster_size', self.final_min_cluster_size),
-                ('final_flank_to_add', self.final_flank_to_add),
-                ('batch_size', self.batch_size)]) 
+                ('final_flank_to_add', self.final_flank_to_add)]) 
         return to_return
 
     def __call__(self, track_set, onehot_track_name,
@@ -336,6 +336,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 affmat_from_seqlets_with_nn_pairs=
                     affmat_from_seqlets_with_nn_pairs, 
                 filter_mask_from_correlation=filter_mask_from_correlation,
+                filter_beyond_first_round=self.filter_beyond_first_round,
                 density_adapted_affmat_transformer=
                     density_adapted_affmat_transformer,
                 clusterer_per_round=clusterer_per_round,
@@ -384,6 +385,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        nearest_neighbors_computer,
                        affmat_from_seqlets_with_nn_pairs, 
                        filter_mask_from_correlation,
+                       filter_beyond_first_round,
                        density_adapted_affmat_transformer,
                        clusterer_per_round,
                        seqlet_aggregator,
@@ -398,6 +400,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         self.affmat_from_seqlets_with_nn_pairs =\
             affmat_from_seqlets_with_nn_pairs
         self.filter_mask_from_correlation = filter_mask_from_correlation
+        self.filter_beyond_first_round = filter_beyond_first_round
         self.density_adapted_affmat_transformer =\
             density_adapted_affmat_transformer
         self.clusterer_per_round = clusterer_per_round 
@@ -430,7 +433,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             nn_start = time.time() 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Compute nearest neighbors"
-                      +"from coarse affmat")
+                      +" from coarse affmat")
                 sys.stdout.flush()
 
             seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
@@ -455,20 +458,27 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 sys.stdout.flush()
 
             #filter by correlation
-            filtered_rows_mask = self.filter_mask_from_correlation(
-                                    main_affmat=nn_affmat,
-                                    other_affmat=coarse_affmat) 
+            if (round_idx == 0 or self.filter_beyond_first_round==True):
+                filtered_rows_mask = self.filter_mask_from_correlation(
+                                        main_affmat=nn_affmat,
+                                        other_affmat=coarse_affmat) 
+                if (self.verbose):
+                    print("(Round "+str(round_num)+") Retained "
+                          +str(np.sum(filtered_rows_mask))
+                          +" rows out of "+str(len(filtered_rows_mask))
+                          +" after filtering")
+                    sys.stdout.flush()
+            else:
+                filtered_rows_mask = np.array([True for x in seqlets])
+                if (self.verbose):
+                    print("Not applying filtering for "
+                          +"rounds above first round")
+                    sys.stdout.flush()
+
             filtered_seqlets = [x[0] for x in
                        zip(seqlets, filtered_rows_mask) if (x[1])]
             filtered_affmat =\
                 nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
-
-            if (self.verbose):
-                print("(Round "+str(round_num)+") Retained "
-                      +str(np.sum(filtered_rows_mask))
-                      +" rows out of "+str(len(filtered_rows_mask))
-                      +" after filtering")
-                sys.stdout.flush()
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing density "

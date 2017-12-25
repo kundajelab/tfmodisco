@@ -40,10 +40,9 @@ class MaxCurvatureThresholdingResults(object):
 
 class MaxCurvatureThreshold(object):
 
-    def __init__(self, bins, bandwidth, num_to_consider, verbose):
+    def __init__(self, bins, bandwidth, verbose):
         self.bins = bins
         self.bandwidth = bandwidth
-        self.num_to_consider = num_to_consider
         self.verbose = verbose
 
     def __call__(self, values):
@@ -132,7 +131,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        max_seqlets_per_seq=10,
                        thresholding_function=MaxCurvatureThreshold(
                             bins=100, bandwidth=0.1,
-                            num_to_consider=1000000, verbose=True),
+                            verbose=True),
                        take_abs=True, 
                        min_ratio_top_peak=0.0,
                        min_ratio_over_bg=0.0,

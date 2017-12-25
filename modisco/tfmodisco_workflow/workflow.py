@@ -1,9 +1,4 @@
 from __future__ import division, print_function, absolute_import
-from . import affinitymat as affmat
-from . import cluster
-from . import aggregator
-from . import core
-from . import util
 from collections import defaultdict, OrderedDict, Counter
 import numpy as np
 import itertools
@@ -11,6 +6,7 @@ import time
 import sys
 import h5py
 import json
+from .. import core
 
 
 class TfModiscoResults(object):
@@ -54,7 +50,7 @@ class SubMetaclusterResults(object):
         self.metacluster_size = metacluster_size
         self.activity_pattern = activity_pattern
         self.seqlets = seqlets
-        self.seqlets_to_patterns_result
+        self.seqlets_to_patterns_result = seqlets_to_patterns_result
 
     def save_hdf5(self, grp):
         grp.attrs['size'] = metacluster_size
@@ -66,49 +62,52 @@ class SubMetaclusterResults(object):
 
 
 def run_workflow(task_names, contrib_scores, hypothetical_contribs,
-                 one_hot, coord_producer, overlap_resolver,
-                 metaclusterer,
+                 one_hot,
                  seqlets_to_patterns_factory,
+                 coord_producer, overlap_resolver,
+                 threshold_score_transformer_factory, 
+                 metaclusterer,
                  verbose=True):
 
     contrib_scores_tracks = [
-        modisco.core.DataTrack(
+        core.DataTrack(
             name=key+"_contrib_scores",
             fwd_tracks=contrib_scores[key],
             rev_tracks=contrib_scores[key][:,::-1,::-1],
             has_pos_axis=True) for key in task_names] 
 
     hypothetical_contribs_tracks = [
-        modisco.core.DataTrack(name=key+"_hypothetical_contribs",
+        core.DataTrack(name=key+"_hypothetical_contribs",
                        fwd_tracks=hypothetical_contribs[key],
                        rev_tracks=hypothetical_contribs[key][:,::-1,::-1],
                        has_pos_axis=True)
                        for key in task_names]
 
-    onehot_track = modisco.core.DataTrack(name="sequence", fwd_tracks=onehot,
-                               rev_tracks=onehot[:,::-1,::-1],
-                               has_pos_axis=True)
+    onehot_track = core.DataTrack(
+                        name="sequence", fwd_tracks=one_hot,
+                        rev_tracks=one_hot[:,::-1,::-1],
+                        has_pos_axis=True)
 
-    track_set = modisco.core.TrackSet(
+    track_set = core.TrackSet(
                     data_tracks=contrib_scores_tracks
                     +hypothetical_contribs_tracks+[onehot_track])
 
     per_position_contrib_scores = dict([
         (x, np.sum(contrib_scores[x],axis=2)) for x in task_names])
 
-    task_name_to_labeler = dict([
-        (task_name, modisco.core.SignedContribThresholdLabeler(
-            flank_to_ignore=flank,
+    task_name_to_threshold_transformer = dict([
+        (task_name, threshold_score_transformer_factory(
             name=task_name+"_label",
             track_name=task_name+"_contrib_scores"))
          for task_name in task_names]) 
 
-    multitask_seqlet_creation_results = modisco.core.MultiTaskSeqletCreation(
+    multitask_seqlet_creation_results = core.MultiTaskSeqletCreation(
         coord_producer=coord_producer,
         track_set=track_set,
         overlap_resolver=overlap_resolver)(
             task_name_to_score_track=per_position_contrib_scores,
-            task_name_to_labeler=task_name_to_labeler)
+            task_name_to_threshold_transformer=\
+                task_name_to_threshold_transformer)
 
     seqlets = multitask_seqlet_creation_results.final_seqlets
 
@@ -117,18 +116,17 @@ def run_workflow(task_names, contrib_scores, hypothetical_contribs,
                            for x in seqlets]))
 
     metaclustering_results = metaclusterer(attribute_vectors)
-    metacluster_indices = metaclustering_results.clusters_mapping 
+    metacluster_indices = metaclustering_results.metacluster_indices
     metacluster_idx_to_activity_pattern =\
         metaclustering_results.metacluster_idx_to_activity_pattern
 
-    num_metaclusters = max(clusters_mapping)+1
-    metacluster_indices = np.array(clusters_mapping)
+    num_metaclusters = max(metacluster_indices)+1
     metacluster_sizes = [np.sum(metacluster_idx==metacluster_indices)
                           for metacluster_idx in range(num_metaclusters)]
-    if (self.verbose):
+    if (verbose):
         print("Metacluster sizes: ",metacluster_sizes)
         print("Idx to activities: ",metacluster_idx_to_activity_pattern)
-        sys.out.flush()
+        sys.stdout.flush()
 
     metacluster_idx_to_submetacluster_results = {}
 
@@ -136,7 +134,7 @@ def run_workflow(task_names, contrib_scores, hypothetical_contribs,
         sorted(enumerate(metacluster_sizes), key=lambda x: x[1]):
         print("On metacluster "+str(metacluster_idx))
         print("Metacluster size", metacluster_size)
-        sys.out.flush()
+        sys.stdout.flush()
         metacluster_activities = [
             int(x) for x in
             metacluster_idx_to_activity_pattern[metacluster_idx].split(",")]
@@ -149,10 +147,10 @@ def run_workflow(task_names, contrib_scores, hypothetical_contribs,
                 zip(task_names, metacluster_activities) if x[1] != 0])
         print('Relevant tasks: ', relevant_task_names)
         print('Relevant signs: ', relevant_task_signs)
-        sys.out.flush()
+        sys.stdout.flush()
         if (len(relevant_task_names) == 0):
             print("No tasks found relevant; skipping")
-            sys.out.flush()
+            sys.stdout.flush()
             continue
         
         seqlets_to_patterns = seqlets_to_patterns_factory(
@@ -175,8 +173,10 @@ def run_workflow(task_names, contrib_scores, hypothetical_contribs,
 
     return TfModiscoResults(
              task_names=task_names,
-             seqlet_creation_results=multitask_seqlet_creation_results,
+             multitask_seqlet_creation_results=
+                multitask_seqlet_creation_results,
              seqlet_attribute_vectors=attribute_vectors,
              metaclustering_results=metaclustering_results,
-             metacluster_idx_to_submetacluster_results)
+             metacluster_idx_to_submetacluster_results=
+                metacluster_idx_to_submetacluster_results)
 

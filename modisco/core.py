@@ -199,22 +199,10 @@ class AbstractAttributeProvider(object):
         raise NotImplementedError()
 
 
-class AbstractLabeler(AbstractAttributeProvider):
+class AbstractThresholdScoreTransformer(AbstractAttributeProvider):
 
     def __init__(self, name):
-        super(AbstractLabeler, self).__init__(name=name)
-
-    def fit(self, seqlets):
-        raise NotImplementedError()
-
-    def __call__(self, seqlet): #provide the label
-        raise NotImplementedError()
-
-
-class AbstractThresholdLabeler(AbstractLabeler):
-
-    def __init__(self, name):
-        super(AbstractThresholdLabeler, self).__init__(name=name)
+        super(AbstractThresholdScoreTransformer, self).__init__(name=name)
         self.threshold = None
 
     def get_val(self, seqlet):
@@ -238,10 +226,20 @@ class AbstractThresholdLabeler(AbstractLabeler):
                     val=self.get_val(seqlet))
 
 
-class SignedContribThresholdLabeler(AbstractThresholdLabeler):
+class LinearThenLogFactory(object):
+
+    def __init__(self, flank_to_ignore):
+        self.flank_to_ignore = flank_to_ignore
+
+    def __call__(self, name, track_name):
+        return LinearThenLog(name=name, track_name=track_name,
+                             flank_to_ignore=self.flank_to_ignore)
+
+
+class LinearThenLog(AbstractThresholdScoreTransformer):
 
     def __init__(self, name, track_name, flank_to_ignore):
-        super(SignedContribThresholdLabeler, self).__init__(name=name)
+        super(LinearThenLog, self).__init__(name=name)
         self.track_name = track_name
         self.flank_to_ignore = flank_to_ignore
 
@@ -254,18 +252,10 @@ class SignedContribThresholdLabeler(AbstractThresholdLabeler):
         return np.min(np.abs(vals))
 
     def get_label_given_threshold_and_val(self, threshold, val):
-       # sigmoid_logit = (np.abs(val)/threshold - 1.0)/100.0
-       # sigmoid_logit = min(sigmoid_logit, 10.0)
-       # return (np.exp(sigmoid_logit)/(1+np.exp(sigmoid_logit)))*np.sign(val)
-       # sigmoid_logit = np.abs(val)*(15.0/threshold)
-       # sigmoid_logit = min(sigmoid_logit, 15)
         core_val = np.abs(val)/threshold
         core_val = ((1+(np.log(core_val)/np.log(2)))
                     if (core_val >= 1) else core_val)
         return core_val*np.sign(val)
-       # return (2*(np.exp(sigmoid_logit)/                                      
-       #             (1+np.exp(sigmoid_logit)))-1)*np.sign(val)
-        #return (threshold <= np.abs(val))*np.sign(val)
 
 
 class MultiTaskSeqletCreationResults(object):
@@ -295,7 +285,7 @@ class MultiTaskSeqletCreation(object):
         self.verbose=verbose
 
     def __call__(self, task_name_to_score_track,
-                       task_name_to_labeler):
+                       task_name_to_threshold_transformer):
         task_name_to_coord_producer_results = {}
         task_name_to_seqlets = {}
         for task_name in task_name_to_score_track:
@@ -307,15 +297,15 @@ class MultiTaskSeqletCreation(object):
                 coord_producer_results
             seqlets = self.track_set.create_seqlets(
                         coords=coord_producer_results.coords) 
-            task_name_to_labeler[task_name].fit(seqlets)
+            task_name_to_threshold_transformer[task_name].fit(seqlets)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
         if (self.verbose):
             print("After resolving overlaps, got "
                   +str(len(final_seqlets))+" seqlets")
-        for labeler in task_name_to_labeler.values():
-            labeler.annotate(final_seqlets)
+        for score_transformer in task_name_to_threshold_transformer.values():
+            score_transformer.annotate(final_seqlets)
         return MultiTaskSeqletCreationResults(
                 final_seqlets=final_seqlets,
                 task_name_to_coord_producer_results=
