@@ -366,7 +366,8 @@ def single_louvain_run(lpath, community_binary, hierarchy_binary,
 
 
 def runlouvain_average_runs(filename, n_runs,
-                            level_to_return, seed=1234, parallel_threads=1):
+                            level_to_return, verbose,
+                            seed=1234, parallel_threads=1):
 
     assert level_to_return==-1 or level_to_return==1
 
@@ -379,7 +380,7 @@ def runlouvain_average_runs(filename, n_runs,
         get_paths_and_run_convert(filename) 
 
     coocc_count = None
-    communities_list = (Parallel(n_jobs=parallel_threads, verbose=51)                          
+    communities_list = (Parallel(n_jobs=parallel_threads, verbose=verbose) 
                            (delayed(single_louvain_run)
                                    (lpath, community_binary, hierarchy_binary,
                                     filename, level_to_return,

@@ -28,9 +28,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        filter_beyond_first_round=False,
 
                        tsne_perplexity = 10,
-                       louvain_num_runs_and_levels_r1=[(50,-1)],
+                       louvain_num_runs_and_levels_r1=[(200,-1)],
                        louvain_num_runs_and_levels_r2=[(200,-1)],
-                       louvain_contin_runs_r1 = 20,
+                       louvain_contin_runs_r1 = 50,
                        louvain_contin_runs_r2 = 50,
                        final_louvain_level_to_return=1,
 
@@ -594,7 +594,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             affmat=filtered_affmat,
             cluster_results=cluster_results, 
             total_time_taken=total_time_taken,
-
            
             seqlets_sets=seqlets_sets,
             coarse_affmats=coarse_affmats,

@@ -354,4 +354,5 @@ class LouvainMembershipAverage(AbstractAffMatTransformer):
                 graph=affinity_mat,
                 n_runs=self.n_runs, level_to_return=self.level_to_return,
                 parallel_threads=self.parallel_threads,
-                seed=self.seed)
+                seed=self.seed,
+                verbose=self.verbose)
