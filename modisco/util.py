@@ -3,12 +3,29 @@ import os
 import signal
 import deeplift
 import numpy as np
-import deeplift.backend as B
 import theano
 import theano.tensor.signal.conv
 import h5py
 import traceback
 from sklearn.neighbors.kde import KernelDensity
+
+
+def save_patterns(patterns, grp):
+    for idx, pattern in enumerate(patterns):
+        pattern_grp = grp.create_group("pattern_"+str(idx)) 
+        pattern.save_hdf5(pattern_grp)
+
+
+def save_string_list(string_list, dset_name, grp):
+    dset = grp.create_dataset(dset_name, (len(self.seqlets),),
+                              dtype=h5py.special_dtype(vlen=bytes))
+    dset[:] = string_list
+
+
+def save_seqlet_coords(seqlets, dset_name, grp):
+    coords_strings = [str(x.coor) for x in seqlets] 
+    save_string_list(string_list=coords_strings,
+                     dset_name=dset_name, grp=grp)
 
 
 def factorial(val):
@@ -134,6 +151,7 @@ def create_detector_from_subset_of_sequential_layers(sequential_container,
                                                     idx_of_layer_of_interest,
                                                     channel_indices,
                                                     multipliers_on_channels):
+    import deeplift.backend as B
     layers = []  
     #this adds in all the layers preceeding idx_of_layer_of_interest
     #(remember zero-based indexing...)

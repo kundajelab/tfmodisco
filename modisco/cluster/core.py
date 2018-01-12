@@ -20,11 +20,10 @@ class ClusterResults(object):
 
 class LouvainClusterResults(ClusterResults):
 
-    def __init__(self, cluster_indices, level_to_return, hierarchy, Q):
+    def __init__(self, cluster_indices, level_to_return, Q):
         super(LouvainClusterResults, self).__init__(
          cluster_indices=cluster_indices)
         self.level_to_return = level_to_return
-        self.hierarchy = hierarchy
         self.Q = Q
 
 
@@ -50,7 +49,7 @@ class PhenographCluster(AbstractAffinityMatClusterer):
         self.nn_method = nn_method
     
     def __call__(self, affinity_mat):
-        communities, graph, Q, hierarchy = ph.cluster.cluster(
+        communities, graph, Q, = ph.cluster.cluster(
             data=affinity_mat,
             k=self.k, min_cluster_size=self.min_cluster_size,
             jaccard=self.jaccard, primary_metric=self.primary_metric,
@@ -59,7 +58,6 @@ class PhenographCluster(AbstractAffinityMatClusterer):
             nn_method=self.nn_method)
         return LouvainClusterResults(
                 cluster_indices=communities,
-                hierarchy=hierarchy,
                 Q=Q)
         
 
@@ -67,11 +65,14 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, level_to_return=-1,
                        affmat_transformer=None, min_cluster_size=10,
-                       q_tol=0.0, contin_runs=100, louvain_time_limit=2000,
+                       max_clusters=None,
+                       contin_runs=100,
+                       q_tol=0.0, louvain_time_limit=2000,
                        verbose=True, seed=1234):
         self.level_to_return = level_to_return
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
+        self.max_clusters = max_clusters
         self.q_tol = q_tol
         self.contin_runs = contin_runs
         self.louvain_time_limit = louvain_time_limit
@@ -89,22 +90,20 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         else:
             affinity_mat = orig_affinity_mat
 
-        communities, graph, Q, hierarchy =\
+        communities, graph, Q, =\
             ph.cluster.runlouvain_given_graph(
                 graph=affinity_mat,
+                level_to_return=self.level_to_return,
                 min_cluster_size=self.min_cluster_size,
+                max_clusters=self.max_clusters,
                 q_tol=self.q_tol,
                 contin_runs=self.contin_runs,
                 louvain_time_limit=self.louvain_time_limit,
                 seed=self.seed)
 
-        level_to_return = min(self.level_to_return, hierarchy.shape[-1])
-        communities = hierarchy[:, level_to_return]  
-
         cluster_results = LouvainClusterResults(
                 cluster_indices=communities,
-                hierarchy=hierarchy,
-                level_to_return=level_to_return,
+                level_to_return=self.level_to_return,
                 Q=Q)
 
         if (self.verbose):

@@ -5,6 +5,8 @@ from collections import defaultdict
 import numpy as np
 import scipy
 import itertools
+import sys
+from . import util
 
 
 class Snippet(object):
@@ -22,6 +24,11 @@ class Snippet(object):
         new_rev = self.rev[len(self)-end_idx:len(self)-start_idx]
         return Snippet(fwd=new_fwd, rev=new_rev,
                        has_pos_axis=self.has_pos_axis)
+
+    def save_hdf5(self, grp):
+        grp.create_dataset("fwd", data=self.fwd)  
+        grp.create_dataset("rev", data=self.rev)
+        grp.attr["has_pos_axis"] = self.has_pos_axis
 
     def __len__(self):
         return len(self.fwd)
@@ -193,22 +200,10 @@ class AbstractAttributeProvider(object):
         raise NotImplementedError()
 
 
-class AbstractLabeler(AbstractAttributeProvider):
+class AbstractThresholdScoreTransformer(AbstractAttributeProvider):
 
     def __init__(self, name):
-        super(AbstractLabeler, self).__init__(name=name)
-
-    def fit(self, seqlets):
-        raise NotImplementedError()
-
-    def __call__(self, seqlet): #provide the label
-        raise NotImplementedError()
-
-
-class AbstractThresholdLabeler(AbstractLabeler):
-
-    def __init__(self, name):
-        super(AbstractThresholdLabeler, self).__init__(name=name)
+        super(AbstractThresholdScoreTransformer, self).__init__(name=name)
         self.threshold = None
 
     def get_val(self, seqlet):
@@ -232,10 +227,20 @@ class AbstractThresholdLabeler(AbstractLabeler):
                     val=self.get_val(seqlet))
 
 
-class SignedContribThresholdLabeler(AbstractThresholdLabeler):
+class LinearThenLogFactory(object):
+
+    def __init__(self, flank_to_ignore):
+        self.flank_to_ignore = flank_to_ignore
+
+    def __call__(self, name, track_name):
+        return LinearThenLog(name=name, track_name=track_name,
+                             flank_to_ignore=self.flank_to_ignore)
+
+
+class LinearThenLog(AbstractThresholdScoreTransformer):
 
     def __init__(self, name, track_name, flank_to_ignore):
-        super(SignedContribThresholdLabeler, self).__init__(name=name)
+        super(LinearThenLog, self).__init__(name=name)
         self.track_name = track_name
         self.flank_to_ignore = flank_to_ignore
 
@@ -248,18 +253,26 @@ class SignedContribThresholdLabeler(AbstractThresholdLabeler):
         return np.min(np.abs(vals))
 
     def get_label_given_threshold_and_val(self, threshold, val):
-       # sigmoid_logit = (np.abs(val)/threshold - 1.0)/100.0
-       # sigmoid_logit = min(sigmoid_logit, 10.0)
-       # return (np.exp(sigmoid_logit)/(1+np.exp(sigmoid_logit)))*np.sign(val)
-       # sigmoid_logit = np.abs(val)*(15.0/threshold)
-       # sigmoid_logit = min(sigmoid_logit, 15)
         core_val = np.abs(val)/threshold
         core_val = ((1+(np.log(core_val)/np.log(2)))
                     if (core_val >= 1) else core_val)
         return core_val*np.sign(val)
-       # return (2*(np.exp(sigmoid_logit)/                                      
-       #             (1+np.exp(sigmoid_logit)))-1)*np.sign(val)
-        #return (threshold <= np.abs(val))*np.sign(val)
+
+
+class MultiTaskSeqletCreationResults(object):
+
+    def __init__(self, final_seqlets, task_name_to_coord_producer_results): 
+        self.final_seqlets = final_seqlets
+        self.task_name_to_coord_producer_results =\
+            task_name_to_coord_producer_results
+
+    def save_hdf5(self, grp):
+        util.save_seqlet_coords(seqlets=self.final_seqlets,
+                                dset_name="final_seqlets", grp=grp)  
+        tntcpg = grp.create_group("task_name_to_coord_producer_results")
+        for task_name,coord_producer_results in\
+            self.task_name_to_coord_producer_results.items():
+            coord_producer_results.save_hdf5(tntcpg.create_group(task_name))
 
 
 class MultiTaskSeqletCreation(object):
@@ -273,23 +286,32 @@ class MultiTaskSeqletCreation(object):
         self.verbose=verbose
 
     def __call__(self, task_name_to_score_track,
-                       task_name_to_labeler):
+                       task_name_to_threshold_transformer):
+        task_name_to_coord_producer_results = {}
         task_name_to_seqlets = {}
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
+            coord_producer_results =\
+                self.coord_producer(score_track=score_track)
+            task_name_to_coord_producer_results[task_name] =\
+                coord_producer_results
             seqlets = self.track_set.create_seqlets(
-                        coords=self.coord_producer(score_track=score_track)) 
-            task_name_to_labeler[task_name].fit(seqlets)
+                        coords=coord_producer_results.coords) 
+            task_name_to_threshold_transformer[task_name].fit(seqlets)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
         if (self.verbose):
             print("After resolving overlaps, got "
                   +str(len(final_seqlets))+" seqlets")
-        for labeler in task_name_to_labeler.values():
-            labeler.annotate(final_seqlets)
-        return final_seqlets 
+        for score_transformer in task_name_to_threshold_transformer.values():
+            score_transformer.annotate(final_seqlets)
+        return MultiTaskSeqletCreationResults(
+                final_seqlets=final_seqlets,
+                task_name_to_coord_producer_results=
+                 task_name_to_coord_producer_results)
+                 
 
             
 class SeqletCoordinates(object):
@@ -512,7 +534,19 @@ class SeqletsAndAlignments(object):
         self.unique_seqlets[seqlet.exidx_start_end_string] = seqlet
 
     def get_seqlets(self):
-        return self.unique_seqlets.values()
+        return [x.seqlet for x in self.arr]
+
+    def save_hdf5(self, grp):
+        util.save_seqlet_coords(seqlets=self.seqlets,
+                                dset_name="seqlets", grp=grp) 
+        grp.create_dataset("alnmts",
+                           data=np.array([x.alnmt for x in self.arr]))
+
+    def copy(self):
+        the_copy = SeqletsAndAlignments()
+        for seqlet_and_alnmt in self:
+            the_copy.append(seqlet_and_alnmt)
+        return the_copy
 
 
 class AggregatedSeqlet(Pattern):
@@ -528,9 +562,16 @@ class AggregatedSeqlet(Pattern):
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
+    def save_hdf5(self, grp):
+        for track_name,snippet in self.track_name_to_snippet.items():
+            snippet.save_hdf5(grp.create_group(track_name))
+        self._seqlets_and_alnmts.save_hdf5(
+             grp.create_group("seqlets_and_alnmts"))
+        
+
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=
-                                self._seqlets_and_alnmts)
+                                self._seqlets_and_alnmts.copy())
 
     def get_fwd_seqlet_data(self, track_names, track_transformer):
         to_return = []
@@ -540,15 +581,21 @@ class AggregatedSeqlet(Pattern):
                                 track_transformer=track_transformer)[0])
         return np.array(to_return) 
 
-    def trim_to_positions_with_frac_support_of_peak(self, frac):
+    def trim_to_positions_with_min_support(self,
+            min_frac, min_num, verbose=True):
         per_position_center_counts =\
             self.get_per_position_seqlet_center_counts()
+        from matplotlib import pyplot as plt
+        plt.plot(range(len(per_position_center_counts)),
+                 per_position_center_counts)
+        plt.show()
         max_support = max(per_position_center_counts)
+        num = min(min_num, max_support*min_frac)
         left_idx = 0
-        while per_position_center_counts[left_idx] < frac*max_support:
+        while per_position_center_counts[left_idx] < num:
             left_idx += 1
         right_idx = len(per_position_center_counts)
-        while per_position_center_counts[right_idx-1] < frac*max_support:
+        while per_position_center_counts[right_idx-1] < num:
             right_idx -= 1
 
         retained_seqlets_and_alnmts = []
@@ -563,6 +610,11 @@ class AggregatedSeqlet(Pattern):
         new_seqlets_and_alnmnts = [SeqletAndAlignment(seqlet=x.seqlet,
                                     alnmt=x.alnmt-new_start_idx) for x in
                                     retained_seqlets_and_alnmts] 
+        num_trimmed = self.num_seqlets - len(new_seqlets_and_alnmnts) 
+        if (verbose):
+            print("Trimmed",num_trimmed,"out of",self.num_seqlets)
+            sys.stdout.flush()
+        
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
 
     def trim_to_start_and_end_idx(self, start_idx, end_idx):
