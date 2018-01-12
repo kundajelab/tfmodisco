@@ -65,12 +65,14 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, level_to_return=-1,
                        affmat_transformer=None, min_cluster_size=10,
+                       max_clusters=None,
                        contin_runs=100,
                        q_tol=0.0, louvain_time_limit=2000,
                        verbose=True, seed=1234):
         self.level_to_return = level_to_return
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
+        self.max_clusters = max_clusters
         self.q_tol = q_tol
         self.contin_runs = contin_runs
         self.louvain_time_limit = louvain_time_limit
@@ -93,6 +95,7 @@ class LouvainCluster(AbstractAffinityMatClusterer):
                 graph=affinity_mat,
                 level_to_return=self.level_to_return,
                 min_cluster_size=self.min_cluster_size,
+                max_clusters=self.max_clusters,
                 q_tol=self.q_tol,
                 contin_runs=self.contin_runs,
                 louvain_time_limit=self.louvain_time_limit,

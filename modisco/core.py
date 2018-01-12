@@ -5,6 +5,7 @@ from collections import defaultdict
 import numpy as np
 import scipy
 import itertools
+import sys
 from . import util
 
 
@@ -580,15 +581,21 @@ class AggregatedSeqlet(Pattern):
                                 track_transformer=track_transformer)[0])
         return np.array(to_return) 
 
-    def trim_to_positions_with_frac_support_of_peak(self, frac):
+    def trim_to_positions_with_min_support(self,
+            min_frac, min_num, verbose=True):
         per_position_center_counts =\
             self.get_per_position_seqlet_center_counts()
+        from matplotlib import pyplot as plt
+        plt.plot(range(len(per_position_center_counts)),
+                 per_position_center_counts)
+        plt.show()
         max_support = max(per_position_center_counts)
+        num = min(min_num, max_support*min_frac)
         left_idx = 0
-        while per_position_center_counts[left_idx] < frac*max_support:
+        while per_position_center_counts[left_idx] < num:
             left_idx += 1
         right_idx = len(per_position_center_counts)
-        while per_position_center_counts[right_idx-1] < frac*max_support:
+        while per_position_center_counts[right_idx-1] < num:
             right_idx -= 1
 
         retained_seqlets_and_alnmts = []
@@ -603,6 +610,11 @@ class AggregatedSeqlet(Pattern):
         new_seqlets_and_alnmnts = [SeqletAndAlignment(seqlet=x.seqlet,
                                     alnmt=x.alnmt-new_start_idx) for x in
                                     retained_seqlets_and_alnmts] 
+        num_trimmed = self.num_seqlets - len(new_seqlets_and_alnmnts) 
+        if (verbose):
+            print("Trimmed",num_trimmed,"out of",self.num_seqlets)
+            sys.stdout.flush()
+        
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
 
     def trim_to_start_and_end_idx(self, start_idx, end_idx):

@@ -184,7 +184,7 @@ def graph2binary(filename, graph):
 
 def get_modularity(msg):
     # pattern = re.compile('modularity increased from -*0.\d+ to 0.\d+')
-    pattern = re.compile('modularity increased from -*\d.\d+e*-*\d+ to \d.\d+')
+    pattern = re.compile('modularity increased from -*\d.?\d*e*-*\d+ to \d.?\d*')
     matches = pattern.findall(msg.decode())
     q = list()
     for line in matches:
@@ -246,7 +246,8 @@ def parse_l1_clusters(stdout):
     return np.array(communities)
 
 
-def runlouvain(filename, level_to_return=-1, tol=1e-3, contin_runs=50,
+def runlouvain(filename, level_to_return=-1, tol=1e-3,
+                         max_clusters=-1, contin_runs=50,
                          max_runs=500, time_limit=2000, seed=1234):
     """
     From binary graph file filename.bin, optimize modularity by running multiple random re-starts of
@@ -269,7 +270,7 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3, contin_runs=50,
     (lpath, community_binary, hierarchy_binary) =\
         get_paths_and_run_convert(filename) 
 
-    Q = 0
+    Q = -np.inf
     run = 0
     updated = 0
     while run - updated < contin_runs and run < max_runs and (time.time() - tic) < time_limit:
@@ -278,7 +279,7 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3, contin_runs=50,
         fout = open(filename + '.tree', 'w')
         args = [lpath + community_binary, filename + '_graph.bin',
                 str(rng.random_integers(0,9999)), '-l',
-                str(level_to_return),
+                str(level_to_return), "-m", str(max_clusters),
                 '-v', '-w', filename + '_graph.weights']
         p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
         # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
@@ -320,17 +321,18 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3, contin_runs=50,
             print("After {} runs, maximum modularity is Q = {}".format(run, Q))
 
     print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
+    sys.stdout.flush()
 
     return communities, Q
 
 
 def single_louvain_run(lpath, community_binary, hierarchy_binary,
-                       filename, level_to_return, seed):
+                       filename, level_to_return, max_clusters, seed):
     # run community
     fout = open(filename + '.tree_'+str(seed), 'w')
     args = [lpath + community_binary, filename + '_graph.bin',
             str(seed), '-l',
-            str(level_to_return),
+            str(level_to_return), "-m", str(max_clusters),
             '-v', '-w', filename + '_graph.weights']
     p = subprocess.Popen(args, stdout=fout, stderr=subprocess.PIPE)
     # Here, we print communities to filename.tree and retain the modularity scores reported piped to stderr
@@ -367,6 +369,7 @@ def single_louvain_run(lpath, community_binary, hierarchy_binary,
 
 def runlouvain_average_runs(filename, n_runs,
                             level_to_return, verbose,
+                            max_clusters=-1,
                             seed=1234, parallel_threads=1):
 
     assert level_to_return==-1 or level_to_return==1
@@ -383,7 +386,7 @@ def runlouvain_average_runs(filename, n_runs,
     communities_list = (Parallel(n_jobs=parallel_threads, verbose=verbose) 
                            (delayed(single_louvain_run)
                                    (lpath, community_binary, hierarchy_binary,
-                                    filename, level_to_return,
+                                    filename, level_to_return, max_clusters,
                                     rng.random_integers(0,9999))
                             for i in range(n_runs)))
     coocc_count = np.zeros((len(communities_list[0]),

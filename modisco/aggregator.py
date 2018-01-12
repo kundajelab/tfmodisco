@@ -30,12 +30,16 @@ class AdhocAggSeqletPostprocessor(AbstractAggSeqletPostprocessor):
 
 class TrimToFracSupport(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, frac):
-        self.frac = frac
+    def __init__(self, min_frac, min_num, verbose):
+        self.min_frac = min_frac
+        self.min_num = min_num
+        self.verbose = verbose
 
     def __call__(self, aggregated_seqlets):
-        return [x.trim_to_positions_with_frac_support_of_peak(
-                  frac=self.frac) for x in aggregated_seqlets]
+        return [x.trim_to_positions_with_min_support(
+                  min_frac=self.min_frac,
+                  min_num=self.min_num,
+                  verbose=self.verbose) for x in aggregated_seqlets]
 
 
 class TrimToBestWindow(AbstractAggSeqletPostprocessor):

@@ -35,6 +35,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        final_louvain_level_to_return=1,
 
                        frac_support_to_trim_to=0.2,
+                       min_num_to_trim_to=30,
                        trim_to_window_size=30,
                        initial_flank_to_add=10,
 
@@ -80,6 +81,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         #postprocessor1 settings
         self.frac_support_to_trim_to = frac_support_to_trim_to
+        self.min_num_to_trim_to = min_num_to_trim_to
         self.trim_to_window_size = trim_to_window_size
         self.initial_flank_to_add = initial_flank_to_add 
 
@@ -127,6 +129,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 ('louvain_contin_runs_r2',
                  self.louvain_contin_runs_r2),
                 ('frac_support_to_trim_to', self.frac_support_to_trim_to),
+                ('min_num_to_trim_to', self.min_num_to_trim_to),
                 ('trim_to_window_size', self.trim_to_window_size),
                 ('initial_flank_to_add', self.initial_flank_to_add),
                 ('prob_and_pertrack_sim_merge_thresholds',
@@ -248,7 +251,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 flank_to_add=self.initial_flank_to_add))
         postprocessor1 =\
             aggregator.TrimToFracSupport(
-                        frac=self.frac_support_to_trim_to)\
+                        min_frac=self.frac_support_to_trim_to,
+                        min_num=self.min_num_to_trim_to,
+                        verbose=self.verbose)\
                       .chain(expand_trim_expand1)
         seqlet_aggregator = aggregator.GreedySeqletAggregator(
             pattern_aligner=core.CrossContinJaccardPatternAligner(

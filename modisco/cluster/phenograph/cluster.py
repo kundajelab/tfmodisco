@@ -119,7 +119,8 @@ def cluster(data,
 
 
 def runlouvain_given_graph(graph, level_to_return, q_tol, louvain_time_limit,
-                           min_cluster_size, contin_runs=20, tic=None,
+                           min_cluster_size, max_clusters,
+                           contin_runs=20, tic=None,
                            seed=1234):
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
@@ -128,7 +129,8 @@ def runlouvain_given_graph(graph, level_to_return, q_tol, louvain_time_limit,
     graph2binary(uid, graph)
     communities, Q, =\
      runlouvain(uid, level_to_return=level_to_return,
-                tol=q_tol, contin_runs=contin_runs, 
+                tol=q_tol, max_clusters=max_clusters,
+                contin_runs=contin_runs, 
                 time_limit=louvain_time_limit, seed=seed)
     if (tic is not None):
         print("PhenoGraph complete in {} seconds".format(time.time() - tic))
@@ -142,7 +144,7 @@ def runlouvain_given_graph(graph, level_to_return, q_tol, louvain_time_limit,
 
 
 def runlouvain_average_runs_given_graph(
-        graph, n_runs, level_to_return, parallel_threads,
+        graph, n_runs, level_to_return, max_clusters, parallel_threads,
         verbose, tic=None, seed=1234):
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
@@ -150,7 +152,8 @@ def runlouvain_average_runs_given_graph(
     uid = uuid.uuid1().hex
     graph2binary(uid, graph)
     coocc_count = runlouvain_average_runs(
-                    uid, level_to_return=level_to_return, n_runs=n_runs,
+                    uid, level_to_return=level_to_return,
+                    max_clusters=max_clusters, n_runs=n_runs,
                     seed=seed, parallel_threads=parallel_threads,
                     verbose=verbose)
     if (tic is not None):

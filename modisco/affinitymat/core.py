@@ -251,6 +251,52 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
         return to_return
 
 
+def contin_jaccard_vec_mat_sim(a_row, mat):
+    union = np.sum(np.maximum(np.abs(a_row[None,:]),
+                              np.abs(mat)),axis=1)
+    intersection = np.sum(np.minimum(np.abs(a_row[None,:]),
+                                     np.abs(mat))
+                          *np.sign(a_row[None,:])
+                          *np.sign(mat), axis=1)
+    return intersection.astype("float")/union
+
+
+class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
+
+    def __init__(self, verbose=True, n_cores=1):
+        self.verbose = verbose
+        self.n_cores = n_cores
+
+    def __call__(self, vecs1, vecs2):
+
+        start_time = time.time()
+        normed_vecs1 = vecs1/np.sum(np.abs(vecs1), axis=1)[:,None] 
+        normed_vecs2 = vecs2/np.sum(np.abs(vecs2), axis=1)[:,None] 
+        if (self.verbose):
+            print("Normalization computed in",
+                  round(time.time()-start_time,2),"s")
+            sys.stdout.flush()
+
+        similarity_rows = []
+
+        job_arguments = []
+        for idx in range(0,len(normed_vecs1)):
+            job_arguments.append(normed_vecs1[idx])
+        to_concat = (Parallel(n_jobs=self.n_cores)
+                       (delayed(contin_jaccard_vec_mat_sim)(
+                            job_arg, normed_vecs2)
+                        for job_arg in job_arguments))
+        to_return = np.array(to_concat)
+        end_time = time.time()
+    
+        if (self.verbose):
+            print("Contin jaccard similarity mat computed in",
+                  round(end_time-start_time,2),"s")
+            sys.stdout.flush()
+
+        return to_return
+
+
 class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
 
     def __init__(self, seqlets_to_1d_embedder,
