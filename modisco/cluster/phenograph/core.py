@@ -184,7 +184,7 @@ def graph2binary(filename, graph):
 
 def get_modularity(msg):
     # pattern = re.compile('modularity increased from -*0.\d+ to 0.\d+')
-    pattern = re.compile('modularity increased from -*\d.?\d*e*-*\d+ to \d.?\d*')
+    pattern = re.compile('modularity increased from -?\d.?\d*e?-?\d* to -?\d.?\d*e?-?\d*')
     matches = pattern.findall(msg.decode())
     q = list()
     for line in matches:
@@ -238,6 +238,8 @@ def parse_l1_clusters(stdout):
     for i,line in enumerate(stdout.splitlines()):
         idx,cluster = line.split(" ")
         idx,cluster = int(idx),int(cluster)
+        if (cluster==2):
+            assert False
         max_idx = max(idx, max_idx)
         idx_to_cluster[idx] = cluster
     communities = []
