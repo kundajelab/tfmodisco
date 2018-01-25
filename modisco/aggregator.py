@@ -118,70 +118,53 @@ class AbstractTwoDMatSubclusterer(object):
         raise NotImplementedError()
 
 
-class RecursiveKmeans(AbstractTwoDMatSubclusterer):
-
-    def __init__(self, threshold, minimum_size_for_splitting, verbose=True):
-        self.threshold = threshold
-        self.minimum_size_for_splitting = minimum_size_for_splitting
-        self.verbose = verbose
-
-    def __call__(self, twod_mat):
-        import sklearn.cluster
-
-        if (len(twod_mat) < self.minimum_size_for_splitting):
-            print("No split; cluster size is "+str(len(twod_mat)))
-            return np.zeros(len(twod_mat))
-            
-        cluster_indices = sklearn.cluster.KMeans(n_clusters=2).\
-                               fit_predict(twod_mat)
-
-        cluster1_mean = np.mean(twod_mat[cluster_indices==0], axis=0)
-        cluster2_mean = np.mean(twod_mat[cluster_indices==1], axis=0)
-        #dist = ((np.sum(np.minimum(np.abs(cluster1_mean),
-        #                           np.abs(cluster1_mean))*
-        #                np.sign(cluster1_mean)*
-        #                np.sign(cluster2_mean)))/
-        #         np.sum(np.maximum(np.abs(cluster1_mean),
-        #                           np.abs(cluster2_mean)))) 
-        dist = np.sum(cluster1_mean*cluster2_mean)/(
-                       np.linalg.norm(cluster1_mean)
-                       *np.linalg.norm(cluster2_mean))
-
-        if (dist > self.threshold):
-            print("No split; similarity is "+str(dist)+" and "
-                  "cluster size is "+str(len(twod_mat)))
-            return np.zeros(len(twod_mat))
-        else:
-            if (self.verbose):
-                print("Split detected; similarity is "+str(dist)+" and "
-                      "cluster size is "+str(len(twod_mat)))
-                sys.stdout.flush()
-            for i in range(2):
-                max_cluster_idx = np.max(cluster_indices)
-                mask_for_this_cluster = (cluster_indices==i)
-                subcluster_indices = self(twod_mat[mask_for_this_cluster])
-                subcluster_indices = np.array(
-                    [i if x==0 else x+max_cluster_idx
-                     for x in subcluster_indices])
-                cluster_indices[mask_for_this_cluster]=subcluster_indices
-            return cluster_indices 
-
-
 class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
 
     def __init__(self, track_names, track_transformer,
-                       subclusters_detector, verbose=True):
-        self.verbose = verbose
+                       affmat_from_1d, diclusterer,
+                       dissimilarity_threshold_func, verbose=True):
         self.track_names = track_names
         self.track_transformer = track_transformer
-        self.subclusters_detector = subclusters_detector
+        self.affmat_from_1d = affmat_from_1d
+        self.diclusterer = diclusterer
+        self.dissimilarity_threshold_func = dissimilarity_threshold_func
+        self.verbose = verbose
+
+    def cluster_fwd_seqlet_data(self, fwd_seqlet_data, affmat):
+        if (self.verbose):
+            print("Inspecting for spurious merging")
+            sys.stdout.flush()
+        dicluster_results = self.diclusterer(affmat) 
+        dicluster_indices = dicluster_results.cluster_indices 
+        assert np.max(dicluster_indices)==1
+
+        #check that the subclusters are more
+        #dissimilar than sim_split_threshold 
+        mat1_agg = np.mean(fwd_seqlet_data[dicluster_indices==0], axis=0)
+        mat2_agg = np.mean(fwd_seqlet_data[dicluster_indices==1], axis=0)
+        sufficiently_dissimilar = self.dissimilarity_threshold_func(
+                                        inp1=mat1_agg, inp2=mat2_agg)
+        if (not sufficiently_dissimilar):
+            return np.zeros(len(fwd_seqlet_data))
+        else:
+            #if sufficiently dissimilar, check for subclusters
+            cluster_indices = np.array(dicluster_indices)
+            for i in [0, 1]:
+                mask_for_this_cluster = dicluster_indices==i  
+                subcluster_indices =\
+                    self.subcluster_fwd_seqlet_data(
+                        fwd_seqlet_data=fwd_seqlet_data[mask_for_this_cluster],
+                        affmat=(affmat[mask_for_this_cluster]
+                                     [:,mask_for_this_cluster]))
+                subcluster_indices = np.array([
+                    i if x==0 else x+1 for x in subcluster_indices])
+                cluster_indices[mask_for_this_cluster] = subcluster_indices 
+            return cluster_indices
 
     def __call__(self, aggregated_seqlets):
         to_return = []
         for agg_seq_idx, aggregated_seqlet in enumerate(aggregated_seqlets):
-            if (self.verbose):
-                print("Inspecting for spurious merging")
-                sys.stdout.flush()
+
             assert len(set(len(x.seqlet) for x in
                        aggregated_seqlet._seqlets_and_alnmts))==1,\
                 ("all seqlets should be same length; use "+
@@ -189,9 +172,14 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
             fwd_seqlet_data = aggregated_seqlet.get_fwd_seqlet_data(
                                 track_names=self.track_names,
                                 track_transformer=self.track_transformer)
-            sum_per_position = np.sum(np.abs(fwd_seqlet_data),axis=-1)
-            subcluster_indices = self.subclusters_detector(sum_per_position)
+            vecs_1d = np.array([x.ravel() for x in fwd_seqlet_data]) 
+            affmat = self.affmat_from_1d(vecs1=vecs_1d, vecs2=vecs_1d)
+
+            subcluster_indices = self.cluster_fwd_seqlet_data(
+                                    fwd_seqlet_data=fwd_seqlet_data,
+                                    affmat=affmat)  
             num_subclusters = np.max(subcluster_indices)+1
+
             if (num_subclusters > 1):
                 if (self.verbose):
                     print("Got "+str(num_subclusters)+" subclusters")

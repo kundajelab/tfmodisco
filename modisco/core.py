@@ -575,7 +575,7 @@ class AggregatedSeqlet(Pattern):
 
     def get_fwd_seqlet_data(self, track_names, track_transformer):
         to_return = []
-        for seqlet in [x.seqlet for x in self._seqlets_and_alnmts]:
+        for seqlet in x.seqlets:
             to_return.append(get_2d_data_from_pattern(pattern=seqlet,
                                 track_names=track_names, 
                                 track_transformer=track_transformer)[0])
