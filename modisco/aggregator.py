@@ -118,19 +118,58 @@ class AbstractTwoDMatSubclusterer(object):
         raise NotImplementedError()
 
 
+class IsDissimilarFunc(object):
+
+    def __init__(self, threshold, sim_func, verbose=False):
+        self.threshold = threshold
+        self.sim_func = sim_func
+        self.verbose = verbose
+
+    def __call__(self, inp1, inp2):
+        sim = self.sim_func(inp1, inp2)
+        is_dissimilar = (sim < self.threshold)
+        if (self.verbose):
+            print("Similarity is "+str(sim)
+                  +"; is_dissimilar is "+str(is_dissimilar))  
+            sys.stdout.flush()
+        return is_dissimilar
+
+
+def pearson_corr(x, y):
+    x = x - np.mean(x)
+    x = x/(np.linalg.norm(x))
+    y = y - np.mean(y)
+    y = y/np.linalg.norm(y)
+    return np.sum(x*y)
+
+
+class PearsonCorrIsDissimilarFunc(IsDissimilarFunc):
+
+    def __init__(self, threshold, verbose):
+        super(PearsonCorrIsDissimilarFunc, self).__init__(
+            threshold=threshold,
+            sim_func=pearson_corr,
+            verbose=verbose)
+
+
 class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
 
     def __init__(self, track_names, track_transformer,
                        affmat_from_1d, diclusterer,
-                       dissimilarity_threshold_func, verbose=True):
+                       is_dissimilar_func,
+                       min_in_subcluster, verbose=True):
         self.track_names = track_names
         self.track_transformer = track_transformer
         self.affmat_from_1d = affmat_from_1d
         self.diclusterer = diclusterer
-        self.dissimilarity_threshold_func = dissimilarity_threshold_func
+        self.is_dissimilar_func = is_dissimilar_func
+        self.min_in_subcluster = min_in_subcluster
         self.verbose = verbose
 
     def cluster_fwd_seqlet_data(self, fwd_seqlet_data, affmat):
+
+        if (len(fwd_seqlet_data) < self.min_in_subcluster):
+            return np.zeros(len(fwd_seqlet_data)) 
         if (self.verbose):
             print("Inspecting for spurious merging")
             sys.stdout.flush()
@@ -142,7 +181,7 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         #dissimilar than sim_split_threshold 
         mat1_agg = np.mean(fwd_seqlet_data[dicluster_indices==0], axis=0)
         mat2_agg = np.mean(fwd_seqlet_data[dicluster_indices==1], axis=0)
-        sufficiently_dissimilar = self.dissimilarity_threshold_func(
+        sufficiently_dissimilar = self.is_dissimilar_func(
                                         inp1=mat1_agg, inp2=mat2_agg)
         if (not sufficiently_dissimilar):
             return np.zeros(len(fwd_seqlet_data))
@@ -152,7 +191,7 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
             for i in [0, 1]:
                 mask_for_this_cluster = dicluster_indices==i  
                 subcluster_indices =\
-                    self.subcluster_fwd_seqlet_data(
+                    self.cluster_fwd_seqlet_data(
                         fwd_seqlet_data=fwd_seqlet_data[mask_for_this_cluster],
                         affmat=(affmat[mask_for_this_cluster]
                                      [:,mask_for_this_cluster]))
