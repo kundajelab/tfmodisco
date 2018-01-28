@@ -146,6 +146,7 @@ def runlouvain_given_graph(graph, level_to_return, q_tol, louvain_time_limit,
 def runlouvain_average_runs_given_graph(
         graph, n_runs, level_to_return, parallel_threads, verbose,
         max_clusters=-1, tic=None, seed=1234):
+
     if (not sp.issparse(graph)):
         graph = sp.coo_matrix(graph) 
     # write to file with unique id

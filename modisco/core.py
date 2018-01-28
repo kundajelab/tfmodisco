@@ -287,8 +287,8 @@ class MultiTaskSeqletCreation(object):
 
     def __call__(self, task_name_to_score_track,
                        task_name_to_threshold_transformer):
-        task_name_to_coord_producer_results = {}
-        task_name_to_seqlets = {}
+        task_name_to_coord_producer_results = OrderedDict()
+        task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]

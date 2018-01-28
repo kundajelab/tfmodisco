@@ -158,6 +158,13 @@ class TfModiscoSeqletsToPatternsFactory(object):
         assert len(track_signs)==len(hypothetical_contribs_track_names)
         assert len(track_signs)==len(contrib_scores_track_names)
 
+        seqlets_sorter = (lambda arr:
+                          sorted(arr,
+                                 key=lambda x:
+                                      np.sum([np.sum(np.abs(x[track_name].fwd))
+                                         for track_name
+                                         in contrib_scores_track_names])))
+
         pattern_comparison_settings =\
             affinitymat.core.PatternComparisonSettings(
                 track_names=hypothetical_contribs_track_names
@@ -354,6 +361,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                         flank_to_add=self.final_flank_to_add) 
 
         return TfModiscoSeqletsToPatterns(
+                seqlets_sorter=seqlets_sorter,
                 coarse_affmat_computer=coarse_affmat_computer,
                 nearest_neighbors_computer=nearest_neighbors_computer,
                 affmat_from_seqlets_with_nn_pairs=
@@ -405,7 +413,8 @@ class AbstractSeqletsToPatterns(object):
 
 class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
-    def __init__(self, coarse_affmat_computer,
+    def __init__(self, seqlets_sorter, 
+                       coarse_affmat_computer,
                        nearest_neighbors_computer,
                        affmat_from_seqlets_with_nn_pairs, 
                        filter_mask_from_correlation,
@@ -420,6 +429,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        final_postprocessor,
                        verbose=True):
 
+        self.seqlets_sorter = seqlets_sorter
         self.coarse_affmat_computer = coarse_affmat_computer
         self.nearest_neighbors_computer = nearest_neighbors_computer
         self.affmat_from_seqlets_with_nn_pairs =\
@@ -441,6 +451,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
 
     def __call__(self, seqlets):
+
+        seqlets = self.seqlets_sorter(seqlets)
 
         start = time.time()
 
