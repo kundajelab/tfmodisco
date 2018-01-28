@@ -40,12 +40,23 @@ class MaxCurvatureThresholdingResults(object):
 
 class MaxCurvatureThreshold(object):
 
-    def __init__(self, bins, bandwidth, verbose):
+    def __init__(self, bins, verbose, num_in_bandwidth):
         self.bins = bins
-        self.bandwidth = bandwidth
+        self.num_in_bandwidth = num_in_bandwidth
         self.verbose = verbose
 
     def __call__(self, values):
+
+        #determine bandwidth
+        sorted_values = sorted(values)
+        vals_to_avg = []
+        last_val = sorted_values[0]
+        for i in range(self.num_in_bandwidth,
+                       len(values), self.num_in_bandwidth):
+            vals_to_avg.append(sorted_values[i]-last_val) 
+            last_val = sorted_values[i]
+        #take the median of the diff between num_in_bandwidth
+        self.bandwidth = np.median(np.array(vals_to_avg))
 
         hist_y, hist_x = np.histogram(values, bins=self.bins*2)
         hist_x = 0.5*(hist_x[:-1]+hist_x[1:])
