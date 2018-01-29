@@ -845,10 +845,11 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                                 merge_under_consideration 
                 else:
                     if (self.verbose):
-                        print("Not collapsed "+str(i)+" & "+str(j)
-                              +" with prob "+str(dist_prob)+" and"
-                              +" sim "+str(aligner_sim)) 
-                        sys.stdout.flush()
+                        pass
+                        #print("Not collapsed "+str(i)+" & "+str(j)
+                        #      +" with prob "+str(dist_prob)+" and"
+                        #      +" sim "+str(aligner_sim)) 
+                        #sys.stdout.flush()
 
             for i,j in indices_to_merge:
                 pattern1 = patterns[i]
