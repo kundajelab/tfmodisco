@@ -328,6 +328,7 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3,
 
 def single_louvain_run(lpath, community_binary, hierarchy_binary,
                        filename, level_to_return, max_clusters, seed):
+
     # run community
     fout = open(filename + '.tree_'+str(seed), 'w')
     args = [lpath + community_binary, filename + '_graph.bin',
@@ -364,6 +365,7 @@ def single_louvain_run(lpath, community_binary, hierarchy_binary,
                              stderr=subprocess.PIPE)
         out, err = p.communicate()
         communities = parse_l1_clusters(out.decode())
+
     return communities
 
 
@@ -383,17 +385,21 @@ def runlouvain_average_runs(filename, n_runs,
         get_paths_and_run_convert(filename) 
 
     coocc_count = None
+    chosen_seeds = rng.choice(np.arange(9999), size=n_runs) 
+    sys.stdout.flush()
     communities_list = (Parallel(n_jobs=parallel_threads, verbose=verbose) 
                            (delayed(single_louvain_run)
                                    (lpath, community_binary, hierarchy_binary,
                                     filename, level_to_return, max_clusters,
-                                    rng.random_integers(0,9999))
-                            for i in range(n_runs)))
+                                    chosen_seed)
+                            for i,chosen_seed in
+                                zip(range(n_runs),chosen_seeds)))
     coocc_count = np.zeros((len(communities_list[0]),
                             len(communities_list[0])))
     for communities in communities_list:
         coocc_count += (communities[:,None] == communities[None,:])
     print("Louvain completed {} runs in {} seconds".format(
           n_runs, time.time() - tic))
+    sys.stdout.flush()
 
     return coocc_count.astype("float32")/float(n_runs)

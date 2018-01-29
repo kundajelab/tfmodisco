@@ -263,9 +263,10 @@ def contin_jaccard_vec_mat_sim(a_row, mat):
 
 class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
 
-    def __init__(self, verbose=True, n_cores=1):
+    def __init__(self, verbose=True, n_cores=1, make_positive=False):
         self.verbose = verbose
         self.n_cores = n_cores
+        self.make_positive = make_positive
 
     def __call__(self, vecs1, vecs2):
 
@@ -293,6 +294,9 @@ class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
             print("Contin jaccard similarity mat computed in",
                   round(end_time-start_time,2),"s")
             sys.stdout.flush()
+
+        if (self.make_positive):
+            to_return = to_return + 1.0
 
         return to_return
 

@@ -287,8 +287,8 @@ class MultiTaskSeqletCreation(object):
 
     def __call__(self, task_name_to_score_track,
                        task_name_to_threshold_transformer):
-        task_name_to_coord_producer_results = {}
-        task_name_to_seqlets = {}
+        task_name_to_coord_producer_results = OrderedDict()
+        task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
@@ -575,7 +575,7 @@ class AggregatedSeqlet(Pattern):
 
     def get_fwd_seqlet_data(self, track_names, track_transformer):
         to_return = []
-        for seqlet in [x.seqlet for x in self._seqlets_and_alnmts]:
+        for seqlet in self.seqlets:
             to_return.append(get_2d_data_from_pattern(pattern=seqlet,
                                 track_names=track_names, 
                                 track_transformer=track_transformer)[0])
@@ -585,10 +585,6 @@ class AggregatedSeqlet(Pattern):
             min_frac, min_num, verbose=True):
         per_position_center_counts =\
             self.get_per_position_seqlet_center_counts()
-        from matplotlib import pyplot as plt
-        plt.plot(range(len(per_position_center_counts)),
-                 per_position_center_counts)
-        plt.show()
         max_support = max(per_position_center_counts)
         num = min(min_num, max_support*min_frac)
         left_idx = 0
