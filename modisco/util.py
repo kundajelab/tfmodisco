@@ -11,13 +11,18 @@ from sklearn.neighbors.kde import KernelDensity
 
 
 def save_patterns(patterns, grp):
+    all_pattern_names = []
     for idx, pattern in enumerate(patterns):
-        pattern_grp = grp.create_group("pattern_"+str(idx)) 
+        pattern_name = "pattern_"+str(idx)
+        all_pattern_names.append(pattern_name)
+        pattern_grp = grp.create_group(pattern_name) 
         pattern.save_hdf5(pattern_grp)
+    save_string_list(all_pattern_names, dset_name="all_pattern_names",
+                     grp=grp)
 
 
 def save_string_list(string_list, dset_name, grp):
-    dset = grp.create_dataset(dset_name, (len(self.seqlets),),
+    dset = grp.create_dataset(dset_name, (len(string_list),),
                               dtype=h5py.special_dtype(vlen=bytes))
     dset[:] = string_list
 

@@ -4,6 +4,7 @@ from .. import nearest_neighbors
 from .. import cluster
 from .. import aggregator
 from .. import core
+from .. import util
 from collections import defaultdict, OrderedDict, Counter
 import numpy as np
 import time
@@ -397,9 +398,10 @@ class SeqletsToPatternsResults(object):
         self.__dict__.update(**kwargs)
 
     def save_hdf5(self, grp):
-        util.save_patterns(grp.create_group("patterns"))
+        util.save_patterns(self.patterns,
+                           grp.create_group("patterns"))
         grp.create_dataset("affmat", data=self.affmat) 
-        grp.create_dataset("cluster_results", data=self.cluster_results)   
+        self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   
         #grp.attrs['jsonable_config'] =\
         #    json.dumps(self.jsonable_config, indent=4, separators=(',', ': ')) 
         grp.attrs['total_time_taken'] = self.total_time_taken

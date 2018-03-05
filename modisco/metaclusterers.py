@@ -3,6 +3,7 @@ import sys
 import itertools
 from collections import defaultdict
 import numpy as np
+from . import util
 
 
 class MetaclusteringResults(object):
@@ -18,10 +19,17 @@ class MetaclusteringResults(object):
                            data=self.metacluster_indices)
         metacluster_idx_to_activity_pattern_grp =\
             grp.create_group("metacluster_idx_to_activity_pattern")
+        all_metacluster_names = []
         for cluster_idx,activity_pattern in\
             self.metacluster_idx_to_activity_pattern.items():
-            idx_to_activities_grp.create_dataset(
-                "metacluster"+str(idx), data=activity_pattern)
+            metacluster_name = "metacluster"+str(cluster_idx)
+            metacluster_idx_to_activity_pattern_grp.attrs[
+                metacluster_name] = activity_pattern
+            all_metacluster_names.append(metacluster_name)
+        util.save_string_list(all_metacluster_names,
+                              dset_name="all_metacluster_names",
+                              grp=grp) 
+         
 
 
 class AbstractMetaclusterer(object):
@@ -123,7 +131,8 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         activity_pattern_to_cluster_idx = dict(
             [(x[1],x[0]) for x in enumerate(sorted_activity_patterns)])
         metacluster_idx_to_activity_pattern = dict(
-            [(x[0],x[1]) for x in enumerate(sorted_activity_patterns)])
+            [(x[0],x[1])
+             for x in enumerate(sorted_activity_patterns)])
 
         metacluster_indices = [
              activity_pattern_to_cluster_idx[activity_pattern]

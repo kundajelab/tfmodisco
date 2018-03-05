@@ -133,7 +133,7 @@ class CoordProducerResults(object):
             string_list=[str(x) for x in self.coords],
             dset_name="coords",
             grp=grp) 
-        grp.create_dataset("vals_to_threshold", data=vals_to_threshold)
+        grp.create_dataset("vals_to_threshold", data=self.vals_to_threshold)
         self.thresholding_results.save_hdf5(
               grp=grp.create_group("thresholding_results"))
 
