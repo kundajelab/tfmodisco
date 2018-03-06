@@ -17,6 +17,10 @@ class ClusterResults(object):
                 np.array([mapping[x] if x in mapping else x
                  for x in self.cluster_indices]))
 
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.create_dataset("cluster_indices", data=self.cluster_indices)
+
 
 class LouvainClusterResults(ClusterResults):
 
@@ -25,6 +29,12 @@ class LouvainClusterResults(ClusterResults):
          cluster_indices=cluster_indices)
         self.level_to_return = level_to_return
         self.Q = Q
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.create_dataset("cluster_indices", data=self.cluster_indices)
+        grp.attrs["level_to_return"] = self.level_to_return
+        grp.attrs["Q"] = self.Q
 
 
 class AbstractAffinityMatClusterer(object):

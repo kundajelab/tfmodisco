@@ -1,6 +1,7 @@
 from __future__ import division, print_function
 import theano
 from theano import tensor as T
+#import theano.tensor.signal.pool #autoimported if on GPU
 import numpy as np
 import sys
 

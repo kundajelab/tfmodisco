@@ -70,8 +70,9 @@ class MaxCurvatureThreshold(object):
         new_values = np.array([x for x in values if x >= global_max_x])
         new_values = np.concatenate([new_values, -(new_values-global_max_x)
                                                   + global_max_x])
-        kde = KernelDensity(kernel="gaussian", bandwidth=self.bandwidth).fit(
-                    [[x,0] for x in new_values])
+        kde = KernelDensity(kernel="epanechnikov",
+                            bandwidth=self.bandwidth).fit(
+                            [[x,0] for x in new_values])
         midpoints = np.min(values)+((np.arange(self.bins)+0.5)
                                     *(np.max(values)-np.min(values))/self.bins)
         densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
@@ -84,12 +85,21 @@ class MaxCurvatureThreshold(object):
                                            y_values=firstd_y)
         thirdd_x, thirdd_y = util.firstd(x_values=secondd_x,
                                            y_values=secondd_y)
+        mean_firstd_ys_at_secondds = 0.5*(firstd_y[1:]+firstd_y[:-1])
         mean_secondd_ys_at_thirdds = 0.5*(secondd_y[1:]+secondd_y[:-1])
         #find point of maximum curvature
-        maximum_c_x = max([x for x in zip(secondd_x, secondd_y,
-                                          mean_secondd_ys_at_thirdds)
-                           if (x[0] > global_max_x
-                              and x[2] > 0)], key=lambda x:x[1])[0]
+
+        #maximum_c_x = max([x for x in zip(secondd_x, secondd_y,
+        #                                  mean_firstd_ys_at_secondds)
+        #                   if (x[0] > global_max_x
+        #                      and x[2] < 0)], key=lambda x:x[1])[0]
+
+        maximum_c_x = ([x for x in enumerate(secondd_x)
+                        if (x[1] > global_max_x and
+                            x[0] < len(secondd_x)-1 and
+                            secondd_y[x[0]-1] < secondd_y[x[0]] and
+                            secondd_y[x[0]+1] < secondd_y[x[0]])])[0][1]
+
         maximum_c_x2 = max([x for x in zip(thirdd_x, thirdd_y,
                                           mean_secondd_ys_at_thirdds)
                            if (x[0] > global_max_x
@@ -133,7 +143,7 @@ class CoordProducerResults(object):
             string_list=[str(x) for x in self.coords],
             dset_name="coords",
             grp=grp) 
-        grp.create_dataset("vals_to_threshold", data=vals_to_threshold)
+        grp.create_dataset("vals_to_threshold", data=self.vals_to_threshold)
         self.thresholding_results.save_hdf5(
               grp=grp.create_group("thresholding_results"))
 

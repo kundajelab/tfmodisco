@@ -10,6 +10,7 @@ from . import seqlets_to_patterns
 from .. import core
 from .. import coordproducers
 from .. import metaclusterers
+from .. import util
 
 
 class TfModiscoResults(object):
@@ -34,16 +35,17 @@ class TfModiscoResults(object):
     def save_hdf5(self, grp):
         util.save_string_list(string_list=self.task_names, 
                               dset_name="task_names", grp=grp)
-        self.multitask_seqlet_creation_results.save_hdf(
+        self.multitask_seqlet_creation_results.save_hdf5(
             grp.create_group("multitask_seqlet_creation_results"))
-        self.metaclustering_results.save_hdf(
+        self.metaclustering_results.save_hdf5(
             grp.create_group("metaclustering_results"))
 
         metacluster_idx_to_submetacluster_results_group = grp.create_group(
                                 "metacluster_idx_to_submetacluster_results")
-        for idx in metacluster_idx_to_submetacluster_results:
+        for idx in self.metacluster_idx_to_submetacluster_results:
             self.metacluster_idx_to_submetacluster_results[idx].save_hdf5(
-                grp=metaclusters_group.create_group("metacluster"+str(idx))) 
+                grp=metacluster_idx_to_submetacluster_results_group
+                    .create_group("metacluster"+str(idx))) 
 
 
 class SubMetaclusterResults(object):
@@ -56,12 +58,12 @@ class SubMetaclusterResults(object):
         self.seqlets_to_patterns_result = seqlets_to_patterns_result
 
     def save_hdf5(self, grp):
-        grp.attrs['size'] = metacluster_size
-        grp.create_dataset('activity_pattern', data=activity_pattern)
+        grp.attrs['size'] = self.metacluster_size
+        grp.create_dataset('activity_pattern', data=self.activity_pattern)
         util.save_seqlet_coords(seqlets=self.seqlets,
                                 dset_name="seqlets", grp=grp)   
         self.seqlets_to_patterns_result.save_hdf5(
-            grp=grp.create_dataset('seqlets_to_patterns_result'))
+            grp=grp.create_group('seqlets_to_patterns_result'))
 
 
 class TfModiscoWorkflow(object):

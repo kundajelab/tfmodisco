@@ -28,7 +28,7 @@ class Snippet(object):
     def save_hdf5(self, grp):
         grp.create_dataset("fwd", data=self.fwd)  
         grp.create_dataset("rev", data=self.rev)
-        grp.attr["has_pos_axis"] = self.has_pos_axis
+        grp.attrs["has_pos_axis"] = self.has_pos_axis
 
     def __len__(self):
         return len(self.fwd)
@@ -537,7 +537,7 @@ class SeqletsAndAlignments(object):
         return [x.seqlet for x in self.arr]
 
     def save_hdf5(self, grp):
-        util.save_seqlet_coords(seqlets=self.seqlets,
+        util.save_seqlet_coords(seqlets=self.get_seqlets(),
                                 dset_name="seqlets", grp=grp) 
         grp.create_dataset("alnmts",
                            data=np.array([x.alnmt for x in self.arr]))
