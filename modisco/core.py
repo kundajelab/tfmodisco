@@ -333,7 +333,7 @@ class SeqletCoordinates(object):
 
     def __str__(self):
         return ("example:"+str(self.example_idx)
-                +",loc:"+str(self.start)+",end:"+str(self.end)
+                +",start:"+str(self.start)+",end:"+str(self.end)
                 +",rc:"+str(self.is_revcomp))
 
 
