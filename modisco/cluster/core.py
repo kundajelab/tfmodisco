@@ -122,6 +122,20 @@ class LouvainCluster(AbstractAffinityMatClusterer):
             print("Preproc + Louvain took "+str(time.time()-all_start)+" s")
             sys.stdout.flush()
         return cluster_results
+
+
+class HDbScanCluster(AbstractAffinityMatClusterer):
+
+    def __init__(self, aff_to_dist_mat):
+        self.aff_to_dist_mat = aff_to_dist_mat
+
+    def __call__(self, orig_affinity_mat):
+        import hdbscan
+
+        dist_mat = self.aff_to_dist_mat(orig_affinity_mat) 
+        clusterer = hdbscan.HDBSCAN(metric='precomputed')
+        clusterer.fit(dist_mat)
+        return ClusterResults(cluster_indices=clusterer.labels_)
  
 
 class CollectComponents(AbstractAffinityMatClusterer):
