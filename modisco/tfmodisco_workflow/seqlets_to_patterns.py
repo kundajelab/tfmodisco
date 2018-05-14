@@ -478,6 +478,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             seqlets_sets.append(seqlets)
             
             if (len(seqlets)==0):
+                if (self.verbose):
+                    print("len(seqlets) is 0 - bailing!")
                 return SeqletsToPatternsResults(
                         patterns=None,
                         seqlets=None,
