@@ -389,7 +389,8 @@ class SeqletsToPatternsResults(object):
 
     def __init__(self,
                  patterns, seqlets, affmat, cluster_results,
-                 total_time_taken, **kwargs):
+                 total_time_taken, success=True, **kwargs):
+        self.success = success
         self.patterns = patterns
         self.seqlets = seqlets
         self.affmat = affmat
@@ -398,13 +399,14 @@ class SeqletsToPatternsResults(object):
         self.__dict__.update(**kwargs)
 
     def save_hdf5(self, grp):
-        util.save_patterns(self.patterns,
-                           grp.create_group("patterns"))
-        grp.create_dataset("affmat", data=self.affmat) 
-        self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   
-        #grp.attrs['jsonable_config'] =\
-        #    json.dumps(self.jsonable_config, indent=4, separators=(',', ': ')) 
-        grp.attrs['total_time_taken'] = self.total_time_taken
+        if (self.success):
+            util.save_patterns(self.patterns,
+                               grp.create_group("patterns"))
+            grp.create_dataset("affmat", data=self.affmat) 
+            self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   
+            #grp.attrs['jsonable_config'] =\
+            #    json.dumps(self.jsonable_config, indent=4, separators=(',', ': ')) 
+            grp.attrs['total_time_taken'] = self.total_time_taken
 
 
 class AbstractSeqletsToPatterns(object):
@@ -474,6 +476,15 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             round_num = round_idx+1
 
             seqlets_sets.append(seqlets)
+            
+            if (len(seqlets)==0):
+                return SeqletsToPatternsResults(
+                        patterns=None,
+                        seqlets=None,
+                        affmat=None,
+                        cluster_results=None, 
+                        total_time_taken=None,
+                        success=False)
 
             if (self.verbose):
                 print("(Round "+str(round_num)+
