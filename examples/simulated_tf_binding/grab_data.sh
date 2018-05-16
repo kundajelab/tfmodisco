@@ -16,3 +16,10 @@ then
 else
     echo "File $FILE exists already"
 fi
+FILE="sequences.txt"
+if [ ! -f "$FILE" ]
+then
+    curl -o $FILE https://raw.githubusercontent.com/AvantiShri/model_storage/7823666c6d82bee90e03a1118a055d9af62f7894/modisco/sequences.txt
+else
+    echo "File $FILE exists already"
+fi
