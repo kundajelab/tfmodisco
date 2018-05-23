@@ -2,7 +2,7 @@ from distutils.core import setup
 
 if __name__== '__main__':
     setup(include_package_data=True,
-          description='MOtif Discovery from Importance SCOres',
+          description='TF MOtif Discovery from Importance SCOres',
           url='NA',
           download_url='NA',
           version='0.1',
