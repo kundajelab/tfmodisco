@@ -205,7 +205,7 @@ def get_conv_out_symbolic_var(input_var,
                               set_of_2d_patterns_to_conv_with,
                               normalise_by_magnitude,
                               take_max,
-                              mode='full'):
+                              mode='valid'):
     assert len(set_of_2d_patterns_to_conv_with.shape)==3
     if (normalise_by_magnitude):
         set_of_2d_patterns_to_conv_with =\
@@ -240,7 +240,7 @@ def get_conv_out_symbolic_var(input_var,
 def compile_conv_func_with_theano(set_of_2d_patterns_to_conv_with,
                                   normalise_by_magnitude=False,
                                   take_max=False,
-                                  mode='full'):
+                                  mode='valid'):
     input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                          broadcastable=[False]*3)("input")
     conv_out = get_conv_out_symbolic_var(input_var,
@@ -293,57 +293,6 @@ def get_max_cross_corr(filters, things_to_scan,
         to_return[filter_idx:
                   (filter_idx+filter_batch_size),:] =\
                   np.transpose(max_cross_corrs)
-        filter_idx += filter_batch_size
-        
-    return to_return
-
-def get_full_cross_corr(filters, things_to_scan,
-                           verbose=True, batch_size=10,
-                           func_params_size=1000000,
-                           progress_update=1000,
-                           min_overlap=1,
-                           mode='valid'):
-    """
-        func_params_size: when compiling functions
-    """
-    #reverse the patterns as the func is a conv not a cross corr
-    filters = filters.astype("float32")[:,::-1,::-1]
-    # padding_amount0 = int((filters[0].shape[-1])*(1-min_overlap))
-    if mode == 'valid':
-      num_xcor_sites = things_to_scan[0].shape[-1]-filters[0].shape[-1]+1
-    elif mode == 'full':
-      num_xcor_sites = things_to_scan[0].shape[-1]+filters[0].shape[-1]-1      
-    to_return = np.zeros((filters.shape[0], len(things_to_scan), num_xcor_sites))
-    #compile the number of filters that result in a function with
-    #params equal to func_params_size 
-    params_per_filter = np.prod(filters[0].shape)
-    filter_batch_size = int(func_params_size/params_per_filter)
-    filter_length = filters.shape[-1]
-    filter_idx = 0 
-    while filter_idx < filters.shape[0]:
-        if (verbose):
-            print("On filters",filter_idx,"to",(filter_idx+filter_batch_size))
-        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
-        cross_corr_func = compile_conv_func_with_theano(
-                           set_of_2d_patterns_to_conv_with=filter_batch,
-                           normalise_by_magnitude=False,
-                           take_max=False,
-                           mode=mode) 
-        padding_amount = int((filter_length)*(1-min_overlap))
-        padded_input = [np.pad(array=x,
-                              pad_width=((padding_amount, padding_amount)),
-                              mode="constant") for x in things_to_scan]
-        all_cross_corrs = np.array(deeplift.util.run_function_in_batches(
-                            func=cross_corr_func,
-                            input_data_list=[padded_input],
-                            batch_size=batch_size,
-                            progress_update=(None if verbose==False else
-                                             progress_update)))
-        all_cross_corrs_max = all_cross_corrs.max(axis=2)
-        assert len(all_cross_corrs_max.shape)==3, all_cross_corrs_max.shape
-        to_return[filter_idx:
-                  (filter_idx+filter_batch_size),:,:] =\
-                  np.transpose(all_cross_corrs_max, axes=[1,0,2])
         filter_idx += filter_batch_size
         
     return to_return
