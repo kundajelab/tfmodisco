@@ -32,9 +32,8 @@ def gammamix_init(x, mix_prop=None, alpha=None, beta=None, k=2):
         x_part.append(x_sort[0:ind[0]])
         for j in range(1,k):
             x_part.append(x_sort[ind[j-1]:ind[j]])
-        x_part = np.array(x_part)
-        x_bar = np.mean(x_part, axis=1) 
-        x2_bar = np.mean(np.square(x_part), axis=1)
+        x_bar = np.array([np.mean(y) for y in x_part])
+        x2_bar = np.array([np.mean(np.square(y)) for y in x_part])
 
     if (alpha is None):
         alpha = np.square(x_bar)/(x2_bar - np.square(x_bar))
@@ -47,7 +46,7 @@ def gammamix_init(x, mix_prop=None, alpha=None, beta=None, k=2):
                           beta=beta, k=k)
 
 
-def gamma_component_pdfs(mix_prop, theta, k):
+def gamma_component_pdfs(x, mix_prop, theta, k):
     component_pdfs = []
     alpha = theta[0:k]
     beta = theta[k:2*k]
@@ -59,9 +58,9 @@ def gamma_component_pdfs(mix_prop, theta, k):
     return component_pdfs
     
 
-def gamma_ll_func_to_optimize(theta, expected_membership, mix_prop, k):
+def gamma_ll_func_to_optimize(theta, x, expected_membership, mix_prop, k):
     return -np.sum(expected_membership*np.log(
-                    gamma_component_pdfs(mix_prop=mix_prop,
+                    gamma_component_pdfs(x=x, mix_prop=mix_prop,
                                          theta=theta, k=k)))
                                                           
 
@@ -82,20 +81,20 @@ def gammamix_em(x, mix_prop=None, alpha=None, beta=None,
 
     old_obs_ll = np.sum(np.log(np.sum(
                     gamma_component_pdfs(
-                        mix_prop=mix_prop,
+                        x=x, mix_prop=mix_prop,
                         theta=theta, k=k), axis=0))) 
 
     ll = [old_obs_ll]
 
     while ((diff > epsilon) and (iteration < maxit)):
-        dens1 = gamma_component_pdfs(mix_prop=mix_prop,
+        dens1 = gamma_component_pdfs(x=x, mix_prop=mix_prop,
                                      theta=theta, k=k)
         expected_membership = dens1/np.sum(dens1, axis=0)[None,:] 
         mix_prop_hat = np.mean(expected_membership, axis=1)
         minimization_result = minimize(
             fun=gamma_ll_func_to_optimize,
             x0=theta,
-            args=(expected_membership, mix_prop, k),
+            args=(x, expected_membership, mix_prop, k),
             jac=False) 
         if (minimization_result.success==False):
             print("Choosing new starting values")
@@ -108,7 +107,7 @@ def gammamix_em(x, mix_prop=None, alpha=None, beta=None,
             diff = epsilon + 1
             old_obs_ll = np.sum(np.log(np.sum(
                             gamma_component_pdfs(
-                                mix_prop=mix_prop,
+                                x=x, mix_prop=mix_prop,
                                 theta=theta, k=k), axis=0))) 
             ll = [old_obs_ll]
         else:
