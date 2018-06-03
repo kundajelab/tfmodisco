@@ -3,12 +3,16 @@ import numpy as np
 from collections import namedtuple
 from scipy.stats import gamma
 from scipy.optimize import minimize
+import sys
 
 
-GammaMixParams = namedtuple("MixParams", ["mix_prop", "alpha", "beta", "k"])
+GammaMixParams = namedtuple("MixParams", ["mix_prop", "alpha", "invbeta", "k"])
+GammaMixResult = namedtuple("GammaMixResult", ["params",
+                                               "ll", "iteration",
+                                               "expected_membership"]) 
 
 
-def gammamix_init(x, mix_prop=None, alpha=None, beta=None, k=2):
+def gammamix_init(x, mix_prop=None, alpha=None, invbeta=None, k=2):
     n = len(x)
     if (mix_prop is None):
         mix_prop = np.random.random((k,)) 
@@ -38,87 +42,104 @@ def gammamix_init(x, mix_prop=None, alpha=None, beta=None, k=2):
     if (alpha is None):
         alpha = np.square(x_bar)/(x2_bar - np.square(x_bar))
 
-    if (beta is None):
-        beta = (x2_bar - np.square(x_bar))/x_bar
+    if (invbeta is None):
+        invbeta = x_bar/(x2_bar - np.square(x_bar))
 
     return GammaMixParams(mix_prop=mix_prop,
                           alpha=alpha,
-                          beta=beta, k=k)
+                          invbeta=invbeta, k=k)
 
 
-def gamma_component_pdfs(x, mix_prop, theta, k):
+def gamma_component_pdfs(x, theta, k):
     component_pdfs = []
     alpha = theta[0:k]
-    beta = theta[k:2*k]
-    scale = 1.0/beta 
+    invbeta = theta[k:2*k]
     for j in range(k):
-        component_pdfs.append(gamma.pdf(x=x, a=alpha[j], scale=1.0/beta[j])) 
+        component_pdfs.append(gamma.pdf(x=x, a=alpha[j], scale=invbeta[j])) 
     component_pdfs = np.array(component_pdfs)
-    component_pdfs = mix_prop[:,None]*component_pdfs
     return component_pdfs
     
 
 def gamma_ll_func_to_optimize(theta, x, expected_membership, mix_prop, k):
+    component_pdfs = gamma_component_pdfs(x=x,
+                                          theta=theta, k=k)
+    if (np.isnan(np.sum(component_pdfs))):
+        assert False
+    #prevent nan errors for np.log
+    component_pdfs = component_pdfs+((component_pdfs == 0)*1e-32)
+    
     return -np.sum(expected_membership*np.log(
-                    gamma_component_pdfs(x=x, mix_prop=mix_prop,
-                                         theta=theta, k=k)))
+                    mix_prop[:,None]*component_pdfs))
                                                           
 
 #based on https://github.com/cran/mixtools/blob/master/R/gammamixEM.R
-def gammamix_em(x, mix_prop=None, alpha=None, beta=None,
-                k=2, epsilon=1e-08, maxit=1000, maxrestarts=20, verb=False):
+def gammamix_em(x, mix_prop=None, alpha=None, invbeta=None,
+                k=2, epsilon=0.001, maxit=1000, maxrestarts=20, verb=False):
 
     #initialization
     x = np.array(x) 
-    mix_prop, alpha, beta, k =\
-        gammamix_init(x=x, mix_prop=mix_prop, alpha=alpha, beta=beta, k=k) 
-    theta = np.concatenate([alpha, beta],axis=0)
+    mix_prop, alpha, invbeta, k =\
+        gammamix_init(x=x, mix_prop=mix_prop, alpha=alpha,
+                      invbeta=invbeta, k=k) 
+    print("initial vals:",mix_prop, alpha, invbeta, k) 
+    theta = np.concatenate([alpha, invbeta],axis=0)
     
     iteration = 0
     mr = 0
     diff = epsilon + 1
     n = len(x)
 
+    
     old_obs_ll = np.sum(np.log(np.sum(
-                    gamma_component_pdfs(
-                        x=x, mix_prop=mix_prop,
+                    mix_prop[:,None]*gamma_component_pdfs(
+                        x=x,
                         theta=theta, k=k), axis=0))) 
 
     ll = [old_obs_ll]
 
-    while ((diff > epsilon) and (iteration < maxit)):
-        dens1 = gamma_component_pdfs(x=x, mix_prop=mix_prop,
+    best_result = None
+    best_obs_ll = old_obs_ll
+
+    while ((np.abs(diff) > epsilon) and (iteration < maxit)):
+        #dens1 = mix_prop[:,None]*gamma_component_pdfs(
+        #                             x=x,
+        #                             theta=theta, k=k)
+        dens1 = mix_prop[:,None]*gamma_component_pdfs(
+                                     x=x,
                                      theta=theta, k=k)
         expected_membership = dens1/np.sum(dens1, axis=0)[None,:] 
         mix_prop_hat = np.mean(expected_membership, axis=1)
         minimization_result = minimize(
             fun=gamma_ll_func_to_optimize,
             x0=theta,
+            bounds=[(1e-7,None) for t in theta],
             args=(x, expected_membership, mix_prop, k),
             jac=False) 
         if (minimization_result.success==False):
+            print(minimization_result)
             print("Choosing new starting values")
             if (mr==maxrestarts):
                 raise RuntimeError("Try a different number of components?") 
             mr += 1 
-            mix_prop, alpha, beta, k = gammamix_init(x=x, k=k) 
-            theta = np.concatenate([alpha, beta],axis=0)
+            mix_prop, alpha, invbeta, k = gammamix_init(x=x, k=k) 
+            theta = np.concatenate([alpha, invbeta],axis=0)
             iteration = 0
             diff = epsilon + 1
             old_obs_ll = np.sum(np.log(np.sum(
-                            gamma_component_pdfs(
-                                x=x, mix_prop=mix_prop,
+                            mix_prop[:,None]*gamma_component_pdfs(
+                                x=x,
                                 theta=theta, k=k), axis=0))) 
             ll = [old_obs_ll]
         else:
             theta_hat = minimization_result.x 
             alpha_hat = theta_hat[0:k]
-            beta_hat = theta_hat[k:2*k]
+            invbeta_hat = theta_hat[k:2*k]
 
 
-            new_obs_ll = np.sum(np.log(np.sum(gamma_density(
-                            mix_prop=mix_prop_hat,
-                            theta_hat=theta_hat, k=k)))) 
+            new_obs_ll = np.sum(np.log(np.sum(
+                          mix_prop_hat[:,None]*gamma_component_pdfs(
+                            x=x,
+                            theta=theta_hat, k=k),axis=0))) 
             diff = new_obs_ll - old_obs_ll
             old_obs_ll = new_obs_ll
             ll.append(old_obs_ll)
@@ -126,20 +147,33 @@ def gammamix_em(x, mix_prop=None, alpha=None, beta=None,
             mix_prop = mix_prop_hat
             theta = theta_hat
             alpha = alpha_hat
-            beta = beta_hat
+            invbeta = invbeta_hat
             iteration = iteration + 1
+
+            if (old_obs_ll >= best_obs_ll):
+                best_result = GammaMixResult(
+                    params=GammaMixParams(mix_prop=mix_prop,
+                                          alpha=alpha, invbeta=invbeta, k=k),
+                    ll=ll,
+                    iteration=iteration,
+                    expected_membership=expected_membership)
+                best_obs_ll = old_obs_ll
+                #if verb:
+                #    print("New best!") 
+                #    print(GammaMixParams(mix_prop=mix_prop,
+                #                          alpha=alpha,
+                #                          invbeta=invbeta, k=k))
+
             if verb:
                 print("iteration =", iteration,
                       "log-lik diff =", diff,
                       " log-lik =", new_obs_ll) 
+                sys.stdout.flush()
 
     if (iteration == maxit):
         print("WARNING! NOT CONVERGENT!")
     print("Number of iterations=", iteration)
-    theta = np.concatenate([alpha, beta], axis=0)
 
-    return (GammaMixParams(mix_prop=mix_prop,
-                           alpha=alpha, beta=beta, k=k),
-            new_obs_ll, expected_membership)
+    return best_result 
 
 
