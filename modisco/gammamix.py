@@ -1,3 +1,11 @@
+##
+#Python implementation of mixture of gamma distributions
+# Based on the mixtools R package implementation:
+# https://github.com/cran/mixtools/blob/master/R/gammamixEM.R
+# Notebook at https://github.com/kundajelab/tfmodisco/blob/master/examples/
+#             mixture_of_gammas/Mixture%20of%20Gamma%20Distributions.ipynb
+##
+
 from __future__ import division, print_function
 import numpy as np
 from collections import namedtuple
