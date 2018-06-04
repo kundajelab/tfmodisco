@@ -70,7 +70,7 @@ class TfModiscoWorkflow(object):
 
     def __init__(self,
                  seqlets_to_patterns_factory=
-                    seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
+                 seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
                  sliding_window_size=21, flank_size=10,
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,

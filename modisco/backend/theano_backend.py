@@ -116,12 +116,12 @@ def get_gapped_kmer_embedding_func(filters, biases, require_onehot_match):
                       x=filters, name="filters")
     theano_biases = theano.tensor.as_tensor_variable(x=biases, name="biases")
     if (require_onehot_match):
-        onehot_out = 1.0*((theano.tensor.nnet.conv.conv2d(
+        onehot_out = 1.0*((theano.tensor.nnet.conv2d(
                         input=onehot_var[:,None,:,:],
                         filters=theano_filters[:,None,::-1,::-1],
                         border_mode='valid')[:,:,:,0] + biases[None,:,None])
                         > 0.0)
-    embedding_out = theano.tensor.sum((theano.tensor.nnet.conv.conv2d(
+    embedding_out = theano.tensor.sum((theano.tensor.nnet.conv2d(
                         input=toembed_var[:,None,:,:],
                         filters=theano_filters[:,None,::-1,::-1],
                         border_mode='valid')[:,:,:,0])*
@@ -197,7 +197,7 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
                                              broadcastable=[False]*3)("input")
         theano_filters = theano.tensor.as_tensor_variable(
                    x=filter_batch, name="filters")
-        conv_out = theano.tensor.nnet.conv.conv2d(
+        conv_out = theano.tensor.nnet.conv2d(
                     input=input_var[:,None,:,:],
                     filters=theano_filters[:,None,::-1,::-1],
                     border_mode='valid')[:,:,:,0]

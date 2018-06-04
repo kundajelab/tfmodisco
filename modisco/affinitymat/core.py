@@ -164,10 +164,10 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                     track_transformer=None)
 
         data_to_embed_fwd = np.zeros((len(seqlets),
-                                     len(seqlets[0]), self.alphabet_size))\
+                                     len(list(seqlets)[0]), self.alphabet_size))\
                                      .astype("float32")
         data_to_embed_rev = np.zeros((len(seqlets),
-                                     len(seqlets[0]), self.alphabet_size))\
+                                     len(list(seqlets)[0]), self.alphabet_size))\
                                      .astype("float32")
         for (track_name, sign) in self.toscore_track_names_and_signs:
             fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(

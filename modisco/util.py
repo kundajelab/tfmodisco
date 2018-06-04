@@ -3,8 +3,6 @@ import os
 import signal
 import deeplift
 import numpy as np
-import theano
-import theano.tensor.signal.conv
 import h5py
 import traceback
 from sklearn.neighbors.kde import KernelDensity
@@ -206,6 +204,8 @@ def get_conv_out_symbolic_var(input_var,
                               normalise_by_magnitude,
                               take_max,
                               mode='valid'):
+    import theano
+    import theano.tensor.signal.conv
     assert len(set_of_2d_patterns_to_conv_with.shape)==3
     if (normalise_by_magnitude):
         set_of_2d_patterns_to_conv_with =\
@@ -241,6 +241,7 @@ def compile_conv_func_with_theano(set_of_2d_patterns_to_conv_with,
                                   normalise_by_magnitude=False,
                                   take_max=False,
                                   mode='valid'):
+    import theano
     input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
                                          broadcastable=[False]*3)("input")
     conv_out = get_conv_out_symbolic_var(input_var,
@@ -373,6 +374,7 @@ def gpu_jaccardify(sim_mat, power=1,
                    batch_size=100,
                    progress_update=1000,
                    verbose=True):
+    import theano
     if (power != 1):
         print("taking the power")
         sim_mat = np.power(sim_mat, power)
@@ -465,7 +467,7 @@ def parallel_jaccardify(sim_mat, num_processes=4,
                 f.close()
                 print("Exit!")
                 os._exit(os.EX_OK) #exit the child
-            except Exception, _:
+            except Exception:
                 raise RuntimeError("Exception in job "+str(i)+\
                                    "\n"+traceback.format_exc()) 
                 os._exit(os.EX_SOFTWARE)
@@ -499,7 +501,7 @@ def parallel_jaccardify(sim_mat, num_processes=4,
             col_idx = i%num_nodes
             to_return[row_idx, col_idx] = collated_distances[i]
         return to_return
-    except KeyboardInterrupt, OSError:
+    except (KeyboardInterrupt, OSError):
         for pid in launched_pids:
             try:
                 os.kill(pid, signal.SIGHUP)
@@ -544,6 +546,7 @@ def scan_regions_with_filters(filters, regions_to_scan,
     
         set_of_regions: either one-hot-encoded or deeplift score tracks.
     """ 
+    import theano
     if (len(filters.shape)==3):
         filters = filters[:,None,:,:]
     assert filters.shape[1]==1 #input channels=1
@@ -604,6 +607,8 @@ def product_of_cosine_distances(filters, track1, track2,
         track1: 3-d array: samples x length x channels(ACGT)
         track2: 3-d array: samples x length x channels(ACGT)
     """ 
+    import theano
+    import theano.tensor.signal.conv
     assert len(filters.shape)==3
     assert len(track1.shape)==3
     assert len(track2.shape)==3
