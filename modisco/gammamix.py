@@ -11,6 +11,7 @@ import numpy as np
 from collections import namedtuple
 from scipy.stats import gamma
 from scipy.optimize import minimize
+from scipy.special import digamma
 import sys
 
 
@@ -66,7 +67,21 @@ def gamma_component_pdfs(x, theta, k):
         component_pdfs.append(gamma.pdf(x=x, a=alpha[j], scale=invbeta[j])) 
     component_pdfs = np.array(component_pdfs)
     return component_pdfs
-    
+
+
+def log_deriv_gamma_component_pdfs(x, theta, k):
+    log_deriv_alpha_component_pdfs = []
+    log_deriv_invbeta_component_pdfs = []
+    alpha = theta[0:k]
+    invbeta = theta[k:2*k]
+    for j in range(k):
+        log_deriv_invbeta_component_pdfs.append(
+            (x/(invbeta[j]**2) - alpha[j]/invbeta[j]))
+        log_deriv_alpha_component_pdfs.append(
+            (np.log(x) - np.log(invbeta[j]) - digamma(alpha[j])))
+    return (np.array(log_deriv_invbeta_component_pdfs),
+            np.array(log_deriv_alpha_component_pdfs))
+
 
 def gamma_ll_func_to_optimize(theta, x, expected_membership, mix_prop, k):
     component_pdfs = gamma_component_pdfs(x=x,
@@ -75,14 +90,29 @@ def gamma_ll_func_to_optimize(theta, x, expected_membership, mix_prop, k):
         assert False
     #prevent nan errors for np.log
     component_pdfs = component_pdfs+((component_pdfs == 0)*1e-32)
+    #log likelihood
+    ll =  -np.sum(expected_membership*np.log(
+                  mix_prop[:,None]*component_pdfs))
+    #log deriv gamma component pdfs
+    (log_deriv_invbeta_component_pdfs,
+     log_deriv_alpha_component_pdfs) =\
+     log_deriv_gamma_component_pdfs(x=x, theta=theta, k=k) 
+
+    log_derivs = np.array(
+        list(-np.sum(
+             expected_membership
+             *log_deriv_alpha_component_pdfs, axis=1))+
+        list(-np.sum(
+          expected_membership
+          *log_deriv_invbeta_component_pdfs, axis=1)))
     
-    return -np.sum(expected_membership*np.log(
-                    mix_prop[:,None]*component_pdfs))
+    return ll, log_derivs
                                                           
 
 #based on https://github.com/cran/mixtools/blob/master/R/gammamixEM.R
 def gammamix_em(x, mix_prop=None, alpha=None, invbeta=None,
-                k=2, epsilon=0.001, maxit=1000, maxrestarts=20, verb=False):
+                k=2, epsilon=0.001, maxit=1000,
+                maxrestarts=20, verb=False):
 
     #initialization
     x = np.array(x) 
@@ -122,7 +152,8 @@ def gammamix_em(x, mix_prop=None, alpha=None, invbeta=None,
             x0=theta,
             bounds=[(1e-7,None) for t in theta],
             args=(x, expected_membership, mix_prop, k),
-            jac=False) 
+            jac=True
+            ) 
         if (minimization_result.success==False):
             print(minimization_result)
             print("Choosing new starting values")
