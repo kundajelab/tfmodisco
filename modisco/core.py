@@ -130,7 +130,7 @@ class TrackSet(object):
 
     @property
     def track_length(self):
-        return self.track_name_to_data_track.values()[0].track_length
+        return list(self.track_name_to_data_track.values())[0].track_length
 
 
 class CoordOverlapDetector(object):

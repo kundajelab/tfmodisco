@@ -10,6 +10,6 @@ if __name__== '__main__':
                     'modisco.visualization', 'modisco.affinitymat',
                     'modisco.tfmodisco_workflow'],
           setup_requires=[],
-          install_requires=['numpy>=1.9', 'theano>=0.9', 'scikit-learn>=0.19'],
+          install_requires=['numpy>=1.9', 'psutil', 'theano>=0.9', 'scikit-learn>=0.19'],
           scripts=[],
           name='modisco')
