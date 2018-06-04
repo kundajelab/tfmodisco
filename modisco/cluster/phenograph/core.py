@@ -208,9 +208,9 @@ def get_paths_and_run_convert(filename):
         community_binary = "linux-community"
         hierarchy_binary = "linux-hierarchy"
     elif sys.platform == "darwin":
-        convert_binary = "convert"
-        community_binary = "community"
-        hierarchy_binary = "hierarchy"
+        convert_binary = "osx-convert"
+        community_binary = "osx-community"
+        hierarchy_binary = "osx-hierarchy"
     else:
         raise RuntimeError("Operating system could not be determined or is not supported. "
                            "sys.platform == {}".format(sys.platform))
