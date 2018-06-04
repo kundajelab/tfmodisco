@@ -1,7 +1,9 @@
+README.md
 modisco/__init__.py
 modisco/aggregator.py
 modisco/coordproducers.py
 modisco/core.py
+modisco/gammamix.py
 modisco/metaclusterers.py
 modisco/nearest_neighbors.py
 modisco/util.py

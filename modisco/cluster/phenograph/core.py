@@ -12,12 +12,12 @@ import time
 import re
 import os
 import sys
-from .bruteforce_nn import knnsearch
 from collections import defaultdict
 from joblib import Parallel, delayed
 
 
 def find_neighbors(data, k=30, metric='minkowski', p=2, method='brute', n_jobs=-1):
+    from .bruteforce_nn import knnsearch
     """
     Wraps sklearn.neighbors.NearestNeighbors
     Find k nearest neighbors of every point in data and delete self-distances

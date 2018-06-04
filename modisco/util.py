@@ -1,7 +1,6 @@
 from __future__ import division, print_function
 import os
 import signal
-import deeplift
 import numpy as np
 import h5py
 import traceback
@@ -154,6 +153,7 @@ def create_detector_from_subset_of_sequential_layers(sequential_container,
                                                     idx_of_layer_of_interest,
                                                     channel_indices,
                                                     multipliers_on_channels):
+    import deeplift
     import deeplift.backend as B
     layers = []  
     #this adds in all the layers preceeding idx_of_layer_of_interest
@@ -263,6 +263,7 @@ def get_max_cross_corr(filters, things_to_scan,
     """
         func_params_size: when compiling functions
     """
+    import deeplift
     #reverse the patterns as the func is a conv not a cross corr
     filters = filters.astype("float32")[:,::-1,::-1]
     to_return = np.zeros((filters.shape[0], len(things_to_scan)))
@@ -467,7 +468,7 @@ def parallel_jaccardify(sim_mat, num_processes=4,
                 f.close()
                 print("Exit!")
                 os._exit(os.EX_OK) #exit the child
-            except Exception:
+            except (Exception, _):
                 raise RuntimeError("Exception in job "+str(i)+\
                                    "\n"+traceback.format_exc()) 
                 os._exit(os.EX_SOFTWARE)
@@ -546,6 +547,7 @@ def scan_regions_with_filters(filters, regions_to_scan,
     
         set_of_regions: either one-hot-encoded or deeplift score tracks.
     """ 
+    import deeplift
     import theano
     if (len(filters.shape)==3):
         filters = filters[:,None,:,:]
@@ -607,6 +609,7 @@ def product_of_cosine_distances(filters, track1, track2,
         track1: 3-d array: samples x length x channels(ACGT)
         track2: 3-d array: samples x length x channels(ACGT)
     """ 
+    import deeplift
     import theano
     import theano.tensor.signal.conv
     assert len(filters.shape)==3
@@ -748,6 +751,7 @@ def project_onto_nonzero_filters(filters, track,
 
         track: 3-d array: samples x length x channels(ACGT)
     """ 
+    import deeplift
     assert len(filters.shape)==3
     assert len(track.shape)==3
     #for DNA sequences, filters.shape[1] will be 4 (ACGT)
