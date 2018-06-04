@@ -112,14 +112,16 @@ def gamma_ll_func_to_optimize(theta, x, expected_membership, mix_prop, k):
 #based on https://github.com/cran/mixtools/blob/master/R/gammamixEM.R
 def gammamix_em(x, mix_prop=None, alpha=None, invbeta=None,
                 k=2, epsilon=0.001, maxit=1000,
-                maxrestarts=20, verb=False):
+                maxrestarts=20, progress_update=20, verb=False):
 
     #initialization
     x = np.array(x) 
     mix_prop, alpha, invbeta, k =\
         gammamix_init(x=x, mix_prop=mix_prop, alpha=alpha,
                       invbeta=invbeta, k=k) 
-    print("initial vals:",mix_prop, alpha, invbeta, k) 
+    if (verb):
+        print("initial vals:",mix_prop, alpha, invbeta, k) 
+        sys.stdout.flush()
     theta = np.concatenate([alpha, invbeta],axis=0)
     
     iteration = 0
@@ -152,8 +154,7 @@ def gammamix_em(x, mix_prop=None, alpha=None, invbeta=None,
             x0=theta,
             bounds=[(1e-7,None) for t in theta],
             args=(x, expected_membership, mix_prop, k),
-            jac=True
-            ) 
+            jac=True) 
         if (minimization_result.success==False):
             print(minimization_result)
             print("Choosing new starting values")
@@ -204,10 +205,11 @@ def gammamix_em(x, mix_prop=None, alpha=None, invbeta=None,
                 #                          invbeta=invbeta, k=k))
 
             if verb:
-                print("iteration =", iteration,
-                      "log-lik diff =", diff,
-                      " log-lik =", new_obs_ll) 
-                sys.stdout.flush()
+                if (iteration%progress_update == 0):
+                    print("iteration =", iteration,
+                          "log-lik diff =", diff,
+                          " log-lik =", new_obs_ll) 
+                    sys.stdout.flush()
 
     if (iteration == maxit):
         print("WARNING! NOT CONVERGENT!")
