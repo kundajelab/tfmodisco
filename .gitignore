@@ -5,5 +5,6 @@
 **/*.h5
 **/*.ipynb_checkpoints
 **/*.bin
-**/*.tree
+**/*.tree_*
 **/*.weights
+**/*DS_Store
