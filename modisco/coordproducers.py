@@ -27,6 +27,68 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
+class GammaMixThresholdingResults(object):
+
+    def __init__(self, threshold, mixture_results):
+        self.threshold = threshold
+        self.mixture_results = mixture_results
+
+    def save_hdf5(self, grp):
+        grp.attrs['threshold'] = self.threshold
+
+
+class GammaMixThreshold(object):
+
+    def __init__(self, init_mixprops = [[0.95, 0.05],
+                                        [0.9, 0.1],
+                                        [0.85, 0.15],
+                                        [0.8, 0.2],
+                                        [0.75, 0.25],
+                                        [0.7, 0.3]],
+                       gammamix_subsample_size=30000,
+                       verbose=True):
+        self.init_mixprops = init_mixprops
+        self.verbose = verbose
+        self.gammamix_subsample_size = gammamix_subsample_size
+
+    def __call__(self, values):
+        from . import gammamix 
+        vals_to_score = (values if len(values) <= self.gammamix_subsample_size
+                            else np.random.choice(
+                                    a=values,
+                                    size=self.gammamix_subsample_size,
+                                    replace=False))
+        vals_to_score = sorted(vals_to_score)
+        best_ll = None
+        best_mixture_results = None
+        for init_mixprop in self.init_mixprops: 
+            print("Trying with init:",init_mixprop)
+            mixture_results = gammamix.gammamix_em(
+                                vals_to_score,
+                                mix_prop=np.array(init_mixprop),
+                                verb=self.verbose) 
+            print("params",mixture_results.params)
+            print("Got ll:",mixture_results.ll[-1])
+            if (best_ll is None or mixture_results.ll[-1] > best_ll):
+                best_ll = mixture_results.ll[-1]
+                best_mixture_results = mixture_results 
+        print("best params",best_mixture_results.params)
+        print(best_mixture_results.expected_membership[:,:50])
+        threshold = [x for x in
+         zip(vals_to_score, best_mixture_results.expected_membership)
+         if x[1][1] > 0.5][0][0]
+
+        if (self.verbose):
+            from matplotlib import pyplot as plt
+            hist_y, _, _ = plt.hist(values, bins=100)
+            max_y = np.max(hist_y)
+            plt.plot([threshold, threshold], [0, max_y])
+            plt.show()
+
+        return GammaMixThresholdingResults(
+                threshold=threshold, mixture_results=best_mixture_results)
+
+
 class MaxCurvatureThresholdingResults(object):
 
     def __init__(self, threshold, densities):
@@ -131,11 +193,61 @@ class MaxCurvatureThreshold(object):
                 threshold=maximum_c_x, densities=densities)
 
 
+class LaplaceThresholdingResults(object):
+
+    def __init__(self, threshold, b):
+        self.b = b
+        self.threshold = threshold
+
+    def save_hdf5(self, grp):
+        grp.attrs['b'] = self.b 
+        grp.attrs['threshold'] = self.threshold
+
+
+class LaplaceThreshold(object):
+
+    def __init__(self, threshold_cdf, verbose):
+        assert (threshold_cdf > 0.5 and threshold_cdf < 1.0)
+        self.threshold_cdf = threshold_cdf
+        self.verbose = verbose
+
+    def __call__(self, values):
+
+        #We assume that the null is governed by a laplace, because
+        #that's what I've personally observed
+        #80th percentile of things below 0 is 40th percentile of errything
+        forty_perc = np.percentile(values[values < 0.0], 80)
+        #estimate b using the percentile
+        #for x below 0:
+        #cdf = 0.5*exp(x/b)
+        #b = x/(log(cdf/0.5))
+        laplace_b = forty_perc/(np.log(0.8))
+
+        #solve for x given the target threshold percentile
+        #(assumes the target threshold percentile is > 0.5)
+        threshold = -np.log((1-self.threshold_cdf)*2)*laplace_b
+
+        #plot the result
+        if (self.verbose):
+            thelinspace = np.linspace(np.min(values), np.max(values), 100)
+            laplace_vals = (1/(2*laplace_b))*np.exp(
+                            -np.abs(thelinspace)/laplace_b)
+            from matplotlib import pyplot as plt
+            hist, _, _ = plt.hist(values, bins=100)
+            plt.plot(thelinspace,
+                     laplace_vals/(np.max(laplace_vals))*np.max(hist))
+            plt.plot([-threshold, -threshold], [0, np.max(hist)])
+            plt.plot([threshold, threshold], [0, np.max(hist)])
+            plt.show()
+
+        return LaplaceThresholdingResults(
+                threshold=threshold, b=laplace_b)
+
+
 class CoordProducerResults(object):
 
-    def __init__(self, coords, vals_to_threshold, thresholding_results):
+    def __init__(self, coords, thresholding_results):
         self.coords = coords
-        self.vals_to_threshold = vals_to_threshold
         self.thresholding_results = thresholding_results
 
     def save_hdf5(self, grp):
@@ -143,7 +255,6 @@ class CoordProducerResults(object):
             string_list=[str(x) for x in self.coords],
             dset_name="coords",
             grp=grp) 
-        grp.create_dataset("vals_to_threshold", data=self.vals_to_threshold)
         self.thresholding_results.save_hdf5(
               grp=grp.create_group("thresholding_results"))
 
@@ -194,6 +305,14 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             batch_size=self.batch_size,
             progress_update=
              (self.progress_update if self.verbose else None))).astype("float") 
+
+        thresholding_results = self.thresholding_function(
+                                original_summed_score_track.ravel())
+        threshold = thresholding_results.threshold
+        if (self.verbose):
+            print("Computed threshold "+str(threshold))
+            sys.stdout.flush()
+
         summed_score_track = original_summed_score_track.copy()
         if (self.take_abs):
             summed_score_track = np.abs(summed_score_track)
@@ -286,21 +405,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             print("Got "+str(len(coords))+" coords")
             sys.stdout.flush()
 
-        vals_to_threshold = np.array([np.abs(x.score) for x in coords])
-        if (self.thresholding_function is not None):
-            if (self.verbose):
-                print("Computing thresholds")
-                sys.stdout.flush()
-            thresholding_results =\
-                self.thresholding_function(vals_to_threshold) 
-        else:
-            thresholding_results = MaxCurvatureThresholdingResults(
-                                    threshold=0.0, densities=None)
-        threshold = thresholding_results.threshold
-        if (self.verbose):
-            print("Computed threshold "+str(threshold))
-            sys.stdout.flush()
-
         coords = [x for x in coords if np.abs(x.score) >= threshold]
         if (self.verbose):
             print(str(len(coords))+" coords remaining after thresholding")
@@ -313,6 +417,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             coords = sorted(coords, key=lambda x: -np.abs(x.score))\
                                [:self.max_seqlets_total]
         return CoordProducerResults(
-                    coords=coords, vals_to_threshold=vals_to_threshold,
+                    coords=coords,
                     thresholding_results=thresholding_results) 
 

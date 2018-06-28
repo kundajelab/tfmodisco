@@ -75,6 +75,7 @@ class TfModiscoWorkflow(object):
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_cluster_size=200,
+                 laplace_threshold_cdf = 0.99,
                  threshold_for_counting_sign=1.0,
                  weak_threshold_for_counting_sign=0.7,
                  verbose=True):
@@ -86,6 +87,7 @@ class TfModiscoWorkflow(object):
         self.percentiles_in_bandwidth = percentiles_in_bandwidth
         self.overlap_portion = overlap_portion
         self.min_cluster_size = min_cluster_size
+        self.laplace_threshold_cdf = laplace_threshold_cdf
         self.threshold_for_counting_sign = threshold_for_counting_sign
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
@@ -98,10 +100,10 @@ class TfModiscoWorkflow(object):
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
             flank=self.flank_size,
-            thresholding_function=coordproducers.MaxCurvatureThreshold(             
-                bins=self.histogram_bins,
-                percentiles_in_bandwidth=self.percentiles_in_bandwidth,
-                verbose=self.verbose)) 
+            thresholding_function=coordproducers.LaplaceThreshold(
+                                    threshold_cdf=self.laplace_threshold_cdf,
+                                    verbose=self.verbose)
+            ) 
 
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
