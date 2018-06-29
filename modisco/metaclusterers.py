@@ -74,7 +74,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                         reference_pattern=reference_pattern)]
     
     def __call__(self, attribute_vectors):
-        
+
         all_possible_activity_patterns =\
             list(itertools.product(*[(1,-1,0) for x
                  in range(attribute_vectors.shape[1])]))
@@ -106,7 +106,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                                              surviving_activity_patterns)
             best_pattern = self.pattern_to_str(
                 max(compatible_activity_patterns,
-                key=lambda x: np.sum(np.abs(x))))
+                key=lambda x: np.sum(np.abs(x)*np.array(vector))))
             activity_patterns.append(best_pattern)
             final_activity_pattern_to_vectors[best_pattern].append(vector)
             

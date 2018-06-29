@@ -76,8 +76,7 @@ class TfModiscoWorkflow(object):
                  overlap_portion=0.5,
                  min_cluster_size=200,
                  laplace_threshold_cdf = 0.99,
-                 threshold_for_counting_sign=1.0,
-                 weak_threshold_for_counting_sign=0.7,
+                 weak_threshold_for_counting_sign=0.95,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -88,7 +87,8 @@ class TfModiscoWorkflow(object):
         self.overlap_portion = overlap_portion
         self.min_cluster_size = min_cluster_size
         self.laplace_threshold_cdf = laplace_threshold_cdf
-        self.threshold_for_counting_sign = threshold_for_counting_sign
+        assert weak_threshold_for_counting_sign <= laplace_threshold_cdf
+        self.threshold_for_counting_sign = laplace_threshold_cdf
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
         self.verbose = verbose
@@ -111,7 +111,7 @@ class TfModiscoWorkflow(object):
                                 value_provider=lambda x: x.coor.score))
 
         self.threshold_score_transformer_factory =\
-            core.LinearThenLogFactory(flank_to_ignore=self.flank_size)
+            core.LaplaceCdfFactory(flank_to_ignore=self.flank_size)
 
         self.metaclusterer = metaclusterers.SignBasedPatternClustering(
                                 min_cluster_size=self.min_cluster_size,
@@ -146,10 +146,10 @@ class TfModiscoWorkflow(object):
                         data_tracks=contrib_scores_tracks
                         +hypothetical_contribs_tracks+[onehot_track])
 
-        per_position_contrib_scores = dict([
+        per_position_contrib_scores = OrderedDict([
             (x, np.sum(contrib_scores[x],axis=2)) for x in task_names])
 
-        task_name_to_threshold_transformer = dict([
+        task_name_to_threshold_transformer = OrderedDict([
             (task_name, self.threshold_score_transformer_factory(
                 name=task_name+"_label",
                 track_name=task_name+"_contrib_scores"))
@@ -182,7 +182,7 @@ class TfModiscoWorkflow(object):
             print("Idx to activities: ",metacluster_idx_to_activity_pattern)
             sys.stdout.flush()
 
-        metacluster_idx_to_submetacluster_results = {}
+        metacluster_idx_to_submetacluster_results = OrderedDict()
 
         for metacluster_idx, metacluster_size in\
             sorted(enumerate(metacluster_sizes), key=lambda x: x[1]):
