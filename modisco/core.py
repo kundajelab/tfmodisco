@@ -47,17 +47,14 @@ class DataTrack(object):
     def __init__(self, name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
         assert len(fwd_tracks)==len(rev_tracks)
-        assert len(fwd_tracks[0]==len(rev_tracks[0]))
+        for fwd,rev in zip(fwd_tracks, rev_tracks):
+            assert len(fwd)==len(rev)
         self.fwd_tracks = fwd_tracks
         self.rev_tracks = rev_tracks
         self.has_pos_axis = has_pos_axis
 
     def __len__(self):
         return len(self.fwd_tracks)
-
-    @property
-    def track_length(self):
-        return len(self.fwd_tracks[0])
 
     def get_snippet(self, coor):
         if (self.has_pos_axis==False):
@@ -66,12 +63,14 @@ class DataTrack(object):
                     rev=self.rev_tracks[coor.example_idx],
                     has_pos_axis=self.has_pos_axis)
         else:
+            assert coor.start >= 0
+            assert len(self.fwd_tracks[coor.example_idx]) >= coor.end
             snippet = Snippet(
-                    fwd=self.fwd_tracks[coor.example_idx, coor.start:coor.end],
+                    fwd=self.fwd_tracks[coor.example_idx][coor.start:coor.end],
                     rev=self.rev_tracks[
-                         coor.example_idx,
-                         (self.track_length-coor.end):
-                         (self.track_length-coor.start)],
+                         coor.example_idx][
+                         (len(self.rev_tracks[coor.example_idx])-coor.end):
+                         (len(self.rev_tracks[coor.example_idx])-coor.start)],
                     has_pos_axis=self.has_pos_axis)
         if (coor.is_revcomp):
             snippet = snippet.revcomp()
@@ -88,6 +87,11 @@ class TrackSet(object):
         for attribute_provider in attribute_providers:
             self.attribute_name_to_attribute_provider[attribute_provider.name]\
                 = attribute_provider 
+
+    def get_example_idx_len(self, example_idx):
+        return len(self.track_name_to_data_track[
+                    list(self.track_name_to_data_track.keys())[0]]
+                    .fwd_tracks[example_idx])
 
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
@@ -127,10 +131,6 @@ class TrackSet(object):
                 attribute_provider=\
                  self.attribute_name_to_attribute_provider[attribute_name])
         return seqlet
-
-    @property
-    def track_length(self):
-        return list(self.track_name_to_data_track.values())[0].track_length
 
 
 class CoordOverlapDetector(object):

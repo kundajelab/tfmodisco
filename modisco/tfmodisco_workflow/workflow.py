@@ -99,8 +99,8 @@ class TfModiscoWorkflow(object):
             flank=self.flank_size,
             thresholding_function=coordproducers.LaplaceThreshold(
                                     threshold_cdf=self.laplace_threshold_cdf,
-                                    verbose=self.verbose)
-            ) 
+                                    verbose=self.verbose),
+            verbose=self.verbose) 
 
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
@@ -124,19 +124,21 @@ class TfModiscoWorkflow(object):
             core.DataTrack(
                 name=key+"_contrib_scores",
                 fwd_tracks=contrib_scores[key],
-                rev_tracks=contrib_scores[key][:,::-1,::-1],
+                rev_tracks=[x[::-1, ::-1] for x in 
+                            contrib_scores[key]],
                 has_pos_axis=True) for key in task_names] 
 
         hypothetical_contribs_tracks = [
             core.DataTrack(name=key+"_hypothetical_contribs",
                            fwd_tracks=hypothetical_contribs[key],
-                           rev_tracks=hypothetical_contribs[key][:,::-1,::-1],
+                           rev_tracks=[x[::-1, ::-1] for x in 
+                                        hypothetical_contribs[key]],
                            has_pos_axis=True)
                            for key in task_names]
 
         onehot_track = core.DataTrack(
                             name="sequence", fwd_tracks=one_hot,
-                            rev_tracks=one_hot[:,::-1,::-1],
+                            rev_tracks=[x[::-1, ::-1] for x in one_hot],
                             has_pos_axis=True)
 
         track_set = core.TrackSet(
