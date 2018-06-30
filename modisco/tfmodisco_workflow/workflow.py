@@ -76,7 +76,6 @@ class TfModiscoWorkflow(object):
                  overlap_portion=0.5,
                  min_cluster_size=200,
                  laplace_threshold_cdf = 0.99,
-                 weak_threshold_for_counting_sign=0.95,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -87,10 +86,8 @@ class TfModiscoWorkflow(object):
         self.overlap_portion = overlap_portion
         self.min_cluster_size = min_cluster_size
         self.laplace_threshold_cdf = laplace_threshold_cdf
-        assert weak_threshold_for_counting_sign <= laplace_threshold_cdf
         self.threshold_for_counting_sign = laplace_threshold_cdf
-        self.weak_threshold_for_counting_sign =\
-            weak_threshold_for_counting_sign
+        self.weak_threshold_for_counting_sign = laplace_threshold_cdf
         self.verbose = verbose
 
         self.build()
