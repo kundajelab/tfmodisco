@@ -247,13 +247,19 @@ class LaplaceCdf(AbstractScoreTransformer):
         return np.sum(track_values)
             
     def fit(self, coord_producer_results):
-        self.laplace_b = coord_producer_results.thresholding_results.b
+        self.left_laplace_b =\
+            coord_producer_results.thresholding_results.left_b
+        self.right_laplace_b =\
+            coord_producer_results.thresholding_results.right_b
 
     def transform_val(self, val):
         #if (val < 0):
         #    return 0.5*np.exp(val/self.laplace_b)
         #else:
-        return (1-0.5*np.exp(-np.abs(val)/self.laplace_b))
+        if (val < 0):
+            return (1-0.5*np.exp(-np.abs(val)/self.left_laplace_b))
+        else:
+            return (1-0.5*np.exp(-val/self.right_laplace_b))
 
 
 class MultiTaskSeqletCreationResults(object):
