@@ -75,8 +75,8 @@ class TfModiscoWorkflow(object):
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_cluster_size=200,
-                 laplace_threshold_cdf = 0.99,
-                 weak_threshold_for_counting_sign = None,
+                 laplace_threshold_cdf = "auto",
+                 weak_threshold_for_counting_sign = 0.99,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -87,10 +87,6 @@ class TfModiscoWorkflow(object):
         self.overlap_portion = overlap_portion
         self.min_cluster_size = min_cluster_size
         self.laplace_threshold_cdf = laplace_threshold_cdf
-        self.threshold_for_counting_sign = laplace_threshold_cdf
-        if (weak_threshold_for_counting_sign is None):
-            weak_threshold_for_counting_sign = laplace_threshold_cdf
-        assert laplace_threshold_cdf >= weak_threshold_for_counting_sign
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
         self.verbose = verbose
@@ -99,14 +95,6 @@ class TfModiscoWorkflow(object):
 
     def build(self):
         
-        self.coord_producer = coordproducers.FixedWindowAroundChunks(
-            sliding=self.sliding_window_size,
-            flank=self.flank_size,
-            thresholding_function=coordproducers.LaplaceThreshold(
-                                    threshold_cdf=self.laplace_threshold_cdf,
-                                    verbose=self.verbose),
-            verbose=self.verbose) 
-
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
@@ -115,15 +103,46 @@ class TfModiscoWorkflow(object):
         self.threshold_score_transformer_factory =\
             core.LaplaceCdfFactory(flank_to_ignore=self.flank_size)
 
+    def __call__(self, task_names, contrib_scores,
+                       hypothetical_contribs, one_hot):
+
+        if (self.laplace_threshold_cdf == "auto"):
+            total_num = one_hot.shape[0]*one_hot.shape[1]
+            assert total_num > self.min_cluster_size, (
+                    "Increase min_cluster_size "+str(self.min_cluster_size))
+            laplace_threshold_cdf = max(
+                    min(0.99, 1-(self.min_cluster_size/total_num)),
+                    1-(500/total_num))
+        else:
+            laplace_threshold_cdf = self.laplace_threshold_cdf
+        print("Using laplace threshold of "+str(laplace_threshold_cdf))
+
+        if (self.weak_threshold_for_counting_sign is None):
+            weak_threshold_for_counting_sign = laplace_threshold_cdf
+        else:
+            weak_threshold_for_counting_sign =\
+                self.weak_threshold_for_counting_sign
+        if (weak_threshold_for_counting_sign > laplace_threshold_cdf):
+            print("Reducing weak_threshold_for_counting_sign to"
+                  +" match laplace_threshold_cdf, from "
+                  +str(weak_threshold_for_counting_sign)
+                  +" to "+str(laplace_threshold_cdf))
+            weak_threshold_for_counting_sign = laplace_threshold_cdf
+
+        self.coord_producer = coordproducers.FixedWindowAroundChunks(
+            sliding=self.sliding_window_size,
+            flank=self.flank_size,
+            thresholding_function=coordproducers.LaplaceThreshold(
+                                    threshold_cdf=laplace_threshold_cdf,
+                                    verbose=self.verbose),
+            verbose=self.verbose) 
+
         self.metaclusterer = metaclusterers.SignBasedPatternClustering(
                                 min_cluster_size=self.min_cluster_size,
                                 threshold_for_counting_sign=
-                                    self.threshold_for_counting_sign,
+                                    laplace_threshold_cdf,
                                 weak_threshold_for_counting_sign=
-                                    self.weak_threshold_for_counting_sign)
-
-    def __call__(self, task_names, contrib_scores, hypothetical_contribs,
-                 one_hot):
+                                    weak_threshold_for_counting_sign)
 
         contrib_scores_tracks = [
             core.DataTrack(
