@@ -74,7 +74,7 @@ class TfModiscoWorkflow(object):
                  sliding_window_size=21, flank_size=10,
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
-                 min_cluster_size=200,
+                 min_cluster_size=100,
                  laplace_threshold_cdf = "auto",
                  weak_threshold_for_counting_sign = 0.99,
                  verbose=True):
@@ -107,7 +107,8 @@ class TfModiscoWorkflow(object):
                        hypothetical_contribs, one_hot):
 
         if (self.laplace_threshold_cdf == "auto"):
-            total_num = one_hot.shape[0]*one_hot.shape[1]
+            total_num = sum([(1+len(x)-self.sliding_window_size)
+                             for x in one_hot])
             assert total_num > self.min_cluster_size, (
                     "Increase min_cluster_size "+str(self.min_cluster_size))
             laplace_threshold_cdf = max(
