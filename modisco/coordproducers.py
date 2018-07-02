@@ -33,7 +33,7 @@ class LaplaceThresholdingResults(object):
         self.left_threshold = left_threshold
         self.left_b = left_b
         self.right_threshold = right_threshold
-        self.right_b = left_b
+        self.right_b = right_b
 
     def save_hdf5(self, grp):
         grp.attrs['left_threshold'] = self.left_threshold

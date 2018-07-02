@@ -251,13 +251,16 @@ class LaplaceCdf(AbstractScoreTransformer):
             coord_producer_results.thresholding_results.left_b
         self.right_laplace_b =\
             coord_producer_results.thresholding_results.right_b
+        #print("Transformed left threshold:",
+        #      self.transform_val(coord_producer_results.
+        #                         thresholding_results.left_threshold))
+        #print("Transformed right threshold:",
+        #      self.transform_val(coord_producer_results.
+        #                         thresholding_results.right_threshold))
 
     def transform_val(self, val):
-        #if (val < 0):
-        #    return 0.5*np.exp(val/self.laplace_b)
-        #else:
         if (val < 0):
-            return (1-0.5*np.exp(-np.abs(val)/self.left_laplace_b))
+            return -(1-0.5*np.exp(-np.abs(val)/self.left_laplace_b))
         else:
             return (1-0.5*np.exp(-val/self.right_laplace_b))
 

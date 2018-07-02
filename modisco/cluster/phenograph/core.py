@@ -399,9 +399,11 @@ def runlouvain_average_runs(filename, n_runs,
     #communities - filter these out
     communities_list = [x for x in communities_list if len(x) > 0]
     if (len(communities_list) < n_runs):
+        sys.stderr.flush()
         print("WARNING!!! only "
               +str(len(communities_list))+" louvain runs"
               +" worked, out of "+str(n_runs), file=sys.stderr)
+        sys.stderr.flush()
     coocc_count = np.zeros((len(communities_list[0]),
                             len(communities_list[0])))
     for communities in communities_list:
