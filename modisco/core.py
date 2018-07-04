@@ -247,22 +247,16 @@ class LaplaceCdf(AbstractScoreTransformer):
         return np.sum(track_values)
             
     def fit(self, coord_producer_results):
-        self.left_laplace_b =\
-            coord_producer_results.thresholding_results.left_b
-        self.right_laplace_b =\
-            coord_producer_results.thresholding_results.right_b
-        #print("Transformed left threshold:",
-        #      self.transform_val(coord_producer_results.
-        #                         thresholding_results.left_threshold))
-        #print("Transformed right threshold:",
-        #      self.transform_val(coord_producer_results.
-        #                         thresholding_results.right_threshold))
+        self.neg_laplace_b =\
+            coord_producer_results.thresholding_results.neg_b
+        self.pos_laplace_b =\
+            coord_producer_results.thresholding_results.pos_b
 
     def transform_val(self, val):
         if (val < 0):
-            return -(1-0.5*np.exp(-np.abs(val)/self.left_laplace_b))
+            return -(1-np.exp(val/self.neg_laplace_b))
         else:
-            return (1-0.5*np.exp(-val/self.right_laplace_b))
+            return (1-np.exp(-val/self.pos_laplace_b))
 
 
 class MultiTaskSeqletCreationResults(object):
@@ -289,7 +283,7 @@ class MultiTaskSeqletCreation(object):
         self.coord_producer = coord_producer
         self.track_set = track_set
         self.overlap_resolver = overlap_resolver
-        self.verbose=verbose
+        self.verbose = verbose
 
     def __call__(self, task_name_to_score_track,
                        task_name_to_threshold_transformer):
@@ -319,7 +313,6 @@ class MultiTaskSeqletCreation(object):
                 task_name_to_coord_producer_results=
                  task_name_to_coord_producer_results)
                  
-
             
 class SeqletCoordinates(object):
 

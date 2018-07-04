@@ -29,74 +29,111 @@ class SeqletCoordsFWAP(SeqletCoordinates):
 
 class LaplaceThresholdingResults(object):
 
-    def __init__(self, left_threshold, left_b, right_threshold, right_b):
-        self.left_threshold = left_threshold
-        self.left_b = left_b
-        self.right_threshold = right_threshold
-        self.right_b = right_b
+    def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
+                       pos_threshold, pos_threshold_cdf, pos_b):
+        self.neg_threshold = neg_threshold
+        self.neg_threshold_cdf = neg_threshold_cdf
+        self.neg_b = neg_b
+        self.pos_threshold = pos_threshold
+        self.pos_threshold_cdf = pos_threshold_cdf
+        self.pos_b = pos_b
 
     def save_hdf5(self, grp):
-        grp.attrs['left_threshold'] = self.left_threshold
-        grp.attrs['left_b'] = self.left_b 
-        grp.attrs['right_threshold'] = self.right_threshold
-        grp.attrs['right_b'] = self.right_b 
+        grp.attrs['neg_threshold'] = self.neg_threshold
+        grp.attrs['neg_b'] = self.neg_b 
+        grp.attrs['pos_threshold'] = self.pos_threshold
+        grp.attrs['pos_b'] = self.pos_b 
 
 
 class LaplaceThreshold(object):
 
-    def __init__(self, threshold_cdf, verbose):
-        assert (threshold_cdf > 0.5 and threshold_cdf < 1.0)
-        self.threshold_cdf = threshold_cdf
+    def __init__(self, target_fdr, verbose):
+        assert (target_fdr > 0.0 and target_fdr < 1.0)
+        self.target_fdr = target_fdr
         self.verbose = verbose
 
     def __call__(self, values):
+
+        pos_values = np.array(sorted(values[values >= 0.0]))
+        neg_values = np.array(sorted(values[values < 0.0],
+                                     key=lambda x: -x))
 
         #We assume that the null is governed by a laplace, because
         #that's what I (Av Shrikumar) have personally observed
         #But we calculate a different laplace distribution for
         # positive and negative values, in case they are
         # distributed slightly differently
-        #80th percentile of things below 0 is 40th percentile of errything
-        left_forty_perc = np.percentile(values[values < 0.0], 80)
-        right_sixty_perc = np.percentile(values[values > 0.0], 20)
         #estimate b using the percentile
         #for x below 0:
         #cdf = 0.5*exp(x/b)
         #b = x/(log(cdf/0.5))
-        left_laplace_b = left_forty_perc/(np.log(0.8))
-        right_laplace_b = (-right_sixty_perc)/(np.log(0.8))
-        #solve for x given the target threshold percentile
-        #(assumes the target threshold percentile is > 0.5)
-        left_threshold = np.log((1-self.threshold_cdf)*2)*left_laplace_b
-        right_threshold = -np.log((1-self.threshold_cdf)*2)*right_laplace_b
+        neg_laplace_b = np.percentile(neg_values, 95)/(np.log(0.95))
+        pos_laplace_b = (-np.percentile(pos_values, 5))/(np.log(0.95))
+
+        #for the pos and neg, compute the expected number above a
+        #particular threshold based on the total number of examples,
+        #and use this to estimate the fdr
+        #for pos_null_above, we estimate the total num of examples
+        #as 2*len(pos_values)
+        pos_fdrs = (len(pos_values)*(np.exp(-pos_values/pos_laplace_b)))/(
+                    len(pos_values)-np.arange(len(pos_values)))
+        pos_fdrs = np.minimum(pos_fdrs, 1.0)
+        neg_fdrs = (len(neg_values)*(np.exp(neg_values/neg_laplace_b)))/(
+                    len(neg_values)-np.arange(len(neg_values)))
+        neg_fdrs = np.minimum(neg_fdrs, 1.0)
+
+        pos_fdrs_passing_thresh = [x for x in zip(pos_values, pos_fdrs)
+                                   if x[1] <= self.target_fdr]
+        neg_fdrs_passing_thresh = [x for x in zip(neg_values, neg_fdrs)
+                                   if x[1] <= self.target_fdr]
+        if (len(pos_fdrs_passing_thresh) > 0):
+            pos_threshold, pos_thresh_fdr = pos_fdrs_passing_thresh[0]
+        else:
+            pos_threshold, pos_thresh_fdr = pos_values[-1], pos_fdrs[-1]
+            pos_threshold += 0.0000001
+        if (len(neg_fdrs_passing_thresh) > 0):
+            neg_threshold, neg_thresh_fdr = neg_fdrs_passing_thresh[0]
+            neg_threshold = neg_threshold - 0.0000001
+        else:
+            neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
+
+        pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b) 
+        neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b) 
+        #neg_threshold = np.log((1-self.threshold_cdf)*2)*neg_laplace_b
+        #pos_threshold = -np.log((1-self.threshold_cdf)*2)*pos_laplace_b
 
         #plot the result
         if (self.verbose):
-            left_linspace = np.linspace(np.min(values), 0, 100)
-            right_linspace = np.linspace(0, np.max(values), 100)
-            left_laplace_vals = (1/(2*left_laplace_b))*np.exp(
-                            -np.abs(left_linspace)/left_laplace_b)
-            right_laplace_vals = (1/(2*right_laplace_b))*np.exp(
-                            -np.abs(right_linspace)/left_laplace_b)
+            print("Thresholds:",neg_threshold,"and",pos_threshold)
+            print("CDFs:",neg_threshold_cdf,"and",pos_threshold_cdf)
+            print("Est. FDRs:",neg_thresh_fdr,"and",pos_thresh_fdr)
+            neg_linspace = np.linspace(np.min(values), 0, 100)
+            pos_linspace = np.linspace(0, np.max(values), 100)
+            neg_laplace_vals = (1/(2*neg_laplace_b))*np.exp(
+                            -np.abs(neg_linspace)/neg_laplace_b)
+            pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
+                            -np.abs(pos_linspace)/neg_laplace_b)
             from matplotlib import pyplot as plt
             hist, _, _ = plt.hist(values, bins=100)
-            plt.plot(left_linspace,
-                     left_laplace_vals/(
-                      np.max(left_laplace_vals))*np.max(hist))
-            plt.plot(right_linspace,
-                     right_laplace_vals/(
-                      np.max(right_laplace_vals))*np.max(hist))
-            plt.plot([left_threshold, left_threshold],
+            plt.plot(neg_linspace,
+                     neg_laplace_vals/(
+                      np.max(neg_laplace_vals))*np.max(hist))
+            plt.plot(pos_linspace,
+                     pos_laplace_vals/(
+                      np.max(pos_laplace_vals))*np.max(hist))
+            plt.plot([neg_threshold, neg_threshold],
                      [0, np.max(hist)])
-            plt.plot([right_threshold, right_threshold],
+            plt.plot([pos_threshold, pos_threshold],
                      [0, np.max(hist)])
             plt.show()
 
         return LaplaceThresholdingResults(
-                left_threshold=left_threshold,
-                left_b=left_laplace_b,
-                right_threshold=right_threshold,
-                right_b=right_laplace_b)
+                neg_threshold=neg_threshold,
+                neg_threshold_cdf=neg_threshold_cdf,
+                neg_b=neg_laplace_b,
+                pos_threshold=pos_threshold,
+                pos_threshold_cdf=pos_threshold_cdf,
+                pos_b=pos_laplace_b)
 
 
 class CoordProducerResults(object):
@@ -135,9 +172,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        flank=10,
                        suppress=None,
                        thresholding_function=LaplaceThreshold(
-                            threshold_cdf=0.99,
+                            target_fdr=0.05,
                             verbose=True),
-                       max_seqlets_total=20000,
+                       max_seqlets_total=None,
                        progress_update=5000,
                        verbose=True):
         self.sliding = sliding
@@ -146,7 +183,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             suppress = int(0.5*sliding) + flank
         self.suppress = suppress
         self.thresholding_function = thresholding_function
-        self.max_seqlets_total = max_seqlets_total
+        self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
 
@@ -165,19 +202,15 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         thresholding_results = self.thresholding_function(
                                 np.concatenate(original_summed_score_track,
                                                axis=0))
-        left_threshold = thresholding_results.left_threshold
-        right_threshold = thresholding_results.right_threshold
-        if (self.verbose):
-            print("Computed thresholds "+str(left_threshold)
-                  +" and "+str(right_threshold))
-            sys.stdout.flush()
+        neg_threshold = thresholding_results.neg_threshold
+        pos_threshold = thresholding_results.pos_threshold
 
         summed_score_track = [x.copy() for x in original_summed_score_track]
 
         #if a position is less than the threshold, set it to -np.inf
         summed_score_track = [
-            np.array([np.abs(y) if (y >= right_threshold
-                            or y <= left_threshold)
+            np.array([np.abs(y) if (y >= pos_threshold
+                            or y <= neg_threshold)
                            else -np.inf for y in x])
             for x in summed_score_track]
 
@@ -210,7 +243,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             print("Got "+str(len(coords))+" coords")
             sys.stdout.flush()
 
-        if (len(coords) > self.max_seqlets_total):
+        if ((self.max_seqlets_total is not None) and
+            len(coords) > self.max_seqlets_total):
             if (self.verbose):
                 print("Limiting to top "+str(self.max_seqlets_total))
                 sys.stdout.flush()

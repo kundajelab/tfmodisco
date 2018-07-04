@@ -26,7 +26,7 @@ class MetaclusteringResults(object):
         all_metacluster_names = []
         for cluster_idx,activity_pattern in\
             self.metacluster_idx_to_activity_pattern.items():
-            metacluster_name = "metacluster"+str(cluster_idx)
+            metacluster_name = "metacluster_"+str(cluster_idx)
             metacluster_idx_to_activity_pattern_grp.attrs[
                 metacluster_name] = activity_pattern
             all_metacluster_names.append(metacluster_name)
