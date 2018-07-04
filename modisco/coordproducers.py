@@ -27,115 +27,119 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
-class MaxCurvatureThresholdingResults(object):
+class LaplaceThresholdingResults(object):
 
-    def __init__(self, threshold, densities):
-        self.densities = densities 
-        self.threshold = threshold
+    def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
+                       pos_threshold, pos_threshold_cdf, pos_b):
+        self.neg_threshold = neg_threshold
+        self.neg_threshold_cdf = neg_threshold_cdf
+        self.neg_b = neg_b
+        self.pos_threshold = pos_threshold
+        self.pos_threshold_cdf = pos_threshold_cdf
+        self.pos_b = pos_b
 
     def save_hdf5(self, grp):
-        grp.create_dataset("densities", data=self.densities) 
-        grp.attrs['threshold'] = self.threshold
+        grp.attrs['neg_threshold'] = self.neg_threshold
+        grp.attrs['neg_b'] = self.neg_b 
+        grp.attrs['pos_threshold'] = self.pos_threshold
+        grp.attrs['pos_b'] = self.pos_b 
 
 
-class MaxCurvatureThreshold(object):
+class LaplaceThreshold(object):
 
-    def __init__(self, bins, verbose, percentiles_in_bandwidth):
-        self.bins = bins
-        assert percentiles_in_bandwidth < 100
-        self.percentiles_in_bandwidth = percentiles_in_bandwidth
+    def __init__(self, target_fdr, verbose):
+        assert (target_fdr > 0.0 and target_fdr < 1.0)
+        self.target_fdr = target_fdr
         self.verbose = verbose
 
     def __call__(self, values):
 
-        #determine bandwidth
-        sorted_values = sorted(values)
-        vals_to_avg = []
-        last_val = sorted_values[0]
-        num_in_bandwidth = int((0.01*len(values))
-                               *self.percentiles_in_bandwidth)
-        for i in range(num_in_bandwidth, len(values), num_in_bandwidth):
-            vals_to_avg.append(sorted_values[i]-last_val) 
-            last_val = sorted_values[i]
-        #take the median of the diff between num_in_bandwidth
-        self.bandwidth = np.median(np.array(vals_to_avg))
+        pos_values = np.array(sorted(values[values >= 0.0]))
+        neg_values = np.array(sorted(values[values < 0.0],
+                                     key=lambda x: -x))
+
+        #We assume that the null is governed by a laplace, because
+        #that's what I (Av Shrikumar) have personally observed
+        #But we calculate a different laplace distribution for
+        # positive and negative values, in case they are
+        # distributed slightly differently
+        #estimate b using the percentile
+        #for x below 0:
+        #cdf = 0.5*exp(x/b)
+        #b = x/(log(cdf/0.5))
+        neg_laplace_b = np.percentile(neg_values, 95)/(np.log(0.95))
+        pos_laplace_b = (-np.percentile(pos_values, 5))/(np.log(0.95))
+
+        #for the pos and neg, compute the expected number above a
+        #particular threshold based on the total number of examples,
+        #and use this to estimate the fdr
+        #for pos_null_above, we estimate the total num of examples
+        #as 2*len(pos_values)
+        pos_fdrs = (len(pos_values)*(np.exp(-pos_values/pos_laplace_b)))/(
+                    len(pos_values)-np.arange(len(pos_values)))
+        pos_fdrs = np.minimum(pos_fdrs, 1.0)
+        neg_fdrs = (len(neg_values)*(np.exp(neg_values/neg_laplace_b)))/(
+                    len(neg_values)-np.arange(len(neg_values)))
+        neg_fdrs = np.minimum(neg_fdrs, 1.0)
+
+        pos_fdrs_passing_thresh = [x for x in zip(pos_values, pos_fdrs)
+                                   if x[1] <= self.target_fdr]
+        neg_fdrs_passing_thresh = [x for x in zip(neg_values, neg_fdrs)
+                                   if x[1] <= self.target_fdr]
+        if (len(pos_fdrs_passing_thresh) > 0):
+            pos_threshold, pos_thresh_fdr = pos_fdrs_passing_thresh[0]
+        else:
+            pos_threshold, pos_thresh_fdr = pos_values[-1], pos_fdrs[-1]
+            pos_threshold += 0.0000001
+        if (len(neg_fdrs_passing_thresh) > 0):
+            neg_threshold, neg_thresh_fdr = neg_fdrs_passing_thresh[0]
+            neg_threshold = neg_threshold - 0.0000001
+        else:
+            neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
+
+        pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b) 
+        neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b) 
+        #neg_threshold = np.log((1-self.threshold_cdf)*2)*neg_laplace_b
+        #pos_threshold = -np.log((1-self.threshold_cdf)*2)*pos_laplace_b
+
+        #plot the result
         if (self.verbose):
-            print("Bandwidth calculated:",self.bandwidth)
-
-        hist_y, hist_x = np.histogram(values, bins=self.bins*2)
-        hist_x = 0.5*(hist_x[:-1]+hist_x[1:])
-        global_max_x = max(zip(hist_y,hist_x), key=lambda x: x[0])[1]
-        #create a symmetric reflection around global_max_x so kde does not
-        #get confused
-        new_values = np.array([x for x in values if x >= global_max_x])
-        new_values = np.concatenate([new_values, -(new_values-global_max_x)
-                                                  + global_max_x])
-        kde = KernelDensity(kernel="epanechnikov",
-                            bandwidth=self.bandwidth).fit(
-                            [[x,0] for x in new_values])
-        midpoints = np.min(values)+((np.arange(self.bins)+0.5)
-                                    *(np.max(values)-np.min(values))/self.bins)
-        densities = np.exp(kde.score_samples([[x,0] for x in midpoints]))
-
-        firstd_x, firstd_y = util.angle_firstd(x_values=midpoints,
-                                                y_values=densities) 
-        curvature_x, curvature_y = util.angle_curvature(x_values=midpoints,
-                                                y_values=densities) 
-        secondd_x, secondd_y = util.angle_firstd(x_values=firstd_x,
-                                           y_values=firstd_y)
-        thirdd_x, thirdd_y = util.firstd(x_values=secondd_x,
-                                           y_values=secondd_y)
-        mean_firstd_ys_at_secondds = 0.5*(firstd_y[1:]+firstd_y[:-1])
-        mean_secondd_ys_at_thirdds = 0.5*(secondd_y[1:]+secondd_y[:-1])
-        #find point of maximum curvature
-
-        #maximum_c_x = max([x for x in zip(secondd_x, secondd_y,
-        #                                  mean_firstd_ys_at_secondds)
-        #                   if (x[0] > global_max_x
-        #                      and x[2] < 0)], key=lambda x:x[1])[0]
-
-        maximum_c_x = ([x for x in enumerate(secondd_x)
-                        if (x[1] > global_max_x and
-                            x[0] < len(secondd_x)-1 and
-                            secondd_y[x[0]-1] < secondd_y[x[0]] and
-                            secondd_y[x[0]+1] < secondd_y[x[0]])])[0][1]
-
-        maximum_c_x2 = max([x for x in zip(thirdd_x, thirdd_y,
-                                          mean_secondd_ys_at_thirdds)
-                           if (x[0] > global_max_x
-                              and x[2] > 0)], key=lambda x:x[1])[0]
-
-        if (self.verbose):
+            print("Thresholds:",neg_threshold,"and",pos_threshold)
+            print("CDFs:",neg_threshold_cdf,"and",pos_threshold_cdf)
+            print("Est. FDRs:",neg_thresh_fdr,"and",pos_thresh_fdr)
+            neg_linspace = np.linspace(np.min(values), 0, 100)
+            pos_linspace = np.linspace(0, np.max(values), 100)
+            neg_laplace_vals = (1/(2*neg_laplace_b))*np.exp(
+                            -np.abs(neg_linspace)/neg_laplace_b)
+            pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
+                            -np.abs(pos_linspace)/neg_laplace_b)
             from matplotlib import pyplot as plt
-            hist_y, _, _ = plt.hist(values, bins=self.bins)
-            max_y = np.max(hist_y)
-            plt.plot(midpoints, densities*(max_y/np.max(densities)))
-            plt.plot(firstd_x, -firstd_y*(max_y/np.max(-firstd_y))*(firstd_y<0))
-            #plt.plot(secondd_x, secondd_y*(max_y/np.max(secondd_y))*(secondd_y>0))
-            #plt.plot(curvature_x, curvature_y*(max_y/np.max(curvature_y))*(curvature_y>0))
-            #plt.plot(thirdd_x, thirdd_y*(max_y/np.max(thirdd_y))*(thirdd_y>0))
-            #plt.plot(secondd_x, (secondd_y>0)*secondd_y*(max_y/np.max(secondd_y)))
-            plt.plot([maximum_c_x, maximum_c_x], [0, max_y])
-            #plt.plot([maximum_c_x2, maximum_c_x2], [0, max_y])
-            plt.xlim((0, maximum_c_x*5))
-            plt.show()
-            plt.plot(firstd_x, firstd_y)
-            plt.plot(secondd_x, secondd_y*(secondd_y>0))
-            plt.xlim((0, maximum_c_x*5))
-            plt.show()
-            plt.plot(curvature_x[curvature_x>global_max_x], curvature_y[curvature_x>global_max_x])
-            plt.xlim((0, maximum_c_x*5))
+            hist, _, _ = plt.hist(values, bins=100)
+            plt.plot(neg_linspace,
+                     neg_laplace_vals/(
+                      np.max(neg_laplace_vals))*np.max(hist))
+            plt.plot(pos_linspace,
+                     pos_laplace_vals/(
+                      np.max(pos_laplace_vals))*np.max(hist))
+            plt.plot([neg_threshold, neg_threshold],
+                     [0, np.max(hist)])
+            plt.plot([pos_threshold, pos_threshold],
+                     [0, np.max(hist)])
             plt.show()
 
-        return MaxCurvatureThresholdingResults(
-                threshold=maximum_c_x, densities=densities)
+        return LaplaceThresholdingResults(
+                neg_threshold=neg_threshold,
+                neg_threshold_cdf=neg_threshold_cdf,
+                neg_b=neg_laplace_b,
+                pos_threshold=pos_threshold,
+                pos_threshold_cdf=pos_threshold_cdf,
+                pos_b=pos_laplace_b)
 
 
 class CoordProducerResults(object):
 
-    def __init__(self, coords, vals_to_threshold, thresholding_results):
+    def __init__(self, coords, thresholding_results):
         self.coords = coords
-        self.vals_to_threshold = vals_to_threshold
         self.thresholding_results = thresholding_results
 
     def save_hdf5(self, grp):
@@ -143,9 +147,23 @@ class CoordProducerResults(object):
             string_list=[str(x) for x in self.coords],
             dset_name="coords",
             grp=grp) 
-        grp.create_dataset("vals_to_threshold", data=self.vals_to_threshold)
         self.thresholding_results.save_hdf5(
               grp=grp.create_group("thresholding_results"))
+
+
+def get_simple_window_sum_function(window_size):
+    def window_sum_function(arrs):
+        to_return = []
+        for arr in arrs:
+            current_sum = np.sum(arr[0:window_size])
+            arr_running_sum = [current_sum]
+            for i in range(0,len(arr)-window_size):
+                current_sum = (current_sum +
+                               arr[i+window_size] - arr[i])
+                arr_running_sum.append(current_sum)
+            to_return.append(np.array(arr_running_sum))
+        return to_return
+    return window_sum_function
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -153,16 +171,10 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
     def __init__(self, sliding=11,
                        flank=10,
                        suppress=None,
-                       max_seqlets_per_seq=10,
-                       thresholding_function=MaxCurvatureThreshold(
-                            bins=100, percentiles_in_bandwidth=10,
+                       thresholding_function=LaplaceThreshold(
+                            target_fdr=0.05,
                             verbose=True),
-                       take_abs=True, 
-                       min_ratio_top_peak=0.0,
-                       min_ratio_over_bg=0.0,
-                       apply_recentering=False,
-                       max_seqlets_total=20000,
-                       batch_size=50,
+                       max_seqlets_total=None,
                        progress_update=5000,
                        verbose=True):
         self.sliding = sliding
@@ -170,149 +182,74 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         if (suppress is None):
             suppress = int(0.5*sliding) + flank
         self.suppress = suppress
-        self.max_seqlets_per_seq = max_seqlets_per_seq
         self.thresholding_function = thresholding_function
-        self.take_abs = take_abs
-        self.min_ratio_top_peak = min_ratio_top_peak
-        self.min_ratio_over_bg = min_ratio_over_bg
-        self.apply_recentering = apply_recentering
-        self.max_seqlets_total = max_seqlets_total
-        self.batch_size = batch_size
+        self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
 
     def __call__(self, score_track):
      
         assert len(score_track.shape)==2 
-        window_sum_function = B.get_window_sum_function(
-                                window_size=self.sliding,
-                                same_size_return=False)
-        argmax_func = B.get_argmax_function()
+        window_sum_function = get_simple_window_sum_function(self.sliding)
 
-        original_summed_score_track = np.array(window_sum_function(
-            inp=score_track,
-            batch_size=self.batch_size,
-            progress_update=
-             (self.progress_update if self.verbose else None))).astype("float") 
-        summed_score_track = original_summed_score_track.copy()
-        if (self.take_abs):
-            summed_score_track = np.abs(summed_score_track)
+        if (self.verbose):
+            print("Computing windowed sums")
+            sys.stdout.flush()
+        original_summed_score_track = window_sum_function(arrs=score_track) 
+        if (self.verbose):
+            print("Computing threshold")
+            sys.stdout.flush()
+        thresholding_results = self.thresholding_function(
+                                np.concatenate(original_summed_score_track,
+                                               axis=0))
+        neg_threshold = thresholding_results.neg_threshold
+        pos_threshold = thresholding_results.pos_threshold
 
-        #As we extract seqlets, we will zero out the values at those positions
-        #so that the mean of the background can be updated to exclude
-        #the seqlets (which are likely to be outliers)
-        zerod_out_summed_score_track = np.copy(summed_score_track)
-         
+        summed_score_track = [x.copy() for x in original_summed_score_track]
+
+        #if a position is less than the threshold, set it to -np.inf
+        summed_score_track = [
+            np.array([np.abs(y) if (y >= pos_threshold
+                            or y <= neg_threshold)
+                           else -np.inf for y in x])
+            for x in summed_score_track]
+
         coords = []
-        max_per_seq = None
-        for n in range(self.max_seqlets_per_seq):
-            argmax_coords = argmax_func(
-                                inp=summed_score_track,
-                                batch_size=self.batch_size,
-                                progress_update=(self.progress_update
-                                                 if self.verbose else None)) 
-            unsuppressed_per_track = np.sum(summed_score_track > -np.inf,
-                                            axis=1)
-            bg_avg_per_track = np.sum(zerod_out_summed_score_track, axis=1)/\
-                                     (unsuppressed_per_track)
-            
-            if (max_per_seq is None):
-                max_per_seq = summed_score_track[
-                               list(range(len(summed_score_track))),
-                               argmax_coords]
-            for example_idx,argmax in enumerate(argmax_coords):
-
+        for example_idx,single_score_track in enumerate(summed_score_track):
+            while True:
+                argmax = np.argmax(single_score_track,axis=0)
+                max_val = single_score_track[argmax]
+                #bail if exhausted everything that passed the threshold
+                #and was not suppressed
+                if (max_val == -np.inf):
+                    break
+                #need to be able to expand without going off the edge
+                if ((argmax >= self.flank) and
+                    (argmax <= (len(single_score_track)
+                                -(self.sliding+self.flank)))): 
+                    coord = SeqletCoordsFWAP(
+                        example_idx=example_idx,
+                        start=argmax-self.flank,
+                        end=argmax+self.sliding+self.flank,
+                        score=original_summed_score_track[example_idx][argmax]) 
+                    coords.append(coord)
                 #suppress the chunks within +- self.suppress
                 left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),0))
                 right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
-                                     len(summed_score_track[0])))
-
-                #need to be able to expand without going off the edge
-                if ((argmax >= self.flank) and
-                    (argmax <= (score_track.shape[1]
-                                -(self.sliding+self.flank)))): 
-                    chunk_height = summed_score_track[example_idx][argmax]
-                    #only include chunk that are at least a certain
-                    #fraction of the max chunk
-                    if ((chunk_height >=
-                         max_per_seq[example_idx]*self.min_ratio_top_peak)
-                        and (np.abs(chunk_height) >=
-                             np.abs(bg_avg_per_track[example_idx])
-                             *self.min_ratio_over_bg)):
-                        score = (original_summed_score_track
-                                 [example_idx][argmax])
-                        coord = SeqletCoordsFWAP(
-                            example_idx=example_idx,
-                            start=argmax-self.flank,
-                            end=argmax+self.sliding+self.flank,
-                            score=score) 
-                        if (self.apply_recentering):
-                            half_sliding = int(0.5*self.sliding)
-                            if ((argmax+half_sliding+self.flank <=
-                                 original_summed_score_track.shape[1]) and
-                                (argmax >= self.flank+half_sliding)):
-                                arr_to_check_for_center =\
-                                    original_summed_score_track[
-                                        example_idx,
-                                        argmax-self.flank-half_sliding:
-                                         argmax+half_sliding+self.flank] 
-                                adjusted_argmax =\
-                                    (argmax+np.argmax(arr_to_check_for_center)
-                                      -(half_sliding+self.flank))
-                                if ((adjusted_argmax >= self.flank) and
-                                    (adjusted_argmax <=
-                                     (score_track.shape[1] 
-                                      -(self.sliding+self.flank)))):
-                                    coords.append(
-                                        SeqletCoordsFWAP(
-                                            example_idx=example_idx,
-                                            start=adjusted_argmax-self.flank,
-                                            end=adjusted_argmax
-                                                +self.sliding+self.flank,
-                                            score=original_summed_score_track
-                                                       [example_idx,
-                                                        adjusted_argmax]))
-                        else:
-                            coords.append(coord)
-                    #only zero out if the region was included, so that we
-                    #don't zero out sequences that do not pass the conditions
-                    zerod_out_summed_score_track[
-                        example_idx,
-                        left_supp_idx:right_supp_idx] = 0.0
-                summed_score_track[
-                    example_idx, left_supp_idx:right_supp_idx] = -np.inf 
+                                     len(single_score_track)))
+                single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
 
         if (self.verbose):
             print("Got "+str(len(coords))+" coords")
             sys.stdout.flush()
 
-        vals_to_threshold = np.array([np.abs(x.score) for x in coords])
-        if (self.thresholding_function is not None):
-            if (self.verbose):
-                print("Computing thresholds")
-                sys.stdout.flush()
-            thresholding_results =\
-                self.thresholding_function(vals_to_threshold) 
-        else:
-            thresholding_results = MaxCurvatureThresholdingResults(
-                                    threshold=0.0, densities=None)
-        threshold = thresholding_results.threshold
-        if (self.verbose):
-            print("Computed threshold "+str(threshold))
-            sys.stdout.flush()
-
-        coords = [x for x in coords if np.abs(x.score) >= threshold]
-        if (self.verbose):
-            print(str(len(coords))+" coords remaining after thresholding")
-            sys.stdout.flush()
-
-        if (len(coords) > self.max_seqlets_total):
+        if ((self.max_seqlets_total is not None) and
+            len(coords) > self.max_seqlets_total):
             if (self.verbose):
                 print("Limiting to top "+str(self.max_seqlets_total))
                 sys.stdout.flush()
             coords = sorted(coords, key=lambda x: -np.abs(x.score))\
                                [:self.max_seqlets_total]
         return CoordProducerResults(
-                    coords=coords, vals_to_threshold=vals_to_threshold,
+                    coords=coords,
                     thresholding_results=thresholding_results) 
-

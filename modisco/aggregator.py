@@ -91,7 +91,10 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
                 else:
                     start = seqlet.coor.start - right_expansion
                     end = seqlet.coor.end + left_expansion
-                if (start >= 0 and end <= self.track_set.track_length):
+                if (start >= 0 and
+                    end <=
+                     self.track_set.get_example_idx_len(
+                           seqlet.coor.example_idx)):
                     seqlet = self.track_set.create_seqlet(
                         coor=core.SeqletCoordinates(
                             example_idx=seqlet.coor.example_idx,

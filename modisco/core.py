@@ -47,17 +47,14 @@ class DataTrack(object):
     def __init__(self, name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
         assert len(fwd_tracks)==len(rev_tracks)
-        assert len(fwd_tracks[0]==len(rev_tracks[0]))
+        for fwd,rev in zip(fwd_tracks, rev_tracks):
+            assert len(fwd)==len(rev)
         self.fwd_tracks = fwd_tracks
         self.rev_tracks = rev_tracks
         self.has_pos_axis = has_pos_axis
 
     def __len__(self):
         return len(self.fwd_tracks)
-
-    @property
-    def track_length(self):
-        return len(self.fwd_tracks[0])
 
     def get_snippet(self, coor):
         if (self.has_pos_axis==False):
@@ -66,12 +63,14 @@ class DataTrack(object):
                     rev=self.rev_tracks[coor.example_idx],
                     has_pos_axis=self.has_pos_axis)
         else:
+            assert coor.start >= 0
+            assert len(self.fwd_tracks[coor.example_idx]) >= coor.end
             snippet = Snippet(
-                    fwd=self.fwd_tracks[coor.example_idx, coor.start:coor.end],
+                    fwd=self.fwd_tracks[coor.example_idx][coor.start:coor.end],
                     rev=self.rev_tracks[
-                         coor.example_idx,
-                         (self.track_length-coor.end):
-                         (self.track_length-coor.start)],
+                         coor.example_idx][
+                         (len(self.rev_tracks[coor.example_idx])-coor.end):
+                         (len(self.rev_tracks[coor.example_idx])-coor.start)],
                     has_pos_axis=self.has_pos_axis)
         if (coor.is_revcomp):
             snippet = snippet.revcomp()
@@ -88,6 +87,11 @@ class TrackSet(object):
         for attribute_provider in attribute_providers:
             self.attribute_name_to_attribute_provider[attribute_provider.name]\
                 = attribute_provider 
+
+    def get_example_idx_len(self, example_idx):
+        return len(self.track_name_to_data_track[
+                    list(self.track_name_to_data_track.keys())[0]]
+                    .fwd_tracks[example_idx])
 
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
@@ -128,10 +132,6 @@ class TrackSet(object):
                  self.attribute_name_to_attribute_provider[attribute_name])
         return seqlet
 
-    @property
-    def track_length(self):
-        return list(self.track_name_to_data_track.values())[0].track_length
-
 
 class CoordOverlapDetector(object):
 
@@ -169,21 +169,26 @@ class SeqletsOverlapResolver(object):
         self.seqlet_comparator = seqlet_comparator
 
     def __call__(self, all_seqlets):
-        example_idx_to_seqlets = defaultdict(list)  
+        example_idx_to_seqlets = OrderedDict() 
         for seqlet in all_seqlets:
+            if (seqlet.coor.example_idx not in example_idx_to_seqlets):
+                example_idx_to_seqlets[seqlet.coor.example_idx] = []
             example_idx_to_seqlets[seqlet.coor.example_idx].append(seqlet)
         for example_idx, seqlets in example_idx_to_seqlets.items():
-            final_seqlets_set = set(seqlets)
+            final_seqlets_set = OrderedDict([(x,1) for x in seqlets])
             for i in range(len(seqlets)):
                 seqlet1 = seqlets[i]
                 for seqlet2 in seqlets[i+1:]:
                     if (seqlet1 not in final_seqlets_set):
                         break
                     if ((seqlet2 in final_seqlets_set)
-                         and self.overlap_detector(seqlet1.coor, seqlet2.coor)):
-                        final_seqlets_set.remove(
-                         self.seqlet_comparator.get_smaller(seqlet1, seqlet2)) 
-            example_idx_to_seqlets[example_idx] = list(final_seqlets_set)
+                         and self.overlap_detector(seqlet1.coor,
+                                                   seqlet2.coor)):
+                        del final_seqlets_set[
+                             self.seqlet_comparator.get_smaller(
+                              seqlet1, seqlet2)]
+            example_idx_to_seqlets[example_idx] =\
+                list(final_seqlets_set.keys())
         return list(itertools.chain(*example_idx_to_seqlets.values())) 
 
 
@@ -200,47 +205,39 @@ class AbstractAttributeProvider(object):
         raise NotImplementedError()
 
 
-class AbstractThresholdScoreTransformer(AbstractAttributeProvider):
+class AbstractScoreTransformer(AbstractAttributeProvider):
 
     def __init__(self, name):
-        super(AbstractThresholdScoreTransformer, self).__init__(name=name)
-        self.threshold = None
+        super(AbstractScoreTransformer, self).__init__(name=name)
+        self.fit_called = False
 
     def get_val(self, seqlet):
         raise NotImplementedError()
 
-    def determine_threshold_from_vals(self, vals):
+    def fit(self, coord_producer_results):
         raise NotImplementedError()
 
-    def get_label_given_threshold_and_val(self, threshold, val):
+    def transform_val(self, val):
         raise NotImplementedError()
-
-    def fit(self, seqlets):
-        self.threshold = self.determine_threshold_from_vals(
-                            [self.get_val(x) for x in seqlets])
 
     def __call__(self, seqlet):
-        if (self.threshold is None):
-            raise RuntimeError("Set threshold by calling fit()")
-        return self.get_label_given_threshold_and_val(
-                    threshold=self.threshold,
-                    val=self.get_val(seqlet))
+        return self.transform_val(self.get_val(seqlet))
 
 
-class LinearThenLogFactory(object):
+class LaplaceCdfFactory(object):
 
     def __init__(self, flank_to_ignore):
         self.flank_to_ignore = flank_to_ignore
 
     def __call__(self, name, track_name):
-        return LinearThenLog(name=name, track_name=track_name,
-                             flank_to_ignore=self.flank_to_ignore)
+        return LaplaceCdf(name=name, track_name=track_name,
+                          flank_to_ignore=self.flank_to_ignore)
 
 
-class LinearThenLog(AbstractThresholdScoreTransformer):
+class LaplaceCdf(AbstractScoreTransformer):
 
     def __init__(self, name, track_name, flank_to_ignore):
-        super(LinearThenLog, self).__init__(name=name)
+        super(LaplaceCdf, self).__init__(name=name)
         self.track_name = track_name
         self.flank_to_ignore = flank_to_ignore
 
@@ -248,15 +245,18 @@ class LinearThenLog(AbstractThresholdScoreTransformer):
         track_values = seqlet[self.track_name]\
                         .fwd[self.flank_to_ignore:-self.flank_to_ignore]
         return np.sum(track_values)
+            
+    def fit(self, coord_producer_results):
+        self.neg_laplace_b =\
+            coord_producer_results.thresholding_results.neg_b
+        self.pos_laplace_b =\
+            coord_producer_results.thresholding_results.pos_b
 
-    def determine_threshold_from_vals(self, vals):
-        return np.min(np.abs(vals))
-
-    def get_label_given_threshold_and_val(self, threshold, val):
-        core_val = np.abs(val)/threshold
-        core_val = ((1+(np.log(core_val)/np.log(2)))
-                    if (core_val >= 1) else core_val)
-        return core_val*np.sign(val)
+    def transform_val(self, val):
+        if (val < 0):
+            return -(1-np.exp(val/self.neg_laplace_b))
+        else:
+            return (1-np.exp(-val/self.pos_laplace_b))
 
 
 class MultiTaskSeqletCreationResults(object):
@@ -283,7 +283,7 @@ class MultiTaskSeqletCreation(object):
         self.coord_producer = coord_producer
         self.track_set = track_set
         self.overlap_resolver = overlap_resolver
-        self.verbose=verbose
+        self.verbose = verbose
 
     def __call__(self, task_name_to_score_track,
                        task_name_to_threshold_transformer):
@@ -298,7 +298,8 @@ class MultiTaskSeqletCreation(object):
                 coord_producer_results
             seqlets = self.track_set.create_seqlets(
                         coords=coord_producer_results.coords) 
-            task_name_to_threshold_transformer[task_name].fit(seqlets)
+            task_name_to_threshold_transformer[task_name].\
+                      fit(coord_producer_results)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
@@ -312,7 +313,6 @@ class MultiTaskSeqletCreation(object):
                 task_name_to_coord_producer_results=
                  task_name_to_coord_producer_results)
                  
-
             
 class SeqletCoordinates(object):
 

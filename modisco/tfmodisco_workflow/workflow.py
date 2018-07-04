@@ -45,7 +45,7 @@ class TfModiscoResults(object):
         for idx in self.metacluster_idx_to_submetacluster_results:
             self.metacluster_idx_to_submetacluster_results[idx].save_hdf5(
                 grp=metacluster_idx_to_submetacluster_results_group
-                    .create_group("metacluster"+str(idx))) 
+                    .create_group("metacluster_"+str(idx))) 
 
 
 class SubMetaclusterResults(object):
@@ -74,9 +74,9 @@ class TfModiscoWorkflow(object):
                  sliding_window_size=21, flank_size=10,
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
-                 min_cluster_size=200,
-                 threshold_for_counting_sign=1.0,
-                 weak_threshold_for_counting_sign=0.7,
+                 min_cluster_size=100,
+                 target_seqlet_fdr = 0.05,
+                 weak_threshold_for_counting_sign = 0.99,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -86,7 +86,7 @@ class TfModiscoWorkflow(object):
         self.percentiles_in_bandwidth = percentiles_in_bandwidth
         self.overlap_portion = overlap_portion
         self.min_cluster_size = min_cluster_size
-        self.threshold_for_counting_sign = threshold_for_counting_sign
+        self.target_seqlet_fdr = target_seqlet_fdr
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
         self.verbose = verbose
@@ -95,59 +95,54 @@ class TfModiscoWorkflow(object):
 
     def build(self):
         
-        self.coord_producer = coordproducers.FixedWindowAroundChunks(
-            sliding=self.sliding_window_size,
-            flank=self.flank_size,
-            thresholding_function=coordproducers.MaxCurvatureThreshold(             
-                bins=self.histogram_bins,
-                percentiles_in_bandwidth=self.percentiles_in_bandwidth,
-                verbose=self.verbose)) 
-
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
                                 value_provider=lambda x: x.coor.score))
 
         self.threshold_score_transformer_factory =\
-            core.LinearThenLogFactory(flank_to_ignore=self.flank_size)
+            core.LaplaceCdfFactory(flank_to_ignore=self.flank_size)
 
-        self.metaclusterer = metaclusterers.SignBasedPatternClustering(
-                                min_cluster_size=self.min_cluster_size,
-                                threshold_for_counting_sign=
-                                    self.threshold_for_counting_sign,
-                                weak_threshold_for_counting_sign=
-                                    self.weak_threshold_for_counting_sign)
+    def __call__(self, task_names, contrib_scores,
+                       hypothetical_contribs, one_hot):
 
-    def __call__(self, task_names, contrib_scores, hypothetical_contribs,
-                 one_hot):
+        self.coord_producer = coordproducers.FixedWindowAroundChunks(
+            sliding=self.sliding_window_size,
+            flank=self.flank_size,
+            thresholding_function=coordproducers.LaplaceThreshold(
+                                    target_fdr=self.target_seqlet_fdr,
+                                    verbose=self.verbose),
+            verbose=self.verbose) 
 
         contrib_scores_tracks = [
             core.DataTrack(
                 name=key+"_contrib_scores",
                 fwd_tracks=contrib_scores[key],
-                rev_tracks=contrib_scores[key][:,::-1,::-1],
+                rev_tracks=[x[::-1, ::-1] for x in 
+                            contrib_scores[key]],
                 has_pos_axis=True) for key in task_names] 
 
         hypothetical_contribs_tracks = [
             core.DataTrack(name=key+"_hypothetical_contribs",
                            fwd_tracks=hypothetical_contribs[key],
-                           rev_tracks=hypothetical_contribs[key][:,::-1,::-1],
+                           rev_tracks=[x[::-1, ::-1] for x in 
+                                        hypothetical_contribs[key]],
                            has_pos_axis=True)
                            for key in task_names]
 
         onehot_track = core.DataTrack(
                             name="sequence", fwd_tracks=one_hot,
-                            rev_tracks=one_hot[:,::-1,::-1],
+                            rev_tracks=[x[::-1, ::-1] for x in one_hot],
                             has_pos_axis=True)
 
         track_set = core.TrackSet(
                         data_tracks=contrib_scores_tracks
                         +hypothetical_contribs_tracks+[onehot_track])
 
-        per_position_contrib_scores = dict([
+        per_position_contrib_scores = OrderedDict([
             (x, np.sum(contrib_scores[x],axis=2)) for x in task_names])
 
-        task_name_to_threshold_transformer = dict([
+        task_name_to_threshold_transformer = OrderedDict([
             (task_name, self.threshold_score_transformer_factory(
                 name=task_name+"_label",
                 track_name=task_name+"_contrib_scores"))
@@ -161,13 +156,45 @@ class TfModiscoWorkflow(object):
                 task_name_to_threshold_transformer=\
                     task_name_to_threshold_transformer)
 
+        #find the weakest laplace cdf threshold used across all tasks
+        laplace_threshold_cdf = min(
+            [min(x.thresholding_results.pos_threshold_cdf,
+                 x.thresholding_results.neg_threshold_cdf)
+                 for x in multitask_seqlet_creation_results.
+                      task_name_to_coord_producer_results.values()])
+        print("Across all tasks, the weakest laplace threshold used"
+              +" was: "+str(laplace_threshold_cdf))
+
         seqlets = multitask_seqlet_creation_results.final_seqlets
+        print(str(len(seqlets))+" identified in total")
+        if (len(seqlets) < 100):
+            print("WARNING: you found relatively few seqlets."
+                  +" Consider dropping target_seqlet_fdr") 
 
         attribute_vectors = (np.array([
                               [x[key+"_label"] for key in task_names]
                                for x in seqlets]))
 
-        metaclustering_results = self.metaclusterer(attribute_vectors)
+        if (self.weak_threshold_for_counting_sign is None):
+            weak_threshold_for_counting_sign = laplace_threshold_cdf
+        else:
+            weak_threshold_for_counting_sign =\
+                self.weak_threshold_for_counting_sign
+        if (weak_threshold_for_counting_sign > laplace_threshold_cdf):
+            print("Reducing weak_threshold_for_counting_sign to"
+                  +" match laplace_threshold_cdf, from "
+                  +str(weak_threshold_for_counting_sign)
+                  +" to "+str(laplace_threshold_cdf))
+            weak_threshold_for_counting_sign = laplace_threshold_cdf
+
+        metaclusterer = metaclusterers.SignBasedPatternClustering(
+                                min_cluster_size=self.min_cluster_size,
+                                threshold_for_counting_sign=
+                                    laplace_threshold_cdf,
+                                weak_threshold_for_counting_sign=
+                                    weak_threshold_for_counting_sign)
+
+        metaclustering_results = metaclusterer(attribute_vectors)
         metacluster_indices = metaclustering_results.metacluster_indices
         metacluster_idx_to_activity_pattern =\
             metaclustering_results.metacluster_idx_to_activity_pattern
@@ -180,7 +207,7 @@ class TfModiscoWorkflow(object):
             print("Idx to activities: ",metacluster_idx_to_activity_pattern)
             sys.stdout.flush()
 
-        metacluster_idx_to_submetacluster_results = {}
+        metacluster_idx_to_submetacluster_results = OrderedDict()
 
         for metacluster_idx, metacluster_size in\
             sorted(enumerate(metacluster_sizes), key=lambda x: x[1]):
@@ -201,9 +228,8 @@ class TfModiscoWorkflow(object):
             print('Relevant signs: ', relevant_task_signs)
             sys.stdout.flush()
             if (len(relevant_task_names) == 0):
-                print("No tasks found relevant; skipping")
+                assert False, "This should not happen"
                 sys.stdout.flush()
-                continue
             
             seqlets_to_patterns = self.seqlets_to_patterns_factory(
                 track_set=track_set,
