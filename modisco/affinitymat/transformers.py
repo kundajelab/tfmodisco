@@ -239,8 +239,8 @@ class MaxToMin(AbstractAffToDistMat):
 class AffToDistViaInvLogistic(AbstractAffToDistMat):
 
     def __call__(self, affinity_mat):
-        to_return = -np.log((1.0/
-                           (1.0 - 0.5*np.maximum(affinity_mat, 0.0000001)))-1)
+        to_return = np.log((1.0/
+                           (0.5*np.maximum(affinity_mat, 0.0000001)))-1)
         to_return = np.maximum(to_return, 0.0) #eliminate tiny neg floats
         return to_return
 
