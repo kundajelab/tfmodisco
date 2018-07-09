@@ -100,9 +100,6 @@ class TfModiscoWorkflow(object):
             seqlet_comparator=core.SeqletComparator(
                                 value_provider=lambda x: x.coor.score))
 
-        self.threshold_score_transformer_factory =\
-            core.LaplaceCdfFactory(flank_to_ignore=self.flank_size)
-
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
 
@@ -143,9 +140,10 @@ class TfModiscoWorkflow(object):
             (x, np.sum(contrib_scores[x],axis=2)) for x in task_names])
 
         task_name_to_threshold_transformer = OrderedDict([
-            (task_name, self.threshold_score_transformer_factory(
+            (task_name, core.LaplaceCdf(
                 name=task_name+"_label",
-                track_name=task_name+"_contrib_scores"))
+                track_name=task_name+"_contrib_scores",
+                flank_to_ignore=self.flank_size))
              for task_name in task_names]) 
 
         multitask_seqlet_creation_results = core.MultiTaskSeqletCreation(

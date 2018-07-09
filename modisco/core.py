@@ -224,16 +224,6 @@ class AbstractScoreTransformer(AbstractAttributeProvider):
         return self.transform_val(self.get_val(seqlet))
 
 
-class LaplaceCdfFactory(object):
-
-    def __init__(self, flank_to_ignore):
-        self.flank_to_ignore = flank_to_ignore
-
-    def __call__(self, name, track_name):
-        return LaplaceCdf(name=name, track_name=track_name,
-                          flank_to_ignore=self.flank_to_ignore)
-
-
 class LaplaceCdf(AbstractScoreTransformer):
 
     def __init__(self, name, track_name, flank_to_ignore):
