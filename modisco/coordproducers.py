@@ -189,7 +189,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
 
     def __call__(self, score_track):
      
-        assert len(score_track.shape)==2 
+        # score_track now can be a list of arrays, comment out the assert for now
+        # assert len(score_track.shape)==2 
         window_sum_function = get_simple_window_sum_function(self.sliding)
 
         if (self.verbose):
