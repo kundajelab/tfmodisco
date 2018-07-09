@@ -7,3 +7,4 @@
 **/*.bin
 **/*.tree_*
 **/*.weights
+**/*DS_Store

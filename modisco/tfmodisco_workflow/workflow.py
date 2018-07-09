@@ -137,7 +137,8 @@ class TfModiscoWorkflow(object):
                         +hypothetical_contribs_tracks+[onehot_track])
 
         per_position_contrib_scores = OrderedDict([
-            (x, np.sum(contrib_scores[x],axis=2)) for x in task_names])
+            (x, [np.sum(s,axis=1) for s in contrib_scores[x]]) for x in task_names])
+
 
         task_name_to_threshold_transformer = OrderedDict([
             (task_name, core.LaplaceCdf(
