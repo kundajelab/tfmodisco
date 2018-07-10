@@ -178,14 +178,17 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
             sys.stdout.flush()
         dicluster_results = self.diclusterer(affmat) 
         dicluster_indices = dicluster_results.cluster_indices 
-        assert np.max(dicluster_indices)==1
-
-        #check that the subclusters are more
-        #dissimilar than sim_split_threshold 
-        mat1_agg = np.mean(fwd_seqlet_data[dicluster_indices==0], axis=0)
-        mat2_agg = np.mean(fwd_seqlet_data[dicluster_indices==1], axis=0)
-        sufficiently_dissimilar = self.is_dissimilar_func(
-                                        inp1=mat1_agg, inp2=mat2_agg)
+        assert np.max(dicluster_indices)==1 or np.max(dicluster_indices==0)
+        if (np.sum(dicluster_indices==1)==0 or
+            np.sum(dicluster_indices==0)==0):
+            sufficiently_dissimilar = False
+        else:
+            #check that the subclusters are more
+            #dissimilar than sim_split_threshold 
+            mat1_agg = np.mean(fwd_seqlet_data[dicluster_indices==0], axis=0)
+            mat2_agg = np.mean(fwd_seqlet_data[dicluster_indices==1], axis=0)
+            sufficiently_dissimilar = self.is_dissimilar_func(
+                                            inp1=mat1_agg, inp2=mat2_agg)
         if (not sufficiently_dissimilar):
             return np.zeros(len(fwd_seqlet_data))
         else:
