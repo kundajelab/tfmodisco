@@ -104,7 +104,8 @@ class TfModiscoWorkflow(object):
             core.LaplaceCdfFactory(flank_to_ignore=self.flank_size)
 
     def __call__(self, task_names, contrib_scores,
-                       hypothetical_contribs, one_hot):
+                       hypothetical_contribs, one_hot, 
+                       max_seqlets_per_metacluster=None):
 
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
@@ -213,7 +214,11 @@ class TfModiscoWorkflow(object):
         for metacluster_idx, metacluster_size in\
             sorted(enumerate(metacluster_sizes), key=lambda x: x[1]):
             print("On metacluster "+str(metacluster_idx))
-            print("Metacluster size", metacluster_size)
+            if max_seqlets_per_metacluster is None or max_seqlets_per_metacluster >= metacluster_size: 
+                print("Metacluster size", metacluster_size)
+            else:
+                print("Metacluster size {0} limited to {1}".format(
+                        metacluster_size, max_seqlets_per_metacluster))
             sys.stdout.flush()
             metacluster_activities = [
                 int(x) for x in
@@ -221,7 +226,7 @@ class TfModiscoWorkflow(object):
             assert len(seqlets)==len(metacluster_indices)
             metacluster_seqlets = [
                 x[0] for x in zip(seqlets, metacluster_indices)
-                if x[1]==metacluster_idx]
+                if x[1]==metacluster_idx][:max_seqlets_per_metacluster]
             relevant_task_names, relevant_task_signs =\
                 zip(*[(x[0], x[1]) for x in
                     zip(task_names, metacluster_activities) if x[1] != 0])
