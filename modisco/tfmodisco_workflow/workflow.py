@@ -75,8 +75,9 @@ class TfModiscoWorkflow(object):
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_cluster_size=100,
-                 target_seqlet_fdr = 0.05,
-                 weak_threshold_for_counting_sign = 0.99,
+                 target_seqlet_fdr=0.05,
+                 weak_threshold_for_counting_sign=0.99,
+                 max_seqlets_per_task=20000,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -89,6 +90,7 @@ class TfModiscoWorkflow(object):
         self.target_seqlet_fdr = target_seqlet_fdr
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
+        self.max_seqlets_per_task = max_seqlets_per_task
         self.verbose = verbose
 
         self.build()
@@ -109,6 +111,7 @@ class TfModiscoWorkflow(object):
             thresholding_function=coordproducers.LaplaceThreshold(
                                     target_fdr=self.target_seqlet_fdr,
                                     verbose=self.verbose),
+            max_seqlets_total=self.max_seqlets_per_task,
             verbose=self.verbose) 
 
         contrib_scores_tracks = [
