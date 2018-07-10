@@ -77,8 +77,8 @@ class TfModiscoWorkflow(object):
                  min_cluster_size=100,
                  target_seqlet_fdr = 0.05,
                  weak_threshold_for_counting_sign = 0.99,
-                 max_seqlets_per_metacluster=None,
-                 max_seqlets_per_task=20000,
+                 max_seqlets_per_metacluster=20000,
+                 max_seqlets_per_task=None,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
