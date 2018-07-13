@@ -245,6 +245,14 @@ class AffToDistViaInvLogistic(AbstractAffToDistMat):
         return to_return
 
 
+class AffToDistViaLogInv(AbstractAffToDistMat):
+
+    def __call__(self, affinity_mat):
+        to_return = np.log(1.0/np.maximum(affinity_mat, 0.0000001))
+        to_return = np.maximum(to_return, 0.0) #eliminate tiny neg floats
+        return to_return
+
+
 class AbstractTsneProbs(AbstractAffMatTransformer):
 
     def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
