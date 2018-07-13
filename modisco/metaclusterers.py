@@ -60,7 +60,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                 0 if np.abs(element) < self.threshold_for_counting_sign
                   else (1 if element > 0 else -1)
                   for element in vector])
-        if (to_return[0]==0 and to_return[1]==0 and to_return[2]==0):
+        if all([ v == 0 for v in to_return ]) :
             print(vector)
             print(to_return)
             assert False
