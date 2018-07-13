@@ -74,7 +74,7 @@ class TfModiscoWorkflow(object):
                  sliding_window_size=21, flank_size=10,
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
-                 min_cluster_size=100,
+                 min_metacluster_size=100,
                  target_seqlet_fdr=0.05,
                  weak_threshold_for_counting_sign=0.99,
                  max_seqlets_per_task=20000,
@@ -86,7 +86,7 @@ class TfModiscoWorkflow(object):
         self.histogram_bins = histogram_bins
         self.percentiles_in_bandwidth = percentiles_in_bandwidth
         self.overlap_portion = overlap_portion
-        self.min_cluster_size = min_cluster_size
+        self.min_metacluster_size = min_metacluster_size
         self.target_seqlet_fdr = target_seqlet_fdr
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
@@ -190,7 +190,7 @@ class TfModiscoWorkflow(object):
             weak_threshold_for_counting_sign = laplace_threshold_cdf
 
         metaclusterer = metaclusterers.SignBasedPatternClustering(
-                                min_cluster_size=self.min_cluster_size,
+                                min_cluster_size=self.min_metacluster_size,
                                 threshold_for_counting_sign=
                                     laplace_threshold_cdf,
                                 weak_threshold_for_counting_sign=
