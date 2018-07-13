@@ -344,7 +344,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         similar_patterns_collapser =\
             aggregator.DynamicDistanceSimilarPatternsCollapser(
                 pattern_to_pattern_sim_computer=
-                    pattern_to_pattern_sim_computer,
+                    pattern_to_seqlet_sim_computer,
                 aff_to_dist_mat=aff_to_dist_mat,
                 pattern_aligner=core.CrossCorrelationPatternAligner(
                     pattern_comparison_settings=
