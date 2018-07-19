@@ -46,7 +46,7 @@ class LaplaceThresholdingResults(object):
 
 
 class LaplaceThreshold(object):
-
+    count = 0
     def __init__(self, target_fdr, verbose):
         assert (target_fdr > 0.0 and target_fdr < 1.0)
         self.target_fdr = target_fdr
@@ -114,6 +114,7 @@ class LaplaceThreshold(object):
             pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
                             -np.abs(pos_linspace)/neg_laplace_b)
             from matplotlib import pyplot as plt
+            plt.figure()
             hist, _, _ = plt.hist(values, bins=100)
             plt.plot(neg_linspace,
                      neg_laplace_vals/(
@@ -125,7 +126,19 @@ class LaplaceThreshold(object):
                      [0, np.max(hist)])
             plt.plot([pos_threshold, pos_threshold],
                      [0, np.max(hist)])
-            plt.show()
+            if plt.isinteractive():
+                plt.show()
+            else:
+                import os, errno
+                try:
+                    os.makedirs("figures")
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        raise
+                fname = "figures/laplace_" + str(LaplaceThreshold.count) + ".png"
+                plt.savefig(fname)
+                print("saving plot to " + fname)
+                LaplaceThreshold.count += 1
 
         return LaplaceThresholdingResults(
                 neg_threshold=neg_threshold,
