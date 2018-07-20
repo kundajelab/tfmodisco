@@ -54,7 +54,7 @@ class LaplaceThreshold(object):
 
     def __call__(self, values):
 
-        pos_values = np.array(sorted(values[values >= 0.0]))
+        pos_values = np.array(sorted(values[values > 0.0]))
         neg_values = np.array(sorted(values[values < 0.0],
                                      key=lambda x: -x))
 
@@ -104,7 +104,9 @@ class LaplaceThreshold(object):
 
         #plot the result
         if (self.verbose):
+            print("Lablace_b:",neg_laplace_b,"and",pos_laplace_b)
             print("Thresholds:",neg_threshold,"and",pos_threshold)
+            print("#fdrs pass:",len(neg_fdrs_passing_thresh),"and", len(pos_fdrs_passing_thresh))
             print("CDFs:",neg_threshold_cdf,"and",pos_threshold_cdf)
             print("Est. FDRs:",neg_thresh_fdr,"and",pos_thresh_fdr)
             neg_linspace = np.linspace(np.min(values), 0, 100)
