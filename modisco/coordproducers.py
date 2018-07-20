@@ -46,7 +46,7 @@ class LaplaceThresholdingResults(object):
 
 
 class LaplaceThreshold(object):
-
+    count = 0
     def __init__(self, target_fdr, verbose):
         assert (target_fdr > 0.0 and target_fdr < 1.0)
         self.target_fdr = target_fdr
@@ -54,7 +54,7 @@ class LaplaceThreshold(object):
 
     def __call__(self, values):
 
-        pos_values = np.array(sorted(values[values >= 0.0]))
+        pos_values = np.array(sorted(values[values > 0.0]))
         neg_values = np.array(sorted(values[values < 0.0],
                                      key=lambda x: -x))
 
@@ -104,7 +104,9 @@ class LaplaceThreshold(object):
 
         #plot the result
         if (self.verbose):
+            print("Lablace_b:",neg_laplace_b,"and",pos_laplace_b)
             print("Thresholds:",neg_threshold,"and",pos_threshold)
+            print("#fdrs pass:",len(neg_fdrs_passing_thresh),"and", len(pos_fdrs_passing_thresh))
             print("CDFs:",neg_threshold_cdf,"and",pos_threshold_cdf)
             print("Est. FDRs:",neg_thresh_fdr,"and",pos_thresh_fdr)
             neg_linspace = np.linspace(np.min(values), 0, 100)
@@ -114,6 +116,7 @@ class LaplaceThreshold(object):
             pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
                             -np.abs(pos_linspace)/neg_laplace_b)
             from matplotlib import pyplot as plt
+            plt.figure()
             hist, _, _ = plt.hist(values, bins=100)
             plt.plot(neg_linspace,
                      neg_laplace_vals/(
@@ -125,7 +128,19 @@ class LaplaceThreshold(object):
                      [0, np.max(hist)])
             plt.plot([pos_threshold, pos_threshold],
                      [0, np.max(hist)])
-            plt.show()
+            if plt.isinteractive():
+                plt.show()
+            else:
+                import os, errno
+                try:
+                    os.makedirs("figures")
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        raise
+                fname = "figures/laplace_" + str(LaplaceThreshold.count) + ".png"
+                plt.savefig(fname)
+                print("saving plot to " + fname)
+                LaplaceThreshold.count += 1
 
         return LaplaceThresholdingResults(
                 neg_threshold=neg_threshold,
