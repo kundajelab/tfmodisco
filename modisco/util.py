@@ -928,7 +928,7 @@ def binary_search_perplexity(desired_perplexity, distances):
                 beta = (beta + beta_min) / 2.0
     return beta, ps
 
-def trim(ppm, t=0.45):
+def trim_ppm(ppm, t=0.45):
     maxes = np.max(ppm,-1)
     maxes = np.where(maxes>=t)
     return ppm[maxes[0][0]:maxes[0][-1]+1] 
@@ -967,7 +967,7 @@ def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_p
     fname = os.path.join(temp_dir, 'query_file')
     
     # trim and prepare meme file
-    write_meme_file(trim(ppm, t=trim_threshold), background, fname)
+    write_meme_file(trim_ppm(ppm, t=trim_threshold), background, fname)
     
     # run tomtom
     cmd = '%s -no-ssc -oc . -verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s' % (tomtom_exec_path, fname, motifs_db)
