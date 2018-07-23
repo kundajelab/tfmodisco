@@ -1,11 +1,11 @@
 from __future__ import division, print_function
 import os
 import signal
+import subprocess
 import numpy as np
 import h5py
 import traceback
 from sklearn.neighbors.kde import KernelDensity
-
 
 def save_patterns(patterns, grp):
     all_pattern_names = []
@@ -927,3 +927,66 @@ def binary_search_perplexity(desired_perplexity, distances):
             else:
                 beta = (beta + beta_min) / 2.0
     return beta, ps
+
+def trim(ppm, t=0.45):
+    maxes = np.max(ppm,-1)
+    maxes = np.where(maxes>=t)
+    return ppm[maxes[0][0]:maxes[0][-1]+1] 
+        
+def write_meme_file(ppm, bg, fname):
+    f = open(fname, 'w')
+    f.write('MEME version 4\n\n')
+    f.write('ALPHABET= ACGT\n\n')
+    f.write('strands: + -\n\n')
+    f.write('Background letter frequencies (from unknown source):\n')
+    f.write('A %.3f C %.3f G %.3f T %.3f\n\n' % tuple(list(bg)))
+    f.write('MOTIF 1 TEMP\n\n')
+    f.write('letter-probability matrix: alength= 4 w= %d nsites= 1 E= 0e+0\n' % ppm.shape[0])
+    for s in ppm:
+        f.write('%.5f %.5f %.5f %.5f\n' % tuple(s))
+    f.close()
+    
+def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_path='tomtom', motifs_db='HOCOMOCOv11_core_HUMAN_mono_meme_format.meme' , n=5, temp_dir='./', trim_threshold=0.45):
+    """Fetches top matches from a motifs database using TomTom.
+    
+    Args:
+        ppm: position probability matrix- numpy matrix of dimension (N,4)
+        background: list with ACGT background probabilities
+        tomtom_exec_path: path to TomTom executable
+        motifs_db: path to motifs database in meme format
+        n: number of top matches to return, ordered by p-value
+        temp_dir: directory for storing temp files
+        trim_threshold: the ppm is trimmed from left till first position for which
+            probability for any base pair >= trim_threshold. Similarly from right.
+    
+    Returns:
+        list: a list of up to n results returned by tomtom, each entry is a
+            dictionary with keys 'Target ID', 'p-value', 'E-value', 'q-value'  
+    """
+    
+    fname = os.path.join(temp_dir, 'query_file')
+    
+    # trim and prepare meme file
+    write_meme_file(trim(ppm, t=trim_threshold), background, fname)
+    
+    # run tomtom
+    cmd = '%s -no-ssc -oc . -verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s' % (tomtom_exec_path, fname, motifs_db)
+    #print(cmd)
+    out = subprocess.check_output(cmd, shell=True)
+    
+    # prepare output
+    dat = [x.split('\\t') for x in str(out).split('\\n')]
+    schema = dat[0]
+    tget_idx, pval_idx, eval_idx, qval_idx = schema.index('Target ID'), schema.index('p-value'), schema.index('E-value'), schema.index('q-value')
+    
+    r = []
+    for t in dat[1:1+n]:
+        mtf = {}
+        mtf['Target ID'] = t[tget_idx]
+        mtf['p-value'] = float(t[pval_idx])
+        mtf['E-value'] = float(t[eval_idx])
+        mtf['q-value'] = float(t[qval_idx])
+        r.append(mtf)
+    
+    os.system('rm ' + fname)
+    return r
