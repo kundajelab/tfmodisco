@@ -7,6 +7,7 @@ import h5py
 import traceback
 from sklearn.neighbors.kde import KernelDensity
 
+
 def save_patterns(patterns, grp):
     all_pattern_names = []
     for idx, pattern in enumerate(patterns):
