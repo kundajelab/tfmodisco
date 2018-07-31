@@ -457,12 +457,19 @@ class AbstractSimMetricOnNNpairs(object):
 class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
 
     def __init__(self, n_cores, cross_metric_single_region, verbose=True):
+        #cross_metric_single_region is, for example, an instance of
+        # CrossContinJaccardSingleRegion or
+        # CrossContinJaccardSingleRegionWithArgmax
         self.n_cores = n_cores
         self.cross_metric_single_region = cross_metric_single_region
         self.verbose = verbose
 
-    def __call__(self, neighbors_of_things_to_scan,
-                       filters, things_to_scan, min_overlap):
+    def __call__(self, filters, things_to_scan, min_overlap,
+                       neighbors_of_things_to_scan=None):
+        if (neighbors_of_things_to_scan is None):
+            neighbors_of_things_to_scan =\
+                np.array([list(range(len(filters)))
+                          for x in things_to_scan]) 
         assert neighbors_of_things_to_scan.shape[0]==things_to_scan.shape[0]
         assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
         assert len(things_to_scan.shape)==3
@@ -476,7 +483,18 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
                                          (0,0)),
                               mode="constant")
  
-        to_return = np.zeros((things_to_scan.shape[0], filters.shape[0]))
+        #if the metric has returns_pos==False, it means that the metric
+        # only returns the best similarity and not the alignment that
+        # gives rise to that similarity 
+        if (self.cross_metric_single_region.returns_pos==False):
+            to_return = np.zeros((things_to_scan.shape[0], filters.shape[0]))
+        else:
+            #each return value will contain both the position of the alignment
+            # as well as the similarity at that position; hence the
+            # length of the third dimension is 2.
+            # The similarity comes first, then the position
+            to_return = np.zeros((things_to_scan.shape[0],
+                                  filters.shape[0], 2))
         job_arguments = []
 
         for neighbors_of_thing_to_scan, thing_to_scan\
@@ -497,6 +515,9 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
 
         for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
              in enumerate(zip(results, neighbors_of_things_to_scan)):
+            #adjust the "position" to remove the effect of the padding
+            if (self.cross_metric_single_region.returns_pos==True):
+                result[1] -= padding_amount 
             to_return[thing_to_scan_idx,
                       thing_to_scan_neighbor_indices] = result
 
@@ -508,13 +529,10 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         return to_return
 
 
-class AbstractCrossMetricSingleRegion(object):
+class CrossContinJaccardSingleRegionWithArgmax(object):
 
-    def __call__(self, filters, thing_to_scan):
-        raise NotImplementedError()
-
-
-class CrossContinJaccardSingleRegion(AbstractCrossMetricSingleRegion):
+    def __init__(self):
+        self.returns_pos = True
 
     def __call__(self, filters, thing_to_scan):
         assert len(thing_to_scan.shape)==2
@@ -531,7 +549,20 @@ class CrossContinJaccardSingleRegion(AbstractCrossMetricSingleRegion):
                          *np.sign(filters[:,:,:])),axis=(1,2))/
                  np.sum(np.maximum(np.abs(snapshot[None,:,:]),
                                    np.abs(filters[:,:,:])),axis=(1,2)))
-        return np.max(full_crossmetric, axis=-1) 
+        argmax_pos = np.argmax(full_crossmetric, axis=-1)
+        return np.array([full_crossmetric[argmax_pos],argmax_pos])
+
+
+class CrossContinJaccardSingleRegion(CrossContinJaccardSingleRegionWithArgmax):
+
+    def __init__(self):
+        self.returns_pos = False
+
+    def __call__(self, filters, thing_to_scan):
+        argmax_pos, max_val =\
+            super(CrossContinJaccardSingleRegion, self).__call__(
+                                                       filters, thing_to_scan)
+        return max_val
 
 
 class AbstractCrossMetric(object):
