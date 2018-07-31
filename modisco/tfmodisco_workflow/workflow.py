@@ -77,7 +77,8 @@ class TfModiscoWorkflow(object):
                  min_metacluster_size=100,
                  target_seqlet_fdr=0.05,
                  weak_threshold_for_counting_sign=0.99,
-                 max_seqlets_per_task=20000,
+                 max_seqlets_per_metacluster=20000,
+                 max_seqlets_per_task=None,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -90,6 +91,7 @@ class TfModiscoWorkflow(object):
         self.target_seqlet_fdr = target_seqlet_fdr
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
+        self.max_seqlets_per_metacluster = max_seqlets_per_metacluster
         self.max_seqlets_per_task = max_seqlets_per_task
         self.verbose = verbose
 
@@ -100,7 +102,7 @@ class TfModiscoWorkflow(object):
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
-                                value_provider=lambda x: x.coor.score))
+                                    value_provider=lambda x: x.coor.score))
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
@@ -214,7 +216,12 @@ class TfModiscoWorkflow(object):
         for metacluster_idx, metacluster_size in\
             sorted(enumerate(metacluster_sizes), key=lambda x: x[1]):
             print("On metacluster "+str(metacluster_idx))
-            print("Metacluster size", metacluster_size)
+            if (self.max_seqlets_per_metacluster is None
+                or self.max_seqlets_per_metacluster >= metacluster_size): 
+                print("Metacluster size", metacluster_size)
+            else:
+                print("Metacluster size {0} limited to {1}".format(
+                        metacluster_size, self.max_seqlets_per_metacluster))
             sys.stdout.flush()
             metacluster_activities = [
                 int(x) for x in
@@ -222,7 +229,7 @@ class TfModiscoWorkflow(object):
             assert len(seqlets)==len(metacluster_indices)
             metacluster_seqlets = [
                 x[0] for x in zip(seqlets, metacluster_indices)
-                if x[1]==metacluster_idx]
+                if x[1]==metacluster_idx][:self.max_seqlets_per_metacluster]
             relevant_task_names, relevant_task_signs =\
                 zip(*[(x[0], x[1]) for x in
                     zip(task_names, metacluster_activities) if x[1] != 0])
