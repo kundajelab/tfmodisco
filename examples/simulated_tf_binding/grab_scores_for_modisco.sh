@@ -16,3 +16,11 @@ then
 else
     echo "File sequences.simdata.gz exists already"
 fi
+
+FILE="test.txt.gz"
+if [ ! -f "$FILE" ]
+then
+    wget https://raw.githubusercontent.com/AvantiShri/model_storage/9aadb769735c60eb90f7d3d896632ac749a1bdd2/deeplift/genomics/test.txt.gz
+else
+    echo "File test.txt.gz exists already"
+fi
