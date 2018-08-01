@@ -518,8 +518,12 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
             #adjust the "position" to remove the effect of the padding
             if (self.cross_metric_single_region.returns_pos==True):
                 result[1] -= padding_amount 
-            to_return[thing_to_scan_idx,
-                      thing_to_scan_neighbor_indices] = result
+                to_return[thing_to_scan_idx,
+                          thing_to_scan_neighbor_indices] =\
+                    np.transpose(result,(1,0))
+            else:
+                to_return[thing_to_scan_idx,
+                          thing_to_scan_neighbor_indices] = result
 
         end = time.time()
         if (self.verbose):
@@ -549,8 +553,10 @@ class CrossContinJaccardSingleRegionWithArgmax(object):
                          *np.sign(filters[:,:,:])),axis=(1,2))/
                  np.sum(np.maximum(np.abs(snapshot[None,:,:]),
                                    np.abs(filters[:,:,:])),axis=(1,2)))
-        argmax_pos = np.argmax(full_crossmetric, axis=-1)
-        return np.array([full_crossmetric[argmax_pos],argmax_pos])
+        argmax_positions = np.argmax(full_crossmetric, axis=1)
+        return np.array([full_crossmetric[np.arange(len(argmax_positions)),
+                                          argmax_positions],
+                         argmax_positions])
 
 
 class CrossContinJaccardSingleRegion(CrossContinJaccardSingleRegionWithArgmax):
@@ -559,10 +565,10 @@ class CrossContinJaccardSingleRegion(CrossContinJaccardSingleRegionWithArgmax):
         self.returns_pos = False
 
     def __call__(self, filters, thing_to_scan):
-        argmax_pos, max_val =\
+        max_vals, argmax_pos =\
             super(CrossContinJaccardSingleRegion, self).__call__(
                                                        filters, thing_to_scan)
-        return max_val
+        return max_vals
 
 
 class AbstractCrossMetric(object):
