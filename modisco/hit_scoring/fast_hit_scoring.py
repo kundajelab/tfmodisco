@@ -7,7 +7,8 @@ from .. import core
 
 RankNormedScoreResults =\
     namedtuple("RankNormedScoreResults",
-               ["percnormed_score", "score", "offset", "revcomp"])
+               ["pattern_idx", "percnormed_score",
+                "score", "offset", "revcomp"])
 
 
 #this has a lot of similarities to
@@ -158,7 +159,7 @@ class RankBasedPatternScorer(object):
         
         #get the percentile rank for each seqlet and pattern
         percnormed_patterns_to_seqlets_sim =\
-            np.zeros(len(self.aggseqlets),len(seqlets))
+            np.zeros((len(self.aggseqlets),len(seqlets)))
         
         for (pattern_idx,pattern_selfsims) in\
              enumerate(self.sorted_aggseqlet_selfsimilarities):
@@ -172,6 +173,7 @@ class RankBasedPatternScorer(object):
                                             axis=0)
         to_return = [
             RankNormedScoreResults(
+             pattern_idx=best_pattern_idx,
              percnormed_score=percnormed_patterns_to_seqlets_sim[
                                best_pattern_idx, seqlet_idx],
              score=patterns_to_seqlets_sim[best_pattern_idx, seqlet_idx][0],
