@@ -127,12 +127,40 @@ class PatternsToSeqletsSimComputer(object):
         to_return[:,:,1] = (to_return[:,:,1]
                             - np.array(trimmed_offsets)[None,:])
         return to_return
-     
+
+
+class MaxRankBasedPatternScorer(object):
+
+    def __init__(self, pattern_scorers):
+        self.pattern_scorers = pattern_scorers
+
+    def __call__(self, seqlets):
+        pattern_seqlet_scores = []
+        for pattern_scorer in self.pattern_scorers:
+            pattern_seqlet_scores.append(pattern_scorer(seqlets)) 
+        to_return = []
+        for i in range(len(seqlets)):
+            best_pattern_idx = np.argmax([x[i].percnormed_score
+                                          for x in pattern_seqlet_scores])
+            best_res = pattern_seqlet_scores[best_pattern_idx][i]
+            to_return.append(
+                RankNormedScoreResults(
+                    pattern_idx=best_pattern_idx,
+                    percnormed_score=best_res.percnormed_score,
+                    score=best_res.score, offset=best_res.offset,
+                    revcomp=best_res.revcomp)) 
+        return to_return
+
 
 class RankBasedPatternScorer(object):
     
     def __init__(self, aggseqlets,
                        patterns_to_seqlets_sim_computer):
+        if (isinstance(aggseqlets, list)==False):
+            aggseqlets = [aggseqlets]
+        else:
+            print("Consider using MaxRankBasedPatternScorer in conjunction"
+                   " with individual pattern scorers instead")
         self.aggseqlets = aggseqlets
         self.patterns_to_seqlets_sim_computer =\
             patterns_to_seqlets_sim_computer
@@ -173,7 +201,8 @@ class RankBasedPatternScorer(object):
                                             axis=0)
         to_return = [
             RankNormedScoreResults(
-             pattern_idx=best_pattern_idx,
+             pattern_idx=(best_pattern_idx
+                          if len(self.aggseqlets) > 0 else None),
              percnormed_score=percnormed_patterns_to_seqlets_sim[
                                best_pattern_idx, seqlet_idx],
              score=patterns_to_seqlets_sim[best_pattern_idx, seqlet_idx][0],
