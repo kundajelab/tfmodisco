@@ -74,9 +74,9 @@ class TfModiscoWorkflow(object):
                  sliding_window_size=21, flank_size=10,
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
-                 min_cluster_size=100,
-                 target_seqlet_fdr = 0.05,
-                 weak_threshold_for_counting_sign = 0.99,
+                 min_metacluster_size=100,
+                 target_seqlet_fdr=0.05,
+                 weak_threshold_for_counting_sign=0.99,
                  max_seqlets_per_metacluster=20000,
                  max_seqlets_per_task=None,
                  verbose=True):
@@ -102,10 +102,7 @@ class TfModiscoWorkflow(object):
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
-                                value_provider=lambda x: x.coor.score))
-
-        self.threshold_score_transformer_factory =\
-            core.LaplaceCdfFactory(flank_to_ignore=self.flank_size)
+                                    value_provider=lambda x: x.coor.score))
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
@@ -149,9 +146,10 @@ class TfModiscoWorkflow(object):
 
 
         task_name_to_threshold_transformer = OrderedDict([
-            (task_name, self.threshold_score_transformer_factory(
+            (task_name, core.LaplaceCdf(
                 name=task_name+"_label",
-                track_name=task_name+"_contrib_scores"))
+                track_name=task_name+"_contrib_scores",
+                flank_to_ignore=self.flank_size))
              for task_name in task_names]) 
 
         multitask_seqlet_creation_results = core.MultiTaskSeqletCreation(
