@@ -8,6 +8,18 @@ import traceback
 from sklearn.neighbors.kde import KernelDensity
 
 
+def load_patterns(grp, track_set):
+    from modisco.core import AggregatedSeqlet
+    all_pattern_names = load_string_list(dset_name="all_pattern_names",
+                                         grp=grp)
+    patterns = []
+    for pattern_name in all_pattern_names:
+        pattern_grp = grp[pattern_name] 
+        patterns.append(AggregatedSeqlet.from_hdf5(grp=pattern_grp,
+                                                   track_set=track_set))
+    return patterns
+
+
 def save_patterns(patterns, grp):
     all_pattern_names = []
     for idx, pattern in enumerate(patterns):
@@ -29,7 +41,7 @@ def save_string_list(string_list, dset_name, grp):
     dset[:] = string_list
 
 
-def read_seqlet_coords(dset_name, grp):
+def load_seqlet_coords(dset_name, grp):
     from modisco.core import SeqletCoordinates
     coords_strings = load_string_list(dset_name=dset_name, grp=grp)
     return [SeqletCoordinates.from_string(x) for x in coords_strings] 

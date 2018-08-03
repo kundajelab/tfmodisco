@@ -38,16 +38,17 @@ class TfModiscoResults(object):
             core.MultiTaskSeqletCreationResults.from_hdf5(
                 grp=grp["multitask_seqlet_creation_results"],
                 track_set=track_set)
-        metaclustering_results = None #create
+        metaclustering_results = None #punt on this for now
 
         metacluster_idx_to_submetacluster_results = OrderedDict()
         metacluster_idx_to_submetacluster_results_group =\
             grp["metacluster_idx_to_submetacluster_results"]
         for metacluster_idx in metacluster_idx_to_submetacluster_results_group:
             metacluster_idx_to_submetacluster_results[metacluster_idx] =\
-             None
-             #create from  
-             #metacluster_idx_to_submetacluster_results_group[metacluster_idx]
+             SubMetaclusterResults.from_hdf5(
+                grp=metacluster_idx_to_submetacluster_results_group[
+                     metacluster_idx],
+                track_set=track_set)
 
         return cls(task_names=task_names,
                    multitask_seqlet_creation_results=
@@ -80,6 +81,21 @@ class SubMetaclusterResults(object):
         self.activity_pattern = activity_pattern
         self.seqlets = seqlets
         self.seqlets_to_patterns_result = seqlets_to_patterns_result
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        metacluster_size = int(grp.attrs['size'])
+        activity_pattern = np.array(grp['activity_pattern'])
+        seqlet_coords = util.load_seqlet_coords(dset_name="seqlets", grp=grp)
+        seqlets = track_set.create_seqlets(coords=seqlet_coords)
+        seqlets_to_patterns_result =\
+            seqlets_to_patterns.SeqletsToPatternsResults.from_hdf5(
+                grp=grp["seqlets_to_patterns_result"],
+                track_set=track_set) 
+        return cls(metacluster_size=metacluster_size,
+                   activity_pattern=activity_pattern,
+                   seqlets=seqlets,
+                   seqlets_to_patterns_result=seqlets_to_patterns_result) 
 
     def save_hdf5(self, grp):
         grp.attrs['size'] = self.metacluster_size
