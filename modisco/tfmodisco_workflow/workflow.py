@@ -18,19 +18,44 @@ class TfModiscoResults(object):
     def __init__(self,
                  task_names,
                  multitask_seqlet_creation_results,
-                 seqlet_attribute_vectors,
                  metaclustering_results,
                  metacluster_idx_to_submetacluster_results,
                  **kwargs):
         self.task_names = task_names
         self.multitask_seqlet_creation_results =\
                 multitask_seqlet_creation_results
-        self.seqlet_attribute_vectors = seqlet_attribute_vectors
         self.metaclustering_results = metaclustering_results
         self.metacluster_idx_to_submetacluster_results =\
             metacluster_idx_to_submetacluster_results
 
         self.__dict__.update(**kwargs)
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        task_names = util.load_string_list(dset_name="task_names",
+                                           grp=grp)
+        multitask_seqlet_creation_results =\
+            core.MultiTaskSeqletCreationResults.from_hdf5(
+                grp=grp["multitask_seqlet_creation_results"],
+                track_set=track_set)
+        metaclustering_results = None #punt on this for now
+
+        metacluster_idx_to_submetacluster_results = OrderedDict()
+        metacluster_idx_to_submetacluster_results_group =\
+            grp["metacluster_idx_to_submetacluster_results"]
+        for metacluster_idx in metacluster_idx_to_submetacluster_results_group:
+            metacluster_idx_to_submetacluster_results[metacluster_idx] =\
+             SubMetaclusterResults.from_hdf5(
+                grp=metacluster_idx_to_submetacluster_results_group[
+                     metacluster_idx],
+                track_set=track_set)
+
+        return cls(task_names=task_names,
+                   multitask_seqlet_creation_results=
+                    multitask_seqlet_creation_results,
+                   metaclustering_results=metaclustering_results,
+                   metacluster_idx_to_submetacluster_results=
+                    metacluster_idx_to_submetacluster_results)
 
     def save_hdf5(self, grp):
         util.save_string_list(string_list=self.task_names, 
@@ -57,6 +82,21 @@ class SubMetaclusterResults(object):
         self.seqlets = seqlets
         self.seqlets_to_patterns_result = seqlets_to_patterns_result
 
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        metacluster_size = int(grp.attrs['size'])
+        activity_pattern = np.array(grp['activity_pattern'])
+        seqlet_coords = util.load_seqlet_coords(dset_name="seqlets", grp=grp)
+        seqlets = track_set.create_seqlets(coords=seqlet_coords)
+        seqlets_to_patterns_result =\
+            seqlets_to_patterns.SeqletsToPatternsResults.from_hdf5(
+                grp=grp["seqlets_to_patterns_result"],
+                track_set=track_set) 
+        return cls(metacluster_size=metacluster_size,
+                   activity_pattern=activity_pattern,
+                   seqlets=seqlets,
+                   seqlets_to_patterns_result=seqlets_to_patterns_result) 
+
     def save_hdf5(self, grp):
         grp.attrs['size'] = self.metacluster_size
         grp.create_dataset('activity_pattern', data=self.activity_pattern)
@@ -64,6 +104,32 @@ class SubMetaclusterResults(object):
                                 dset_name="seqlets", grp=grp)   
         self.seqlets_to_patterns_result.save_hdf5(
             grp=grp.create_group('seqlets_to_patterns_result'))
+
+
+def prep_track_set(task_names, contrib_scores,
+                    hypothetical_contribs, one_hot):
+    contrib_scores_tracks = [
+        core.DataTrack(
+            name=key+"_contrib_scores",
+            fwd_tracks=contrib_scores[key],
+            rev_tracks=[x[::-1, ::-1] for x in 
+                        contrib_scores[key]],
+            has_pos_axis=True) for key in task_names] 
+    hypothetical_contribs_tracks = [
+        core.DataTrack(name=key+"_hypothetical_contribs",
+                       fwd_tracks=hypothetical_contribs[key],
+                       rev_tracks=[x[::-1, ::-1] for x in 
+                                    hypothetical_contribs[key]],
+                       has_pos_axis=True)
+                       for key in task_names]
+    onehot_track = core.DataTrack(
+                        name="sequence", fwd_tracks=one_hot,
+                        rev_tracks=[x[::-1, ::-1] for x in one_hot],
+                        has_pos_axis=True)
+    track_set = core.TrackSet(
+                    data_tracks=contrib_scores_tracks
+                    +hypothetical_contribs_tracks+[onehot_track])
+    return track_set
 
 
 class TfModiscoWorkflow(object):
@@ -116,30 +182,11 @@ class TfModiscoWorkflow(object):
             max_seqlets_total=self.max_seqlets_per_task,
             verbose=self.verbose) 
 
-        contrib_scores_tracks = [
-            core.DataTrack(
-                name=key+"_contrib_scores",
-                fwd_tracks=contrib_scores[key],
-                rev_tracks=[x[::-1, ::-1] for x in 
-                            contrib_scores[key]],
-                has_pos_axis=True) for key in task_names] 
-
-        hypothetical_contribs_tracks = [
-            core.DataTrack(name=key+"_hypothetical_contribs",
-                           fwd_tracks=hypothetical_contribs[key],
-                           rev_tracks=[x[::-1, ::-1] for x in 
-                                        hypothetical_contribs[key]],
-                           has_pos_axis=True)
-                           for key in task_names]
-
-        onehot_track = core.DataTrack(
-                            name="sequence", fwd_tracks=one_hot,
-                            rev_tracks=[x[::-1, ::-1] for x in one_hot],
-                            has_pos_axis=True)
-
-        track_set = core.TrackSet(
-                        data_tracks=contrib_scores_tracks
-                        +hypothetical_contribs_tracks+[onehot_track])
+        track_set = prep_track_set(
+                        task_names=task_names,
+                        contrib_scores=contrib_scores,
+                        hypothetical_contribs=hypothetical_contribs,
+                        one_hot=one_hot)
 
         per_position_contrib_scores = OrderedDict([
             (x, [np.sum(s,axis=1) for s in contrib_scores[x]]) for x in task_names])
