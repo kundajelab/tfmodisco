@@ -19,10 +19,20 @@ def save_patterns(patterns, grp):
                      grp=grp)
 
 
+def load_string_list(dset_name, grp):
+    return [x.decode("utf-8") for x in grp[dset_name][:]]
+
+
 def save_string_list(string_list, dset_name, grp):
     dset = grp.create_dataset(dset_name, (len(string_list),),
                               dtype=h5py.special_dtype(vlen=bytes))
     dset[:] = string_list
+
+
+def read_seqlet_coords(dset_name, grp):
+    from modisco.core import SeqletCoordinates
+    coords_strings = load_string_list(dset_name=dset_name, grp=grp)
+    return [SeqletCoordinates.from_string(x) for x in coords_strings] 
 
 
 def save_seqlet_coords(seqlets, dset_name, grp):
