@@ -8,7 +8,7 @@ if __name__== '__main__':
           version='0.3.1',
           packages=['modisco', 'modisco.cluster','modisco.backend',
                     'modisco.visualization', 'modisco.affinitymat',
-                    'modisco.tfmodisco_workflow'],
+                    'modisco.tfmodisco_workflow', 'modisco.hit_scoring'],
           setup_requires=[],
           install_requires=['numpy>=1.9', 'joblib>=0.11', 
                             'theano==0.9', 'scikit-learn>=0.19',

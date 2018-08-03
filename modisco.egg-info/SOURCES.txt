@@ -19,6 +19,8 @@ modisco/backend/__init__.py
 modisco/backend/theano_backend.py
 modisco/cluster/__init__.py
 modisco/cluster/core.py
+modisco/hit_scoring/__init__.py
+modisco/hit_scoring/fast_hit_scoring.py
 modisco/tfmodisco_workflow/__init__.py
 modisco/tfmodisco_workflow/seqlets_to_patterns.py
 modisco/tfmodisco_workflow/workflow.py
