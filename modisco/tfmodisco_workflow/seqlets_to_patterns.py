@@ -410,24 +410,27 @@ class TfModiscoSeqletsToPatternsFactory(object):
 class SeqletsToPatternsResults(object):
 
     def __init__(self,
-                 patterns, seqlets, affmat, cluster_results,
+                 patterns, cluster_results,
                  total_time_taken, success=True, **kwargs):
         self.success = success
         self.patterns = patterns
-        self.seqlets = seqlets
-        self.affmat = affmat
         self.cluster_results = cluster_results
         self.total_time_taken = total_time_taken
         self.__dict__.update(**kwargs)
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        patterns = util.load_patterns(grp=grp["patterns"], track_set=track_set) 
+        cluster_results = None
+        total_time_taken = None
+        return cls(patterns=patterns, cluster_results=cluster_results,
+                   total_time_taken=total_time_taken)
 
     def save_hdf5(self, grp):
         if (self.success):
             util.save_patterns(self.patterns,
                                grp.create_group("patterns"))
-            grp.create_dataset("affmat", data=self.affmat) 
             self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   
-            #grp.attrs['jsonable_config'] =\
-            #    json.dumps(self.jsonable_config, indent=4, separators=(',', ': ')) 
             grp.attrs['total_time_taken'] = self.total_time_taken
 
 

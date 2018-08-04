@@ -25,6 +25,13 @@ class Snippet(object):
         return Snippet(fwd=new_fwd, rev=new_rev,
                        has_pos_axis=self.has_pos_axis)
 
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        fwd = np.array(grp["fwd"]) 
+        rev = np.array(grp["rev"])
+        has_pos_axis = grp.attrs["has_pos_axis"]
+        return cls(fwd=fwd, rev=rev, has_pos_axis=has_pos_axis)
+
     def save_hdf5(self, grp):
         grp.create_dataset("fwd", data=self.fwd)  
         grp.create_dataset("rev", data=self.rev)
@@ -256,6 +263,16 @@ class MultiTaskSeqletCreationResults(object):
         self.task_name_to_coord_producer_results =\
             task_name_to_coord_producer_results
 
+    @classmethod
+    def from_hdf5(self, grp, track_set):
+        seqlet_coords = util.load_seqlet_coords(dset_name="final_seqlets",
+                                                grp=grp) 
+        seqlets = track_set.create_seqlets(coords=seqlet_coords)
+        return MultiTaskSeqletCreationResults(
+                final_seqlets=seqlets,
+                task_name_to_coord_producer_results=None)
+          
+
     def save_hdf5(self, grp):
         util.save_seqlet_coords(seqlets=self.final_seqlets,
                                 dset_name="final_seqlets", grp=grp)  
@@ -320,6 +337,16 @@ class SeqletCoordinates(object):
 
     def __len__(self):
         return self.end - self.start
+
+    @classmethod
+    def from_string(self, string):
+        example_info, start_info, end_info, rc_info = string.split(",")
+        example_idx = int(example_info.split(":")[1])
+        start = int(start_info.split(":")[1])
+        end = int(end_info.split(":")[1])
+        rc = True if rc_info.split(":")[1] is "True" else False
+        return SeqletCoordinates(example_idx=example_idx, start=start,
+                                 end=end, is_revcomp=rc)
 
     def __str__(self):
         return ("example:"+str(self.example_idx)
@@ -552,12 +579,22 @@ class AggregatedSeqlet(Pattern):
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        seqlet_coords = util.load_seqlet_coords(dset_name="seqlets",
+                                                grp=grp["seqlets_and_alnmts"])
+        seqlets = track_set.create_seqlets(coords=seqlet_coords)
+        alnmts = np.array(grp["seqlets_and_alnmts"]["alnmts"])
+        seqlets_and_alnmts_arr = [
+            SeqletAndAlignment(seqlet=seqlet, alnmt=alnmt)
+            for seqlet,alnmt in zip(seqlets, alnmts)]
+        return AggregatedSeqlet(seqlets_and_alnmts_arr=seqlets_and_alnmts_arr) 
+
     def save_hdf5(self, grp):
         for track_name,snippet in self.track_name_to_snippet.items():
             snippet.save_hdf5(grp.create_group(track_name))
         self._seqlets_and_alnmts.save_hdf5(
              grp.create_group("seqlets_and_alnmts"))
-        
 
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=
