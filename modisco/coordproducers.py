@@ -54,9 +54,22 @@ class LaplaceThreshold(object):
 
     def __call__(self, values):
 
-        pos_values = np.array(sorted(values[values > 0.0]))
-        neg_values = np.array(sorted(values[values < 0.0],
-                                     key=lambda x: -x))
+        # first estimate mu, using two level histogram to get to 1e-6
+        hist1, bin_edges1 = np.histogram(values, bins=1000)
+        peak1 = np.argmax(hist1)
+        l_edge = bin_edges1[peak1]
+        r_edge = bin_edges1[peak1+1]
+        top_values = values[ (l_edge < values) & (values < r_edge) ]
+
+        hist2, bin_edges2 = np.histogram(top_values, bins=1000)
+        peak2 = np.argmax(hist2)
+        l_edge = bin_edges2[peak2]
+        r_edge = bin_edges2[peak2+1]
+        mu = (l_edge + r_edge) / 2
+        print("peak(mu)=", mu)
+
+        pos_values = np.array(sorted(values[values > mu] - mu))
+        neg_values = np.array(sorted(values[values < mu] - mu, key=lambda x: -x))
 
         #We assume that the null is governed by a laplace, because
         #that's what I (Av Shrikumar) have personally observed
@@ -97,24 +110,30 @@ class LaplaceThreshold(object):
         else:
             neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
 
-        pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b) 
-        neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b) 
+        neg_threshold += mu
+        pos_threshold += mu
+        neg_threshold = min(neg_threshold, 0)
+        pos_threshold = max(pos_threshold, 0)
+
+        pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b)
+        neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b)
         #neg_threshold = np.log((1-self.threshold_cdf)*2)*neg_laplace_b
         #pos_threshold = -np.log((1-self.threshold_cdf)*2)*pos_laplace_b
 
         #plot the result
         if (self.verbose):
+            print("Mu: %e +/- %e" % (mu, (r_edge-l_edge)/2))
             print("Lablace_b:",neg_laplace_b,"and",pos_laplace_b)
             print("Thresholds:",neg_threshold,"and",pos_threshold)
             print("#fdrs pass:",len(neg_fdrs_passing_thresh),"and", len(pos_fdrs_passing_thresh))
             print("CDFs:",neg_threshold_cdf,"and",pos_threshold_cdf)
             print("Est. FDRs:",neg_thresh_fdr,"and",pos_thresh_fdr)
-            neg_linspace = np.linspace(np.min(values), 0, 100)
-            pos_linspace = np.linspace(0, np.max(values), 100)
+            neg_linspace = np.linspace(np.min(values), mu, 100)
+            pos_linspace = np.linspace(mu, np.max(values), 100)
             neg_laplace_vals = (1/(2*neg_laplace_b))*np.exp(
-                            -np.abs(neg_linspace)/neg_laplace_b)
+                            -np.abs(neg_linspace-mu)/neg_laplace_b)
             pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
-                            -np.abs(pos_linspace)/neg_laplace_b)
+                            -np.abs(pos_linspace-mu)/pos_laplace_b)
             from matplotlib import pyplot as plt
             plt.figure()
             hist, _, _ = plt.hist(values, bins=100)
