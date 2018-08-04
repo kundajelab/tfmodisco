@@ -248,8 +248,10 @@ class LaplaceCdf(AbstractScoreTransformer):
             coord_producer_results.thresholding_results.neg_b
         self.pos_laplace_b =\
             coord_producer_results.thresholding_results.pos_b
+        self.mu = coord_producer_results.thresholding_results.mu
 
     def transform_val(self, val):
+        val -= self.mu
         if (val < 0):
             return -(1-np.exp(val/self.neg_laplace_b))
         else:
