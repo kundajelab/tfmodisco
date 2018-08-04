@@ -30,13 +30,14 @@ class SeqletCoordsFWAP(SeqletCoordinates):
 class LaplaceThresholdingResults(object):
 
     def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
-                       pos_threshold, pos_threshold_cdf, pos_b):
+                       pos_threshold, pos_threshold_cdf, pos_b, mu):
         self.neg_threshold = neg_threshold
         self.neg_threshold_cdf = neg_threshold_cdf
         self.neg_b = neg_b
         self.pos_threshold = pos_threshold
         self.pos_threshold_cdf = pos_threshold_cdf
         self.pos_b = pos_b
+        self.mu = mu
 
     def save_hdf5(self, grp):
         grp.attrs['neg_threshold'] = self.neg_threshold
@@ -110,15 +111,15 @@ class LaplaceThreshold(object):
         else:
             neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
 
-        neg_threshold += mu
-        pos_threshold += mu
-        neg_threshold = min(neg_threshold, 0)
-        pos_threshold = max(pos_threshold, 0)
-
         pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b)
         neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b)
         #neg_threshold = np.log((1-self.threshold_cdf)*2)*neg_laplace_b
         #pos_threshold = -np.log((1-self.threshold_cdf)*2)*pos_laplace_b
+
+        neg_threshold += mu
+        pos_threshold += mu
+        neg_threshold = min(neg_threshold, 0)
+        pos_threshold = max(pos_threshold, 0)
 
         #plot the result
         if (self.verbose):
@@ -167,7 +168,8 @@ class LaplaceThreshold(object):
                 neg_b=neg_laplace_b,
                 pos_threshold=pos_threshold,
                 pos_threshold_cdf=pos_threshold_cdf,
-                pos_b=pos_laplace_b)
+                pos_b=pos_laplace_b,
+                mu = mu)
 
 
 class CoordProducerResults(object):
