@@ -145,6 +145,7 @@ class TfModiscoWorkflow(object):
                  weak_threshold_for_counting_sign=0.99,
                  max_seqlets_per_metacluster=20000,
                  max_seqlets_per_task=None,
+                 min_seqlets_per_task=500,
                  verbose=True):
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
@@ -159,6 +160,7 @@ class TfModiscoWorkflow(object):
             weak_threshold_for_counting_sign
         self.max_seqlets_per_metacluster = max_seqlets_per_metacluster
         self.max_seqlets_per_task = max_seqlets_per_task
+        self.min_seqlets_per_task = min_seqlets_per_task
         self.verbose = verbose
 
         self.build()
@@ -178,7 +180,8 @@ class TfModiscoWorkflow(object):
             flank=self.flank_size,
             thresholding_function=coordproducers.LaplaceThreshold(
                                     target_fdr=self.target_seqlet_fdr,
-                                    verbose=self.verbose),
+                                    verbose=self.verbose,
+                                    min_seqlets=self.min_seqlets_per_task),
             max_seqlets_total=self.max_seqlets_per_task,
             verbose=self.verbose) 
 
