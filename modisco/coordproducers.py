@@ -48,10 +48,11 @@ class LaplaceThresholdingResults(object):
 
 class LaplaceThreshold(object):
     count = 0
-    def __init__(self, target_fdr, verbose):
+    def __init__(self, target_fdr, min_seqlets, verbose):
         assert (target_fdr > 0.0 and target_fdr < 1.0)
         self.target_fdr = target_fdr
         self.verbose = verbose
+        self.min_seqlets = min_seqlets
 
     def __call__(self, values):
 
@@ -111,15 +112,30 @@ class LaplaceThreshold(object):
         else:
             neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
 
+        if (min_seqlets is not None):
+            num_pos_passing = np.sum(pos_values > pos_threshold)
+            num_neg_passing = np.sum(neg_values < neg_threshold)
+            if (num_pos_passing + num_neg_passing < self.min_seqlets):
+                #manually adjust the threshold
+                shifted_values = values - mu
+                values_sorted_by_abs = sorted(np.abs(shifted_values), key=lambda x: -x)
+                abs_threshold = shifted_values[self.min_seqlets-1]
+                if (self.verbose):
+                    print("Manually adjusting thresholds to get desired num seqlets")
+                pos_threshold = abs_threshold
+                neg_threshold = -abs_threshold
+        
         pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b)
         neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b)
         #neg_threshold = np.log((1-self.threshold_cdf)*2)*neg_laplace_b
         #pos_threshold = -np.log((1-self.threshold_cdf)*2)*pos_laplace_b
-
+        
         neg_threshold += mu
         pos_threshold += mu
         neg_threshold = min(neg_threshold, 0)
         pos_threshold = max(pos_threshold, 0)
+        
+        
 
         #plot the result
         if (self.verbose):
@@ -209,6 +225,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        suppress=None,
                        thresholding_function=LaplaceThreshold(
                             target_fdr=0.05,
+                            min_seqlets=500,
                             verbose=True),
                        max_seqlets_total=None,
                        progress_update=5000,
