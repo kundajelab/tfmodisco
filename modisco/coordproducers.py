@@ -112,7 +112,7 @@ class LaplaceThreshold(object):
         else:
             neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
 
-        if (min_seqlets is not None):
+        if (self.min_seqlets is not None):
             num_pos_passing = np.sum(pos_values > pos_threshold)
             num_neg_passing = np.sum(neg_values < neg_threshold)
             if (num_pos_passing + num_neg_passing < self.min_seqlets):

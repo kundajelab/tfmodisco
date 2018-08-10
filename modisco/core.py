@@ -388,6 +388,13 @@ class Pattern(object):
     def revcomp(self):
         raise NotImplementedError()
 
+    def trim(self, start_idx, end_idx):
+        new_pattern = Pattern()  
+        for data_track_name in self.track_name_to_snippet:
+            new_pattern[data_track_name] =\
+		self[data_track_name].trim(start_idx, end_idx)
+        return new_pattern
+
 
 class Seqlet(Pattern):
 
