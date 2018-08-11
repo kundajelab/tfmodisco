@@ -40,6 +40,7 @@ class LaplaceThresholdingResults(object):
         self.mu = mu
 
     def save_hdf5(self, grp):
+        grp.attrs['mu'] = self.mu
         grp.attrs['neg_threshold'] = self.neg_threshold
         grp.attrs['neg_b'] = self.neg_b 
         grp.attrs['pos_threshold'] = self.pos_threshold

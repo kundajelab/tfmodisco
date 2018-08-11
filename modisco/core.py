@@ -588,6 +588,18 @@ class AggregatedSeqlet(Pattern):
             self._set_length(seqlets_and_alnmts_arr)
             self._compute_aggregation(seqlets_and_alnmts_arr) 
 
+    def to_seqlet(self):
+	#instantiates a fake seqlet object for the motif
+        fake_coor = SeqletCoordinates(example_idx = None,
+				      start=0,
+				      end=len(self),
+                                      is_revcomp=False)
+        fake_seqlet = Seqlet(coor=fake_coor)	
+        for track_name,snippet in self.track_name_to_snippet.items():
+            fake_seqlet.add_snippet(data_track_name=track_name,
+                                    snippet=snippet)
+        return fake_seqlet
+
     @classmethod
     def from_hdf5(cls, grp, track_set):
         seqlet_coords = util.load_seqlet_coords(dset_name="seqlets",
