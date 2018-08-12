@@ -267,12 +267,18 @@ class MultiTaskSeqletCreationResults(object):
 
     @classmethod
     def from_hdf5(self, grp, track_set):
+        from . import coordproducers
         seqlet_coords = util.load_seqlet_coords(dset_name="final_seqlets",
                                                 grp=grp) 
         seqlets = track_set.create_seqlets(coords=seqlet_coords)
+        tntcpr = OrderedDict()
+        tntcpr_grp = grp["task_name_to_coord_producer_results"]
+        for task_name in tntcpr_grp.keys():
+            tntcpr[task_name] = coordproducers.CoordProducerResults.from_hdf5(
+                                                tntcpr_grp[task_name])
         return MultiTaskSeqletCreationResults(
                 final_seqlets=seqlets,
-                task_name_to_coord_producer_results=None)
+                task_name_to_coord_producer_results=tntcpr)
           
 
     def save_hdf5(self, grp):

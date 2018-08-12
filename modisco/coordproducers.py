@@ -27,6 +27,14 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
+class AbstractThresholdingResults(object):
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs['class'])
+        return the_class.from_hdf5(grp) 
+
+
 class LaplaceThresholdingResults(object):
 
     def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
@@ -39,10 +47,31 @@ class LaplaceThresholdingResults(object):
         self.pos_b = pos_b
         self.mu = mu
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        mu = grp.attrs['mu'] 
+        neg_threshold = grp.attrs['neg_threshold']
+        neg_threshold_cdf = grp.attrs['neg_threshold_cdf']
+        neg_b = grp.attrs['neg_b']
+        pos_threshold = grp.attrs['pos_threshold']
+        pos_threshold_cdf = grp.attrs['pos_threshold_cdf']
+        pos_b = grp.attrs['pos_b']
+        return cls(neg_threshold=neg_threshold,
+                   neg_threshold_cdf=neg_threshold_cdf,
+                   neg_b=neg_b,
+                   pos_threshold=pos_threshold,
+                   pos_threshold_cdf=pos_threshold_cdf,
+                   pos_b=pos_b,
+                   mu=mu)
+
     def save_hdf5(self, grp):
+        grp.attrs['class'] = type(self).__name__
+        grp.attrs['mu'] = self.mu
         grp.attrs['neg_threshold'] = self.neg_threshold
+        grp.attrs['neg_threshold_cdf'] = self.neg_threshold_cdf
         grp.attrs['neg_b'] = self.neg_b 
         grp.attrs['pos_threshold'] = self.pos_threshold
+        grp.attrs['pos_threshold_cdf'] = self.pos_threshold_cdf
         grp.attrs['pos_b'] = self.pos_b 
 
 
@@ -193,6 +222,14 @@ class CoordProducerResults(object):
     def __init__(self, coords, thresholding_results):
         self.coords = coords
         self.thresholding_results = thresholding_results
+
+    def from_hdf5(self, grp):
+        coord_strings = util.load_string_list(dset_name="coords",
+                                              grp=grp)  
+        coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
+        thresholding_results = AbstractThresholdingResults.from_hdf5(grp)
+        return CoordProducerResults(coords=coords,
+                                    thresholding_results=thresholding_results)
 
     def save_hdf5(self, grp):
         util.save_string_list(
