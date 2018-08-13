@@ -230,6 +230,11 @@ class AbstractScoreTransformer(AbstractAttributeProvider):
     def __call__(self, seqlet):
         return self.transform_val(self.get_val(seqlet))
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        return the_class.from_hdf5(grp) 
+
 
 class LaplaceCdf(AbstractScoreTransformer):
 
@@ -244,6 +249,7 @@ class LaplaceCdf(AbstractScoreTransformer):
         return np.sum(track_values)
             
     def fit(self, coord_producer_results):
+        self.coord_producer_results = coord_producer_results
         self.neg_laplace_b =\
             coord_producer_results.thresholding_results.neg_b
         self.pos_laplace_b =\
@@ -257,13 +263,39 @@ class LaplaceCdf(AbstractScoreTransformer):
         else:
             return (1-np.exp(-val/self.pos_laplace_b))
 
+    @classmethod
+    def load_hdf5(cls, grp):
+        from . import coordproducers
+        name = grp.attrs["name"] 
+        track_name = grp.attrs["track_name"]
+        flank_to_ignore = grp.attrs["flank_to_ignore"]
+        laplace_cdf = cls(name=name, track_name=track_name,
+                                 flank_to_ignore=flank_to_ignore) 
+        coord_producer_results =\
+            coordproducers.CoordProducerResults.from_hdf5(grp)
+        laplace_cdf.fit(coord_producer_results)
+        return laplace_cdf
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["name"] = self.name
+        grp.attrs["track_name"] = self.track_name  
+        grp.attrs["flank_to_ignore"] = self.flank_to_ignore
+        if (hasattr(self, "coord_producer_results")):
+            self.coord_producer_results.save_hdf5(
+                grp.create_group("coord_producer_results"))    
+
 
 class MultiTaskSeqletCreationResults(object):
 
-    def __init__(self, final_seqlets, task_name_to_coord_producer_results): 
+    def __init__(self, final_seqlets,
+                       task_name_to_coord_producer_results,
+                       task_name_to_threshold_transformer): 
         self.final_seqlets = final_seqlets
         self.task_name_to_coord_producer_results =\
             task_name_to_coord_producer_results
+        self.task_name_to_threshold_transformer =\
+            task_name_to_threshold_transformer
 
     @classmethod
     def from_hdf5(self, grp, track_set):
@@ -276,10 +308,15 @@ class MultiTaskSeqletCreationResults(object):
         for task_name in tntcpr_grp.keys():
             tntcpr[task_name] = coordproducers.CoordProducerResults.from_hdf5(
                                                 tntcpr_grp[task_name])
+        tnttt = OrderedDict()
+        tnttt_grp = grp["task_name_to_threshold_transformer"]
+        for task_name in tnttt_grp.keys():
+            tnttt[task_name] = AbstractScoreTransformer.from_hdf5(
+                                                tnttt_grp[task_name])
         return MultiTaskSeqletCreationResults(
                 final_seqlets=seqlets,
-                task_name_to_coord_producer_results=tntcpr)
-          
+                task_name_to_coord_producer_results=tntcpr,
+                task_name_to_threshold_transformer=tnttt)
 
     def save_hdf5(self, grp):
         util.save_seqlet_coords(seqlets=self.final_seqlets,
@@ -288,6 +325,10 @@ class MultiTaskSeqletCreationResults(object):
         for task_name,coord_producer_results in\
             self.task_name_to_coord_producer_results.items():
             coord_producer_results.save_hdf5(tntcpg.create_group(task_name))
+        tnttt = grp.create_group("task_name_to_threshold_transformer")
+        for task_name,threshold_transformer in\
+            self.task_name_to_threshold_transformer.items():
+            threshold_transformer.save_hdf5(tnttt.create_group(task_name)) 
 
 
 class MultiTaskSeqletCreation(object):
@@ -325,6 +366,8 @@ class MultiTaskSeqletCreation(object):
             score_transformer.annotate(final_seqlets)
         return MultiTaskSeqletCreationResults(
                 final_seqlets=final_seqlets,
+                task_name_to_threshold_transformer=
+                 task_name_to_threshold_transformer,
                 task_name_to_coord_producer_results=
                  task_name_to_coord_producer_results)
                  

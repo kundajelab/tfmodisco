@@ -35,7 +35,7 @@ class AbstractThresholdingResults(object):
         return the_class.from_hdf5(grp) 
 
 
-class LaplaceThresholdingResults(object):
+class LaplaceThresholdingResults(AbstractThresholdingResults):
 
     def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
                        pos_threshold, pos_threshold_cdf, pos_b, mu):
