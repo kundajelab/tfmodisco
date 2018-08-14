@@ -264,7 +264,7 @@ class LaplaceCdf(AbstractScoreTransformer):
             return (1-np.exp(-val/self.pos_laplace_b))
 
     @classmethod
-    def load_hdf5(cls, grp):
+    def from_hdf5(cls, grp):
         from . import coordproducers
         name = grp.attrs["name"] 
         track_name = grp.attrs["track_name"]
@@ -272,7 +272,8 @@ class LaplaceCdf(AbstractScoreTransformer):
         laplace_cdf = cls(name=name, track_name=track_name,
                                  flank_to_ignore=flank_to_ignore) 
         coord_producer_results =\
-            coordproducers.CoordProducerResults.from_hdf5(grp)
+            coordproducers.CoordProducerResults.from_hdf5(
+             grp["coord_producer_results"])
         laplace_cdf.fit(coord_producer_results)
         return laplace_cdf
 
@@ -298,7 +299,7 @@ class MultiTaskSeqletCreationResults(object):
             task_name_to_threshold_transformer
 
     @classmethod
-    def from_hdf5(self, grp, track_set):
+    def from_hdf5(cls, grp, track_set):
         from . import coordproducers
         seqlet_coords = util.load_seqlet_coords(dset_name="final_seqlets",
                                                 grp=grp) 
@@ -313,7 +314,7 @@ class MultiTaskSeqletCreationResults(object):
         for task_name in tnttt_grp.keys():
             tnttt[task_name] = AbstractScoreTransformer.from_hdf5(
                                                 tnttt_grp[task_name])
-        return MultiTaskSeqletCreationResults(
+        return cls(
                 final_seqlets=seqlets,
                 task_name_to_coord_producer_results=tntcpr,
                 task_name_to_threshold_transformer=tnttt)

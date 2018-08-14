@@ -141,7 +141,7 @@ class LaplaceThreshold(object):
         else:
             neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
 
-        if (min_seqlets is not None):
+        if (self.min_seqlets is not None):
             num_pos_passing = np.sum(pos_values > pos_threshold)
             num_neg_passing = np.sum(neg_values < neg_threshold)
             if (num_pos_passing + num_neg_passing < self.min_seqlets):
@@ -223,11 +223,13 @@ class CoordProducerResults(object):
         self.coords = coords
         self.thresholding_results = thresholding_results
 
-    def from_hdf5(self, grp):
+    @classmethod
+    def from_hdf5(cls, grp):
         coord_strings = util.load_string_list(dset_name="coords",
                                               grp=grp)  
         coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
-        thresholding_results = AbstractThresholdingResults.from_hdf5(grp)
+        thresholding_results = AbstractThresholdingResults.from_hdf5(
+                                grp["thresholding_results"])
         return CoordProducerResults(coords=coords,
                                     thresholding_results=thresholding_results)
 
