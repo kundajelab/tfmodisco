@@ -24,7 +24,7 @@ class MetaclusteringResults(object):
         self.metaclusterer.save_hdf5(grp) 
         grp.create_dataset("attribute_vectors",
                            data=np.array(self.attribute_vectors))
-        metacluster_idx_to_metadata_grp =\
+        metacluster_idx_to_activity_pattern_grp =\
             grp.create_group("metacluster_idx_to_activity_pattern")
         all_metacluster_names = []
         for cluster_idx,activity_pattern in\
@@ -160,6 +160,36 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         return (self.activity_pattern_to_cluster_idx[best_pattern]
              if best_pattern in self.final_surviving_activity_patterns
              else -1)
+
+    def save_hdf5(self, grp):
+        task_name_to_value_provider_grp =(
+            grp.create_group("task_name_to_value_provider"))
+        for task_name,value_provider in\
+            self.task_name_to_value_provider.items():
+            value_provider.save_hdf5(
+             task_name_to_value_provider_grp.create_group(task_name))
+        util.save_string_list(self.task_names, dset_name="task_names",grp=grp) 
+        grp.attrs["min_cluster_size"] = self.min_cluster_size
+        grp.attrs["threshold_for_counting_sign"] =\
+            self.threshold_for_counting_sign
+        grp.attrs["weak_threshold_for_counting_sign"] =\
+            self.weak_threshold_for_counting_sign
+        grp.attrs["verbose"] = self.verbose
+        if (self.fit_called):
+            #save self.activity_pattern_to_cluster_idx
+            activity_pattern_to_cluster_idx_grp =\
+                grp.create_group("activity_pattern_to_cluster_idx")
+            for activity_pattern,cluster_idx in\
+                self.activity_pattern_to_cluster_idx.items():
+                activity_pattern_to_cluster_idx_grp.attrs[
+                    activity_pattern] = cluster_idx
+            #save self.surviving_activity_patterns
+            grp.create_dataset("surviving_activity_patterns",
+                               data=np.array(self.surviving_activity_patterns))
+            util.save_string_list(
+                 self.final_surviving_activity_patterns,
+                 dset_name="final_surviving_activity_patterns",
+                 grp=grp) 
     
     def _fit(self, attribute_vectors):
 
@@ -199,7 +229,6 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             (len(final_activity_pattern_to_vectors[
                  self.pattern_to_str(activity_pattern)])
              >= self.min_cluster_size)])
-        print(self.final_surviving_activity_patterns)
 
         if (self.verbose):
             print(str(len(self.final_surviving_activity_patterns))+
