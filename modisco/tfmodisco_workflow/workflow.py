@@ -38,8 +38,9 @@ class TfModiscoResults(object):
             core.MultiTaskSeqletCreationResults.from_hdf5(
                 grp=grp["multitask_seqlet_creation_results"],
                 track_set=track_set)
-        metaclustering_results = None #punt on this for now
-
+        metaclustering_results =\
+            metaclusterers.MetaclusteringResults.from_hdf5(
+                grp["metaclustering_results"])
         metacluster_idx_to_submetacluster_results = OrderedDict()
         metacluster_idx_to_submetacluster_results_group =\
             grp["metacluster_idx_to_submetacluster_results"]

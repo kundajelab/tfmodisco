@@ -266,8 +266,8 @@ class LaplaceCdf(AbstractValueProvider):
         from . import coordproducers
         track_name = grp.attrs["track_name"]
         flank_to_ignore = grp.attrs["flank_to_ignore"]
-        laplace_cdf = cls(name=name, track_name=track_name,
-                                 flank_to_ignore=flank_to_ignore) 
+        laplace_cdf = cls(track_name=track_name,
+                          flank_to_ignore=flank_to_ignore) 
         coord_producer_results =\
             coordproducers.CoordProducerResults.from_hdf5(
              grp["coord_producer_results"])

@@ -18,6 +18,29 @@ class MetaclusteringResults(object):
         self.metacluster_idx_to_activity_pattern =\
                 metacluster_idx_to_activity_pattern
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        metacluster_indices = np.array(grp["metacluster_indices"])
+        metaclusterer = AbstractMetaclusterer.from_hdf5(grp) 
+        attribute_vectors = np.array(grp["attribute_vectors"])
+        all_metacluster_names = util.load_string_list(
+            dset_name="all_metacluster_names",
+            grp=grp) 
+        metacluster_idx_to_activity_pattern_grp =\
+            grp["metacluster_idx_to_activity_pattern"]
+        metacluster_idx_to_activity_pattern = OrderedDict()
+        for metacluster_name in all_metacluster_names:
+            metacluster_idx = int(metacluster_name.split("_")[-1])
+            activity_pattern =\
+             metacluster_idx_to_activity_pattern_grp.attrs[metacluster_name] 
+            metacluster_idx_to_activity_pattern[metacluster_idx] =\
+                activity_pattern
+        return cls(metacluster_indices=metacluster_indices,
+                   metaclusterer=metaclusterer,
+                   attribute_vectors=attribute_vectors,
+                   metacluster_idx_to_activity_pattern=
+                    metacluster_idx_to_activity_pattern)
+
     def save_hdf5(self, grp):
         grp.create_dataset("metacluster_indices",
                            data=self.metacluster_indices)
@@ -85,6 +108,11 @@ class AbstractMetaclusterer(object):
 
     def _fit(self, attribute_vectors):
         raise NotImplementedError()
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        return the_class.from_hdf5(grp)
 
 
 class SignBasedPatternClustering(AbstractMetaclusterer):
@@ -172,7 +200,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         self.fit_called = True
 
     @classmethod
-    def load_hdf5(cls, grp):
+    def from_hdf5(cls, grp):
         from . import core
         task_names = util.load_string_list(dset_name="task_names",
                                            grp=grp) 
@@ -200,23 +228,26 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         if (fit_called):
             activity_pattern_to_cluster_idx = OrderedDict()
             activity_pattern_to_cluster_idx_grp =\
-                grp.create_group("activity_pattern_to_cluster_idx")
-            for activity_pattern in
+                grp["activity_pattern_to_cluster_idx"]
+            for activity_pattern in\
                 activity_pattern_to_cluster_idx_grp.attrs.keys():
                 activity_pattern_to_cluster_idx[activity_pattern] =\
-                    activity_pattern_to_cluster_idx_grp[activity_pattern]   
+                    activity_pattern_to_cluster_idx_grp.attrs[activity_pattern]   
             surviving_activity_patterns =\
                np.array(grp["surviving_activity_patterns"])
             final_surviving_activity_patterns =\
                 util.load_string_list(
                  dset_name="final_surviving_activity_patterns", grp=grp)
-            self.set_fit_values(
+            sign_based_pattern_clustering.set_fit_values(
                 activity_pattern_to_cluster_idx=
                  activity_pattern_to_cluster_idx,
-                surviving_activity_patterns=,
-                final_surviving_activity_patterns=)
+                surviving_activity_patterns=
+                 surviving_activity_patterns,
+                final_surviving_activity_patterns=
+                 final_surviving_activity_patterns)
 
     def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
         util.save_string_list(self.task_names, dset_name="task_names",grp=grp) 
         task_name_to_value_provider_grp =(
             grp.create_group("task_name_to_value_provider"))
