@@ -161,20 +161,76 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
              if best_pattern in self.final_surviving_activity_patterns
              else -1)
 
+    def set_fit_values(self, activity_pattern_to_cluster_idx,
+                             surviving_activity_patterns,
+                             final_surviving_activity_patterns):
+        self.activity_pattern_to_cluster_idx =\
+            activity_pattern_to_cluster_idx
+        self.surviving_activity_patterns = surviving_activity_patterns
+        self.final_surviving_activity_patterns =\
+            final_surviving_activity_patterns
+        self.fit_called = True
+
+    @classmethod
+    def load_hdf5(cls, grp):
+        from . import core
+        task_names = util.load_string_list(dset_name="task_names",
+                                           grp=grp) 
+        task_name_to_value_provider = OrderedDict() 
+        task_name_to_value_provider_grp = grp["task_name_to_value_provider"]
+        for task_name in task_names:
+            task_name_to_value_provider[task_name] =\
+                core.AbstractValueProvider.from_hdf5(
+                    task_name_to_value_provider_grp[task_name])
+        min_cluster_size = grp.attrs["min_cluster_size"]
+        threshold_for_counting_sign = grp.attrs["threshold_for_counting_sign"]
+        weak_threshold_for_counting_sign =\
+            grp.attrs["weak_threshold_for_counting_sign"]
+        verbose = grp.attrs["verbose"]
+
+        sign_based_pattern_clustering =\
+         cls(task_name_to_value_provider=task_name_to_value_provider,
+             task_names=task_names,
+             min_cluster_size=min_cluster_size,
+             threshold_for_counting_sign=threshold_for_counting_sign,
+             weak_threshold_for_counting_sign=weak_threshold_for_counting_sign,
+             verbose=verbose)
+
+        fit_called = grp.attrs["fit_called"]
+        if (fit_called):
+            activity_pattern_to_cluster_idx = OrderedDict()
+            activity_pattern_to_cluster_idx_grp =\
+                grp.create_group("activity_pattern_to_cluster_idx")
+            for activity_pattern in
+                activity_pattern_to_cluster_idx_grp.attrs.keys():
+                activity_pattern_to_cluster_idx[activity_pattern] =\
+                    activity_pattern_to_cluster_idx_grp[activity_pattern]   
+            surviving_activity_patterns =\
+               np.array(grp["surviving_activity_patterns"])
+            final_surviving_activity_patterns =\
+                util.load_string_list(
+                 dset_name="final_surviving_activity_patterns", grp=grp)
+            self.set_fit_values(
+                activity_pattern_to_cluster_idx=
+                 activity_pattern_to_cluster_idx,
+                surviving_activity_patterns=,
+                final_surviving_activity_patterns=)
+
     def save_hdf5(self, grp):
+        util.save_string_list(self.task_names, dset_name="task_names",grp=grp) 
         task_name_to_value_provider_grp =(
             grp.create_group("task_name_to_value_provider"))
         for task_name,value_provider in\
             self.task_name_to_value_provider.items():
             value_provider.save_hdf5(
              task_name_to_value_provider_grp.create_group(task_name))
-        util.save_string_list(self.task_names, dset_name="task_names",grp=grp) 
         grp.attrs["min_cluster_size"] = self.min_cluster_size
         grp.attrs["threshold_for_counting_sign"] =\
             self.threshold_for_counting_sign
         grp.attrs["weak_threshold_for_counting_sign"] =\
             self.weak_threshold_for_counting_sign
         grp.attrs["verbose"] = self.verbose
+        grp.attrs["fit_called"] = self.fit_called
         if (self.fit_called):
             #save self.activity_pattern_to_cluster_idx
             activity_pattern_to_cluster_idx_grp =\
