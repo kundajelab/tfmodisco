@@ -212,10 +212,9 @@ class AbstractAttributeProvider(object):
         raise NotImplementedError()
 
 
-class AbstractScoreTransformer(AbstractAttributeProvider):
+class AbstractValueProvider(object):
 
-    def __init__(self, name):
-        super(AbstractScoreTransformer, self).__init__(name=name)
+    def __init__(self):
         self.fit_called = False
 
     def get_val(self, seqlet):
@@ -236,10 +235,9 @@ class AbstractScoreTransformer(AbstractAttributeProvider):
         return the_class.from_hdf5(grp) 
 
 
-class LaplaceCdf(AbstractScoreTransformer):
+class LaplaceCdf(AbstractValueProvider):
 
-    def __init__(self, name, track_name, flank_to_ignore):
-        super(LaplaceCdf, self).__init__(name=name)
+    def __init__(self, track_name, flank_to_ignore):
         self.track_name = track_name
         self.flank_to_ignore = flank_to_ignore
 
@@ -266,7 +264,6 @@ class LaplaceCdf(AbstractScoreTransformer):
     @classmethod
     def from_hdf5(cls, grp):
         from . import coordproducers
-        name = grp.attrs["name"] 
         track_name = grp.attrs["track_name"]
         flank_to_ignore = grp.attrs["flank_to_ignore"]
         laplace_cdf = cls(name=name, track_name=track_name,
@@ -279,7 +276,6 @@ class LaplaceCdf(AbstractScoreTransformer):
 
     def save_hdf5(self, grp):
         grp.attrs["class"] = type(self).__name__
-        grp.attrs["name"] = self.name
         grp.attrs["track_name"] = self.track_name  
         grp.attrs["flank_to_ignore"] = self.flank_to_ignore
         if (hasattr(self, "coord_producer_results")):
@@ -290,13 +286,10 @@ class LaplaceCdf(AbstractScoreTransformer):
 class MultiTaskSeqletCreationResults(object):
 
     def __init__(self, final_seqlets,
-                       task_name_to_coord_producer_results,
-                       task_name_to_threshold_transformer): 
+                       task_name_to_coord_producer_results): 
         self.final_seqlets = final_seqlets
         self.task_name_to_coord_producer_results =\
             task_name_to_coord_producer_results
-        self.task_name_to_threshold_transformer =\
-            task_name_to_threshold_transformer
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
@@ -309,15 +302,9 @@ class MultiTaskSeqletCreationResults(object):
         for task_name in tntcpr_grp.keys():
             tntcpr[task_name] = coordproducers.CoordProducerResults.from_hdf5(
                                                 tntcpr_grp[task_name])
-        tnttt = OrderedDict()
-        tnttt_grp = grp["task_name_to_threshold_transformer"]
-        for task_name in tnttt_grp.keys():
-            tnttt[task_name] = AbstractScoreTransformer.from_hdf5(
-                                                tnttt_grp[task_name])
         return cls(
                 final_seqlets=seqlets,
-                task_name_to_coord_producer_results=tntcpr,
-                task_name_to_threshold_transformer=tnttt)
+                task_name_to_coord_producer_results=tntcpr)
 
     def save_hdf5(self, grp):
         util.save_seqlet_coords(seqlets=self.final_seqlets,
@@ -326,10 +313,6 @@ class MultiTaskSeqletCreationResults(object):
         for task_name,coord_producer_results in\
             self.task_name_to_coord_producer_results.items():
             coord_producer_results.save_hdf5(tntcpg.create_group(task_name))
-        tnttt = grp.create_group("task_name_to_threshold_transformer")
-        for task_name,threshold_transformer in\
-            self.task_name_to_threshold_transformer.items():
-            threshold_transformer.save_hdf5(tnttt.create_group(task_name)) 
 
 
 class MultiTaskSeqletCreation(object):
@@ -342,8 +325,7 @@ class MultiTaskSeqletCreation(object):
         self.overlap_resolver = overlap_resolver
         self.verbose = verbose
 
-    def __call__(self, task_name_to_score_track,
-                       task_name_to_threshold_transformer):
+    def __call__(self, task_name_to_score_track):
         task_name_to_coord_producer_results = OrderedDict()
         task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
@@ -355,20 +337,14 @@ class MultiTaskSeqletCreation(object):
                 coord_producer_results
             seqlets = self.track_set.create_seqlets(
                         coords=coord_producer_results.coords) 
-            task_name_to_threshold_transformer[task_name].\
-                      fit(coord_producer_results)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
         if (self.verbose):
             print("After resolving overlaps, got "
                   +str(len(final_seqlets))+" seqlets")
-        for score_transformer in task_name_to_threshold_transformer.values():
-            score_transformer.annotate(final_seqlets)
         return MultiTaskSeqletCreationResults(
                 final_seqlets=final_seqlets,
-                task_name_to_threshold_transformer=
-                 task_name_to_threshold_transformer,
                 task_name_to_coord_producer_results=
                  task_name_to_coord_producer_results)
                  
