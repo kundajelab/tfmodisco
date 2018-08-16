@@ -246,6 +246,8 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                 final_surviving_activity_patterns=
                  final_surviving_activity_patterns)
 
+        return sign_based_pattern_clustering
+
     def save_hdf5(self, grp):
         grp.attrs["class"] = type(self).__name__
         util.save_string_list(self.task_names, dset_name="task_names",grp=grp) 

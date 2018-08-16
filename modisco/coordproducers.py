@@ -14,6 +14,11 @@ class AbstractCoordProducer(object):
     def __call__(self):
         raise NotImplementedError() 
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        return the_class.from_hdf5(grp)
+
 
 class SeqletCoordsFWAP(SeqletCoordinates):
     """
@@ -75,13 +80,35 @@ class LaplaceThresholdingResults(AbstractThresholdingResults):
         grp.attrs['pos_b'] = self.pos_b 
 
 
-class LaplaceThreshold(object):
+class AbstractThresholdingFunction(object):
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"]) 
+        the_class.from_hdf5(grp) 
+ 
+
+class LaplaceThreshold(AbstractThresholdingFunction):
     count = 0
     def __init__(self, target_fdr, min_seqlets, verbose):
         assert (target_fdr > 0.0 and target_fdr < 1.0)
         self.target_fdr = target_fdr
         self.verbose = verbose
         self.min_seqlets = min_seqlets
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        target_fdr = grp.attrs["target_fdr"]
+        min_seqlets = grp.attrs["min_seqlets"]
+        verbose = grp.attrs["verbose"]
+        return cls(target_fdr=target_fdr,
+                   min_seqlets=min_seqlets, verbose=verbose)
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["target_fdr"] = self.target_fdr
+        grp.attrs["min_seqlets"] = self.min_seqlets
+        grp.attrs["verbose"] = self.verbose 
 
     def __call__(self, values):
 
@@ -278,6 +305,36 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        sliding = grp.attrs["sliding"]
+        flank = grp.attrs["flank"]
+        suppress = grp.attrs["suppress"] 
+        thresholding_function = AbstractThresholdingFunction.from_hdf5(
+                                 grp["thresholding_function"])
+        if ("max_seqlets_total" in grp.attrs):
+            max_seqlets_total = grp.attrs["max_seqlets_total"]
+        else:
+            max_seqlets_total = None
+        progress_update = grp.attrs["progress_update"]
+        verbose = grp.attrs["verbose"]
+        return cls(sliding=sliding, flank=flank, suppress=suppress,
+                    thresholding_function=thresholding_function,
+                    max_seqlets_total=max_seqlets_total,
+                    progress_update=progress_update, verbose=verbose) 
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["sliding"] = self.sliding
+        grp.attrs["flank"] = self.flank
+        grp.attrs["suppress"] = self.suppress
+        self.thresholding_function.save_hdf5(
+              grp.create_group("thresholding_function"))
+        if (self.max_seqlets_total is not None):
+            grp.attrs["max_seqlets_total"] = self.max_seqlets_total 
+        grp.attrs["progress_update"] = self.progress_update
+        grp.attrs["verbose"] = self.verbose
 
     def __call__(self, score_track):
      

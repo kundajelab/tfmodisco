@@ -171,7 +171,7 @@ class TfModiscoWorkflow(object):
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
-                                    value_provider=lambda x: x.coor.score))
+                               value_provider=core.CoorScoreValueProvider()))
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
@@ -195,11 +195,11 @@ class TfModiscoWorkflow(object):
         per_position_contrib_scores = OrderedDict([
             (x, [np.sum(s,axis=1) for s in contrib_scores[x]]) for x in task_names])
 
-        multitask_seqlet_creation_results = core.MultiTaskSeqletCreation(
+        multitask_seqlet_creation_results = core.MultiTaskSeqletCreator(
             coord_producer=self.coord_producer,
-            track_set=track_set,
             overlap_resolver=self.overlap_resolver)(
-                task_name_to_score_track=per_position_contrib_scores)
+                task_name_to_score_track=per_position_contrib_scores,
+                track_set=track_set)
 
         #find the weakest laplace cdf threshold used across all tasks
         laplace_threshold_cdf = min(
@@ -231,7 +231,7 @@ class TfModiscoWorkflow(object):
         task_name_to_value_provider = OrderedDict([
             (task_name, core.LaplaceCdf(
                 track_name=task_name+"_contrib_scores",
-                flank_to_ignore=self.flank_size))
+                central_window=self.sliding_window_size))
              for task_name in task_names]) 
 
         task_name_to_coord_producer_results =(
