@@ -14,6 +14,11 @@ class AbstractCoordProducer(object):
     def __call__(self):
         raise NotImplementedError() 
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        return the_class.from_hdf5(grp)
+
 
 class SeqletCoordsFWAP(SeqletCoordinates):
     """
@@ -27,7 +32,15 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
-class LaplaceThresholdingResults(object):
+class AbstractThresholdingResults(object):
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs['class'])
+        return the_class.from_hdf5(grp) 
+
+
+class LaplaceThresholdingResults(AbstractThresholdingResults):
 
     def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
                        pos_threshold, pos_threshold_cdf, pos_b, mu):
@@ -39,20 +52,63 @@ class LaplaceThresholdingResults(object):
         self.pos_b = pos_b
         self.mu = mu
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        mu = grp.attrs['mu'] 
+        neg_threshold = grp.attrs['neg_threshold']
+        neg_threshold_cdf = grp.attrs['neg_threshold_cdf']
+        neg_b = grp.attrs['neg_b']
+        pos_threshold = grp.attrs['pos_threshold']
+        pos_threshold_cdf = grp.attrs['pos_threshold_cdf']
+        pos_b = grp.attrs['pos_b']
+        return cls(neg_threshold=neg_threshold,
+                   neg_threshold_cdf=neg_threshold_cdf,
+                   neg_b=neg_b,
+                   pos_threshold=pos_threshold,
+                   pos_threshold_cdf=pos_threshold_cdf,
+                   pos_b=pos_b,
+                   mu=mu)
+
     def save_hdf5(self, grp):
+        grp.attrs['class'] = type(self).__name__
+        grp.attrs['mu'] = self.mu
         grp.attrs['neg_threshold'] = self.neg_threshold
+        grp.attrs['neg_threshold_cdf'] = self.neg_threshold_cdf
         grp.attrs['neg_b'] = self.neg_b 
         grp.attrs['pos_threshold'] = self.pos_threshold
+        grp.attrs['pos_threshold_cdf'] = self.pos_threshold_cdf
         grp.attrs['pos_b'] = self.pos_b 
 
 
-class LaplaceThreshold(object):
+class AbstractThresholdingFunction(object):
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"]) 
+        return the_class.from_hdf5(grp) 
+ 
+
+class LaplaceThreshold(AbstractThresholdingFunction):
     count = 0
     def __init__(self, target_fdr, min_seqlets, verbose):
         assert (target_fdr > 0.0 and target_fdr < 1.0)
         self.target_fdr = target_fdr
         self.verbose = verbose
         self.min_seqlets = min_seqlets
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        target_fdr = grp.attrs["target_fdr"]
+        min_seqlets = grp.attrs["min_seqlets"]
+        verbose = grp.attrs["verbose"]
+        return cls(target_fdr=target_fdr,
+                   min_seqlets=min_seqlets, verbose=verbose)
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["target_fdr"] = self.target_fdr
+        grp.attrs["min_seqlets"] = self.min_seqlets
+        grp.attrs["verbose"] = self.verbose 
 
     def __call__(self, values):
 
@@ -112,7 +168,7 @@ class LaplaceThreshold(object):
         else:
             neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
 
-        if (min_seqlets is not None):
+        if (self.min_seqlets is not None):
             num_pos_passing = np.sum(pos_values > pos_threshold)
             num_neg_passing = np.sum(neg_values < neg_threshold)
             if (num_pos_passing + num_neg_passing < self.min_seqlets):
@@ -194,6 +250,16 @@ class CoordProducerResults(object):
         self.coords = coords
         self.thresholding_results = thresholding_results
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        coord_strings = util.load_string_list(dset_name="coords",
+                                              grp=grp)  
+        coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
+        thresholding_results = AbstractThresholdingResults.from_hdf5(
+                                grp["thresholding_results"])
+        return CoordProducerResults(coords=coords,
+                                    thresholding_results=thresholding_results)
+
     def save_hdf5(self, grp):
         util.save_string_list(
             string_list=[str(x) for x in self.coords],
@@ -240,7 +306,37 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.progress_update = progress_update
         self.verbose = verbose
 
-    def __call__(self, score_track):
+    @classmethod
+    def from_hdf5(cls, grp):
+        sliding = grp.attrs["sliding"]
+        flank = grp.attrs["flank"]
+        suppress = grp.attrs["suppress"] 
+        thresholding_function = AbstractThresholdingFunction.from_hdf5(
+                                 grp["thresholding_function"])
+        if ("max_seqlets_total" in grp.attrs):
+            max_seqlets_total = grp.attrs["max_seqlets_total"]
+        else:
+            max_seqlets_total = None
+        progress_update = grp.attrs["progress_update"]
+        verbose = grp.attrs["verbose"]
+        return cls(sliding=sliding, flank=flank, suppress=suppress,
+                    thresholding_function=thresholding_function,
+                    max_seqlets_total=max_seqlets_total,
+                    progress_update=progress_update, verbose=verbose) 
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["sliding"] = self.sliding
+        grp.attrs["flank"] = self.flank
+        grp.attrs["suppress"] = self.suppress
+        self.thresholding_function.save_hdf5(
+              grp.create_group("thresholding_function"))
+        if (self.max_seqlets_total is not None):
+            grp.attrs["max_seqlets_total"] = self.max_seqlets_total 
+        grp.attrs["progress_update"] = self.progress_update
+        grp.attrs["verbose"] = self.verbose
+
+    def __call__(self, score_track, thresholding_results=None):
      
         # score_track now can be a list of arrays, comment out the assert for now
         # assert len(score_track.shape)==2 
@@ -250,12 +346,13 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             print("Computing windowed sums")
             sys.stdout.flush()
         original_summed_score_track = window_sum_function(arrs=score_track) 
-        if (self.verbose):
-            print("Computing threshold")
-            sys.stdout.flush()
-        thresholding_results = self.thresholding_function(
-                                np.concatenate(original_summed_score_track,
-                                               axis=0))
+        if (thresholding_results is None):
+            if (self.verbose):
+                print("Computing threshold")
+                sys.stdout.flush()
+            thresholding_results = self.thresholding_function(
+                                    np.concatenate(original_summed_score_track,
+                                                   axis=0))
         neg_threshold = thresholding_results.neg_threshold
         pos_threshold = thresholding_results.pos_threshold
 

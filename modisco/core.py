@@ -145,6 +145,14 @@ class CoordOverlapDetector(object):
     def __init__(self, min_overlap_fraction):
         self.min_overlap_fraction = min_overlap_fraction
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        min_overlap_fraction = grp.attrs["min_overlap_fraction"]
+        return cls(min_overlap_fraction=min_overlap_fraction)
+
+    def save_hdf5(self, grp):
+        grp.attrs["min_overlap_fraction"] = self.min_overlap_fraction
+
     def __call__(self, coord1, coord2):
         if (coord1.example_idx != coord2.example_idx):
             return False
@@ -154,10 +162,42 @@ class CoordOverlapDetector(object):
         return (overlap_amt >= min_overlap)
 
 
+class AbstractValueProvider(object):
+
+    def __call__(self, seqlet):
+        raise NotImplementedError()
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        return the_class.from_hdf5(grp) 
+
+
+class CoorScoreValueProvider(AbstractValueProvider):
+
+    def __call__(self, seqlet):
+        return seqlet.coor.score 
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        return cls()
+
+
 class SeqletComparator(object):
 
     def __init__(self, value_provider):
         self.value_provider = value_provider
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        value_provider = AbstractValueProvider.from_hdf5(grp["value_provider"]) 
+        return cls(value_provider=value_provider)
+
+    def save_hdf5(self, grp):
+        self.value_provider.save_hdf5(grp.create_group("value_provider")) 
 
     def get_larger(self, seqlet1, seqlet2):
         return (seqlet1 if (self.value_provider(seqlet1) >=
@@ -174,6 +214,19 @@ class SeqletsOverlapResolver(object):
                        seqlet_comparator):
         self.overlap_detector = overlap_detector
         self.seqlet_comparator = seqlet_comparator
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        overlap_detector = CoordOverlapDetector.from_hdf5(
+                            grp["overlap_detector"])  
+        seqlet_comparator = SeqletComparator.from_hdf5(
+                             grp["seqlet_comparator"]) 
+        return cls(overlap_detector=overlap_detector,
+                   seqlet_comparator=seqlet_comparator)
+
+    def save_hdf5(self, grp):
+        self.overlap_detector.save_hdf5(grp.create_group("overlap_detector"))
+        self.seqlet_comparator.save_hdf5(grp.create_group("seqlet_comparator"))
 
     def __call__(self, all_seqlets):
         example_idx_to_seqlets = OrderedDict() 
@@ -212,11 +265,7 @@ class AbstractAttributeProvider(object):
         raise NotImplementedError()
 
 
-class AbstractScoreTransformer(AbstractAttributeProvider):
-
-    def __init__(self, name):
-        super(AbstractScoreTransformer, self).__init__(name=name)
-        self.fit_called = False
+class FittableAbstractValueProvider(AbstractValueProvider):
 
     def get_val(self, seqlet):
         raise NotImplementedError()
@@ -231,19 +280,20 @@ class AbstractScoreTransformer(AbstractAttributeProvider):
         return self.transform_val(self.get_val(seqlet))
 
 
-class LaplaceCdf(AbstractScoreTransformer):
-
-    def __init__(self, name, track_name, flank_to_ignore):
-        super(LaplaceCdf, self).__init__(name=name)
+class LaplaceCdf(FittableAbstractValueProvider):
+                
+    def __init__(self, track_name, central_window):
         self.track_name = track_name
-        self.flank_to_ignore = flank_to_ignore
+        self.central_window = central_window
 
     def get_val(self, seqlet):
+        flank_to_ignore = int(0.5*(len(seqlet)-self.central_window))
         track_values = seqlet[self.track_name]\
-                        .fwd[self.flank_to_ignore:-self.flank_to_ignore]
+                        .fwd[flank_to_ignore:-flank_to_ignore]
         return np.sum(track_values)
-            
+
     def fit(self, coord_producer_results):
+        self.coord_producer_results = coord_producer_results
         self.neg_laplace_b =\
             coord_producer_results.thresholding_results.neg_b
         self.pos_laplace_b =\
@@ -257,25 +307,65 @@ class LaplaceCdf(AbstractScoreTransformer):
         else:
             return (1-np.exp(-val/self.pos_laplace_b))
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        from . import coordproducers
+        track_name = grp.attrs["track_name"]
+        central_window = grp.attrs["central_window"]
+        laplace_cdf = cls(track_name=track_name,
+                          central_window=central_window) 
+        coord_producer_results =\
+            coordproducers.CoordProducerResults.from_hdf5(
+             grp["coord_producer_results"])
+        laplace_cdf.fit(coord_producer_results)
+        return laplace_cdf
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["track_name"] = self.track_name  
+        grp.attrs["central_window"] = self.central_window
+        if (hasattr(self, "coord_producer_results")):
+            self.coord_producer_results.save_hdf5(
+                grp.create_group("coord_producer_results"))    
+
 
 class MultiTaskSeqletCreationResults(object):
 
-    def __init__(self, final_seqlets, task_name_to_coord_producer_results): 
+    def __init__(self, multitask_seqlet_creator, 
+                       final_seqlets,
+                       task_name_to_coord_producer_results): 
+        self.multitask_seqlet_creator = multitask_seqlet_creator
         self.final_seqlets = final_seqlets
         self.task_name_to_coord_producer_results =\
             task_name_to_coord_producer_results
 
+    @property
+    def task_name_to_thresholding_results(self):
+        return OrderedDict([
+                (x, y.thresholding_results) for x,y
+                in self.task_name_to_coord_producer_results.items()]) 
+
     @classmethod
-    def from_hdf5(self, grp, track_set):
+    def from_hdf5(cls, grp, track_set):
+        from . import coordproducers
+        multitask_seqlet_creator =\
+            MultiTaskSeqletCreator.from_hdf5(grp["multitask_seqlet_creator"])
         seqlet_coords = util.load_seqlet_coords(dset_name="final_seqlets",
                                                 grp=grp) 
         seqlets = track_set.create_seqlets(coords=seqlet_coords)
-        return MultiTaskSeqletCreationResults(
+        tntcpr = OrderedDict()
+        tntcpr_grp = grp["task_name_to_coord_producer_results"]
+        for task_name in tntcpr_grp.keys():
+            tntcpr[task_name] = coordproducers.CoordProducerResults.from_hdf5(
+                                                tntcpr_grp[task_name])
+        return cls(
+                multitask_seqlet_creator=multitask_seqlet_creator,
                 final_seqlets=seqlets,
-                task_name_to_coord_producer_results=None)
-          
+                task_name_to_coord_producer_results=tntcpr)
 
     def save_hdf5(self, grp):
+        self.multitask_seqlet_creator.save_hdf5(
+            grp.create_group("multitask_seqlet_creator"))
         util.save_seqlet_coords(seqlets=self.final_seqlets,
                                 dset_name="final_seqlets", grp=grp)  
         tntcpg = grp.create_group("task_name_to_coord_producer_results")
@@ -284,40 +374,59 @@ class MultiTaskSeqletCreationResults(object):
             coord_producer_results.save_hdf5(tntcpg.create_group(task_name))
 
 
-class MultiTaskSeqletCreation(object):
+class MultiTaskSeqletCreator(object):
 
     def __init__(self, coord_producer,
-                       track_set,
                        overlap_resolver, verbose=True):
         self.coord_producer = coord_producer
-        self.track_set = track_set
         self.overlap_resolver = overlap_resolver
         self.verbose = verbose
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        from . import coordproducers
+        coord_producer = coordproducers.AbstractCoordProducer.from_hdf5(
+                          grp["coord_producer"])
+        overlap_resolver = SeqletsOverlapResolver.from_hdf5(
+                            grp["overlap_resolver"])
+        verbose = grp.attrs["verbose"]  
+        return cls(coord_producer=coord_producer,
+                   overlap_resolver=overlap_resolver,
+                   verbose=verbose)
+
+    def save_hdf5(self, grp):
+        self.coord_producer.save_hdf5(grp.create_group("coord_producer"))
+        self.overlap_resolver.save_hdf5(grp.create_group("overlap_resolver"))
+        grp.attrs["verbose"] = self.verbose
+
     def __call__(self, task_name_to_score_track,
-                       task_name_to_threshold_transformer):
+                       track_set, task_name_to_thresholding_results=None):
         task_name_to_coord_producer_results = OrderedDict()
         task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
-            coord_producer_results =\
-                self.coord_producer(score_track=score_track)
+            if (task_name_to_thresholding_results is None):
+                coord_producer_results =\
+                    self.coord_producer(score_track=score_track)
+            else:
+                coord_producer_results =\
+                    self.coord_producer(
+                     score_track=score_track,
+                     thresholding_results=
+                      task_name_to_thresholding_results[task_name])
             task_name_to_coord_producer_results[task_name] =\
                 coord_producer_results
-            seqlets = self.track_set.create_seqlets(
+            seqlets = track_set.create_seqlets(
                         coords=coord_producer_results.coords) 
-            task_name_to_threshold_transformer[task_name].\
-                      fit(coord_producer_results)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
         if (self.verbose):
             print("After resolving overlaps, got "
                   +str(len(final_seqlets))+" seqlets")
-        for score_transformer in task_name_to_threshold_transformer.values():
-            score_transformer.annotate(final_seqlets)
         return MultiTaskSeqletCreationResults(
+                multitask_seqlet_creator=self,
                 final_seqlets=final_seqlets,
                 task_name_to_coord_producer_results=
                  task_name_to_coord_producer_results)

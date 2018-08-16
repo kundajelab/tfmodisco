@@ -38,8 +38,9 @@ class TfModiscoResults(object):
             core.MultiTaskSeqletCreationResults.from_hdf5(
                 grp=grp["multitask_seqlet_creation_results"],
                 track_set=track_set)
-        metaclustering_results = None #punt on this for now
-
+        metaclustering_results =\
+            metaclusterers.MetaclusteringResults.from_hdf5(
+                grp["metaclustering_results"])
         metacluster_idx_to_submetacluster_results = OrderedDict()
         metacluster_idx_to_submetacluster_results_group =\
             grp["metacluster_idx_to_submetacluster_results"]
@@ -170,7 +171,7 @@ class TfModiscoWorkflow(object):
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
-                                    value_provider=lambda x: x.coor.score))
+                               value_provider=core.CoorScoreValueProvider()))
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
@@ -192,23 +193,14 @@ class TfModiscoWorkflow(object):
                         one_hot=one_hot)
 
         per_position_contrib_scores = OrderedDict([
-            (x, [np.sum(s,axis=1) for s in contrib_scores[x]]) for x in task_names])
+            (x, [np.sum(s,axis=1) for s in contrib_scores[x]])
+            for x in task_names])
 
-
-        task_name_to_threshold_transformer = OrderedDict([
-            (task_name, core.LaplaceCdf(
-                name=task_name+"_label",
-                track_name=task_name+"_contrib_scores",
-                flank_to_ignore=self.flank_size))
-             for task_name in task_names]) 
-
-        multitask_seqlet_creation_results = core.MultiTaskSeqletCreation(
+        multitask_seqlet_creation_results = core.MultiTaskSeqletCreator(
             coord_producer=self.coord_producer,
-            track_set=track_set,
             overlap_resolver=self.overlap_resolver)(
                 task_name_to_score_track=per_position_contrib_scores,
-                task_name_to_threshold_transformer=\
-                    task_name_to_threshold_transformer)
+                track_set=track_set)
 
         #find the weakest laplace cdf threshold used across all tasks
         laplace_threshold_cdf = min(
@@ -225,10 +217,6 @@ class TfModiscoWorkflow(object):
             print("WARNING: you found relatively few seqlets."
                   +" Consider dropping target_seqlet_fdr") 
 
-        attribute_vectors = (np.array([
-                              [x[key+"_label"] for key in task_names]
-                               for x in seqlets]))
-
         if (self.weak_threshold_for_counting_sign is None):
             weak_threshold_for_counting_sign = laplace_threshold_cdf
         else:
@@ -241,14 +229,31 @@ class TfModiscoWorkflow(object):
                   +" to "+str(laplace_threshold_cdf))
             weak_threshold_for_counting_sign = laplace_threshold_cdf
 
+        task_name_to_value_provider = OrderedDict([
+            (task_name, core.LaplaceCdf(
+                track_name=task_name+"_contrib_scores",
+                central_window=self.sliding_window_size))
+             for task_name in task_names]) 
+
+        task_name_to_coord_producer_results =(
+            multitask_seqlet_creation_results.
+             task_name_to_coord_producer_results)
+        for task_name in task_name_to_coord_producer_results:
+            task_name_to_value_provider[task_name].fit(
+               coord_producer_results=
+                task_name_to_coord_producer_results[task_name])
+
         metaclusterer = metaclusterers.SignBasedPatternClustering(
                                 min_cluster_size=self.min_metacluster_size,
+                                task_name_to_value_provider=
+                                    task_name_to_value_provider,
+                                task_names=task_names,
                                 threshold_for_counting_sign=
                                     laplace_threshold_cdf,
                                 weak_threshold_for_counting_sign=
                                     weak_threshold_for_counting_sign)
 
-        metaclustering_results = metaclusterer(attribute_vectors)
+        metaclustering_results = metaclusterer.fit_transform(seqlets)
         metacluster_indices = metaclustering_results.metacluster_indices
         metacluster_idx_to_activity_pattern =\
             metaclustering_results.metacluster_idx_to_activity_pattern
@@ -312,7 +317,6 @@ class TfModiscoWorkflow(object):
                  task_names=task_names,
                  multitask_seqlet_creation_results=
                     multitask_seqlet_creation_results,
-                 seqlet_attribute_vectors=attribute_vectors,
                  metaclustering_results=metaclustering_results,
                  metacluster_idx_to_submetacluster_results=
                     metacluster_idx_to_submetacluster_results)
