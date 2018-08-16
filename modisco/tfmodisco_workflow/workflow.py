@@ -193,7 +193,8 @@ class TfModiscoWorkflow(object):
                         one_hot=one_hot)
 
         per_position_contrib_scores = OrderedDict([
-            (x, [np.sum(s,axis=1) for s in contrib_scores[x]]) for x in task_names])
+            (x, [np.sum(s,axis=1) for s in contrib_scores[x]])
+            for x in task_names])
 
         multitask_seqlet_creation_results = core.MultiTaskSeqletCreator(
             coord_producer=self.coord_producer,

@@ -339,6 +339,12 @@ class MultiTaskSeqletCreationResults(object):
         self.task_name_to_coord_producer_results =\
             task_name_to_coord_producer_results
 
+    @property
+    def task_name_to_thresholding_results(self):
+        return OrderedDict([
+                (x, y.thresholding_results) for x,y
+                in self.task_name_to_coord_producer_results.items()]) 
+
     @classmethod
     def from_hdf5(cls, grp, track_set):
         from . import coordproducers
@@ -393,14 +399,22 @@ class MultiTaskSeqletCreator(object):
         self.overlap_resolver.save_hdf5(grp.create_group("overlap_resolver"))
         grp.attrs["verbose"] = self.verbose
 
-    def __call__(self, task_name_to_score_track, track_set):
+    def __call__(self, task_name_to_score_track,
+                       track_set, task_name_to_thresholding_results=None):
         task_name_to_coord_producer_results = OrderedDict()
         task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
-            coord_producer_results =\
-                self.coord_producer(score_track=score_track)
+            if (task_name_to_thresholding_results is None):
+                coord_producer_results =\
+                    self.coord_producer(score_track=score_track)
+            else:
+                coord_producer_results =\
+                    self.coord_producer(
+                     score_track=score_track,
+                     thresholding_results=
+                      task_name_to_thresholding_results[task_name])
             task_name_to_coord_producer_results[task_name] =\
                 coord_producer_results
             seqlets = track_set.create_seqlets(

@@ -85,7 +85,7 @@ class AbstractThresholdingFunction(object):
     @classmethod
     def from_hdf5(cls, grp):
         the_class = eval(grp.attrs["class"]) 
-        the_class.from_hdf5(grp) 
+        return the_class.from_hdf5(grp) 
  
 
 class LaplaceThreshold(AbstractThresholdingFunction):
@@ -336,7 +336,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         grp.attrs["progress_update"] = self.progress_update
         grp.attrs["verbose"] = self.verbose
 
-    def __call__(self, score_track):
+    def __call__(self, score_track, thresholding_results=None):
      
         # score_track now can be a list of arrays, comment out the assert for now
         # assert len(score_track.shape)==2 
@@ -346,12 +346,13 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             print("Computing windowed sums")
             sys.stdout.flush()
         original_summed_score_track = window_sum_function(arrs=score_track) 
-        if (self.verbose):
-            print("Computing threshold")
-            sys.stdout.flush()
-        thresholding_results = self.thresholding_function(
-                                np.concatenate(original_summed_score_track,
-                                               axis=0))
+        if (thresholding_results is None):
+            if (self.verbose):
+                print("Computing threshold")
+                sys.stdout.flush()
+            thresholding_results = self.thresholding_function(
+                                    np.concatenate(original_summed_score_track,
+                                                   axis=0))
         neg_threshold = thresholding_results.neg_threshold
         pos_threshold = thresholding_results.pos_threshold
 

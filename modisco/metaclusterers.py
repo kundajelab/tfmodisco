@@ -194,6 +194,10 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                              final_surviving_activity_patterns):
         self.activity_pattern_to_cluster_idx =\
             activity_pattern_to_cluster_idx
+        self.metacluster_idx_to_activity_pattern = OrderedDict(
+            [(val,key)
+             for key,val in
+             self.activity_pattern_to_cluster_idx.items()])
         self.surviving_activity_patterns = surviving_activity_patterns
         self.final_surviving_activity_patterns =\
             final_surviving_activity_patterns
@@ -236,8 +240,8 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             surviving_activity_patterns =\
                np.array(grp["surviving_activity_patterns"])
             final_surviving_activity_patterns =\
-                util.load_string_list(
-                 dset_name="final_surviving_activity_patterns", grp=grp)
+                set(util.load_string_list(
+                 dset_name="final_surviving_activity_patterns", grp=grp))
             sign_based_pattern_clustering.set_fit_values(
                 activity_pattern_to_cluster_idx=
                  activity_pattern_to_cluster_idx,
@@ -276,7 +280,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             grp.create_dataset("surviving_activity_patterns",
                                data=np.array(self.surviving_activity_patterns))
             util.save_string_list(
-                 self.final_surviving_activity_patterns,
+                 list(self.final_surviving_activity_patterns),
                  dset_name="final_surviving_activity_patterns",
                  grp=grp) 
     
