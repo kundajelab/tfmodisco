@@ -254,7 +254,8 @@ class TfModiscoWorkflow(object):
                                     weak_threshold_for_counting_sign)
 
         metaclustering_results = metaclusterer.fit_transform(seqlets)
-        metacluster_indices = metaclustering_results.metacluster_indices
+        metacluster_indices = np.array(
+            metaclustering_results.metacluster_indices)
         metacluster_idx_to_activity_pattern =\
             metaclustering_results.metacluster_idx_to_activity_pattern
 
