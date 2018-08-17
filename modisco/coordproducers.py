@@ -175,7 +175,7 @@ class LaplaceThreshold(AbstractThresholdingFunction):
                 #manually adjust the threshold
                 shifted_values = values - mu
                 values_sorted_by_abs = sorted(np.abs(shifted_values), key=lambda x: -x)
-                abs_threshold = shifted_values[self.min_seqlets-1]
+                abs_threshold = values_sorted_by_abs[self.min_seqlets-1]
                 if (self.verbose):
                     print("Manually adjusting thresholds to get desired num seqlets")
                 pos_threshold = abs_threshold
