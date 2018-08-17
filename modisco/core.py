@@ -353,9 +353,10 @@ class MultiTaskSeqletCreationResults(object):
         seqlet_coords = util.load_seqlet_coords(dset_name="final_seqlets",
                                                 grp=grp) 
         seqlets = track_set.create_seqlets(coords=seqlet_coords)
+        task_names = util.load_string_list(dset_name="task_names",grp=grp)
         tntcpr = OrderedDict()
         tntcpr_grp = grp["task_name_to_coord_producer_results"]
-        for task_name in tntcpr_grp.keys():
+        for task_name in task_names:
             tntcpr[task_name] = coordproducers.CoordProducerResults.from_hdf5(
                                                 tntcpr_grp[task_name])
         return cls(
@@ -364,6 +365,9 @@ class MultiTaskSeqletCreationResults(object):
                 task_name_to_coord_producer_results=tntcpr)
 
     def save_hdf5(self, grp):
+        util.save_string_list(
+          string_list=list(self.task_name_to_coord_producer_results.keys()),
+          dset_name="task_names",grp=grp)
         self.multitask_seqlet_creator.save_hdf5(
             grp.create_group("multitask_seqlet_creator"))
         util.save_seqlet_coords(seqlets=self.final_seqlets,
