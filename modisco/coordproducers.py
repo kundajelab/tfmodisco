@@ -291,7 +291,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        suppress=None,
                        thresholding_function=LaplaceThreshold(
                             target_fdr=0.05,
-                            min_seqlets=500,
+                            min_seqlets=2000,
                             verbose=True),
                        max_seqlets_total=None,
                        progress_update=5000,
