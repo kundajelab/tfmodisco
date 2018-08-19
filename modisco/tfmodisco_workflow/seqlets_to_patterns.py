@@ -14,7 +14,7 @@ import gc
 
 class TfModiscoSeqletsToPatternsFactory(object):
 
-    def __init__(self, n_cores=20,
+    def __init__(self, n_cores=4,
                        min_overlap_while_sliding=0.7,
 
                        #gapped kmer embedding arguments
