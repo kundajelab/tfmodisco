@@ -420,13 +420,19 @@ class SeqletsToPatternsResults(object):
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
-        patterns = util.load_patterns(grp=grp["patterns"], track_set=track_set) 
-        cluster_results = None
-        total_time_taken = None
-        return cls(patterns=patterns, cluster_results=cluster_results,
-                   total_time_taken=total_time_taken)
+        success = grp.attrs["success"]
+        if (success):
+            patterns = util.load_patterns(grp=grp["patterns"], track_set=track_set) 
+            cluster_results = None
+            total_time_taken = None
+            return cls(patterns=patterns, cluster_results=cluster_results,
+                       total_time_taken=total_time_taken)
+        else:
+            return cls(success=False, patterns=None, cluster_results=None,
+                       total_time_taken=None)
 
     def save_hdf5(self, grp):
+        grp.attrs["succcess"] = self.success
         if (self.success):
             util.save_patterns(self.patterns,
                                grp.create_group("patterns"))
