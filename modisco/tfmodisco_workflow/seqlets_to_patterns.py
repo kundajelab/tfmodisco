@@ -420,7 +420,7 @@ class SeqletsToPatternsResults(object):
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
-        success = grp.attrs["success"]
+        success = grp.attrs.get("success", False)
         if (success):
             patterns = util.load_patterns(grp=grp["patterns"], track_set=track_set) 
             cluster_results = None
