@@ -432,7 +432,7 @@ class SeqletsToPatternsResults(object):
                        total_time_taken=None)
 
     def save_hdf5(self, grp):
-        grp.attrs["succcess"] = self.success
+        grp.attrs["success"] = self.success
         if (self.success):
             util.save_patterns(self.patterns,
                                grp.create_group("patterns"))
