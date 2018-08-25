@@ -652,6 +652,17 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         split_patterns = self.spurious_merge_detector(
                             cluster_to_motif.values())
 
+        if (len(split_patterns)==0):
+            if (self.verbose):
+                print("No more surviving patterns - bailing!")
+            return SeqletsToPatternsResults(
+                    patterns=None,
+                    seqlets=None,
+                    affmat=None,
+                    cluster_results=None, 
+                    total_time_taken=None,
+                    success=False)
+
         #Now start merging patterns 
         if (self.verbose):
             print("Merging on "+str(len(split_patterns))+" clusters")
