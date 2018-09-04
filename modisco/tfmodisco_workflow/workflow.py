@@ -182,7 +182,7 @@ class TfModiscoWorkflow(object):
             thresholding_function=coordproducers.LaplaceThreshold(
                                     target_fdr=self.target_seqlet_fdr,
                                     verbose=self.verbose,
-                                    min_seqlets=self.min_seqlets_per_task),
+                                    min_seqlets=int(self.min_seqlets_per_task * self.sliding_window_size * 0.5)),
             max_seqlets_total=self.max_seqlets_per_task,
             verbose=self.verbose) 
 
