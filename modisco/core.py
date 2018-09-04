@@ -4,6 +4,7 @@ from collections import namedtuple
 from collections import defaultdict
 import numpy as np
 import scipy
+import scipy.signal
 import itertools
 import sys
 from . import util

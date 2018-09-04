@@ -1,6 +1,5 @@
 from __future__ import division, print_function, absolute_import
 from .core import SeqletCoordinates
-from modisco import backend as B 
 from modisco import util
 import numpy as np
 from collections import defaultdict
