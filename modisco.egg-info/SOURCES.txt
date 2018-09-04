@@ -16,7 +16,7 @@ modisco/affinitymat/__init__.py
 modisco/affinitymat/core.py
 modisco/affinitymat/transformers.py
 modisco/backend/__init__.py
-modisco/backend/theano_backend.py
+modisco/backend/tensorflow_backend.py
 modisco/cluster/__init__.py
 modisco/cluster/core.py
 modisco/hit_scoring/__init__.py

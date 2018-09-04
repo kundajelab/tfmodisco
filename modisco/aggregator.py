@@ -3,7 +3,6 @@ import numpy as np
 from . import affinitymat
 from . import core
 from . import util
-from . import backend as B
 from collections import OrderedDict, defaultdict
 import itertools
 import sys
@@ -354,96 +353,6 @@ class AssignSeqletsByBestMetric(object):
         assert cross_metrics.shape == (len(patterns), len(seqlets_to_assign))
         seqlet_assignments = np.argmax(cross_metrics, axis=0) 
         seqlet_assignment_scores = np.max(cross_metrics, axis=0)
-
-        seqlet_and_alnmnt_grps = [[] for x in patterns]
-        discarded_seqlets = 0
-        for seqlet_idx, (assignment, score)\
-            in enumerate(zip(seqlet_assignments, seqlet_assignment_scores)):
-            if (score >= self.min_similarity):
-                alnmt, revcomp_match, score = self.pattern_aligner(
-                    parent_pattern=patterns[assignment],
-                    child_pattern=seqlets_to_assign[seqlet_idx]) 
-                if (revcomp_match):
-                    seqlet = seqlets_to_assign[seqlet_idx].revcomp()
-                else:
-                    seqlet = seqlets_to_assign[seqlet_idx]
-                seqlet_and_alnmnt_grps[assignment].append(
-                    core.SeqletAndAlignment(
-                        seqlet=seqlets_to_assign[seqlet_idx],
-                        alnmt=alnmt))
-            else:
-                seqlet_assignments[seqlet_idx] = -1
-                discarded_seqlets += 1
-
-        if (self.verbose):
-            if discarded_seqlets > 0:
-                print("Discarded "+str(discarded_seqlets)+" seqlets") 
-                sys.stdout.flush()
-
-        if (merge_into_existing_patterns):
-            new_patterns = patterns
-            for pattern,x in zip(patterns, seqlet_and_alnmnt_grps):
-                pattern.merge_seqlets_and_alnmts(
-                    seqlets_and_alnmts=x,
-                    aligner=self.pattern_aligner) 
-        else:
-            new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
-                for x in seqlet_and_alnmnt_grps if len(x) > 0]
-
-        return new_patterns, seqlet_assignments
-
-
-#reassign seqlets to best match motif
-class AssignSeqletsByBestCrossCorr(object):
-
-    def __init__(self, pattern_crosscorr_settings,
-                       min_similarity=0.0,
-                       verbose=True, batch_size=50, progress_update=1000,
-                       func_params_size=1000000):
-
-        self.pattern_crosscorr_settings = pattern_crosscorr_settings
-        self.pattern_aligner = core.CrossCorrelationPatternAligner(
-                        pattern_comparison_settings=pattern_crosscorr_settings)
-        self.min_similarity = min_similarity
-        self.verbose = verbose
-        self.batch_size = batch_size
-        self.progress_update = progress_update
-        self.func_params_size = func_params_size
-
-    def __call__(self, patterns, seqlets_to_assign,
-                       merge_into_existing_patterns):
-
-        (pattern_fwd_data, pattern_rev_data) =\
-            core.get_2d_data_from_patterns(
-                patterns=patterns,
-                track_names=self.pattern_crosscorr_settings.track_names,
-                track_transformer=
-                    self.pattern_crosscorr_settings.track_transformer)
-        (seqlet_fwd_data, seqlet_rev_data) =\
-            core.get_2d_data_from_patterns(
-                patterns=seqlets_to_assign,
-                track_names=self.pattern_crosscorr_settings.track_names,
-                track_transformer=
-                    self.pattern_crosscorr_settings.track_transformer)
-
-        cross_corrs_fwd = B.max_cross_corrs(
-                     filters=pattern_fwd_data,
-                     things_to_scan=seqlet_fwd_data,
-                     min_overlap=self.pattern_crosscorr_settings.min_overlap,
-                     batch_size=self.batch_size,
-                     func_params_size=self.func_params_size,
-                     progress_update=self.progress_update) 
-        cross_corrs_rev = B.max_cross_corrs(
-                     filters=pattern_fwd_data,
-                     things_to_scan=seqlet_rev_data,
-                     min_overlap=self.pattern_crosscorr_settings.min_overlap,
-                     batch_size=self.batch_size,
-                     func_params_size=self.func_params_size,
-                     progress_update=self.progress_update) 
-        cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
-        assert cross_corrs.shape == (len(patterns), len(seqlets_to_assign))
-        seqlet_assignments = np.argmax(cross_corrs, axis=0) 
-        seqlet_assignment_scores = np.max(cross_corrs, axis=0)
 
         seqlet_and_alnmnt_grps = [[] for x in patterns]
         discarded_seqlets = 0
