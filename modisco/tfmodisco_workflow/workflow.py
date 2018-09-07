@@ -203,11 +203,12 @@ class TfModiscoWorkflow(object):
                 track_set=track_set)
 
         #find the weakest laplace cdf threshold used across all tasks
-        laplace_threshold_cdf = min(
+        laplace_threshold_cdf = (min(
             [min(x.thresholding_results.pos_threshold_cdf,
                  x.thresholding_results.neg_threshold_cdf)
                  for x in multitask_seqlet_creation_results.
-                      task_name_to_coord_producer_results.values()])
+                      task_name_to_coord_producer_results.values()]) -
+            0.0000001) #subtract 1e-7 to avoid numerical issues
         print("Across all tasks, the weakest laplace threshold used"
               +" was: "+str(laplace_threshold_cdf))
 
