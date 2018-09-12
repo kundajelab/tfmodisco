@@ -140,8 +140,8 @@ class MaxRankBasedPatternScorer(object):
             pattern_seqlet_scores.append(pattern_scorer(seqlets)) 
         to_return = []
         for i in range(len(seqlets)):
-            best_pattern_idx = np.argmax([x[i].percnormed_score
-                                          for x in pattern_seqlet_scores])
+            best_pattern_idx = np.argmax(np.array([x[i].percnormed_score
+                                          for x in pattern_seqlet_scores]))
             best_res = pattern_seqlet_scores[best_pattern_idx][i]
             to_return.append(
                 RankNormedScoreResults(
