@@ -1,6 +1,5 @@
 from __future__ import division, print_function, absolute_import
 from .core import SeqletCoordinates
-from modisco import backend as B 
 from modisco import util
 import numpy as np
 from collections import defaultdict
@@ -275,7 +274,7 @@ def get_simple_window_sum_function(window_size):
         for arr in arrs:
             current_sum = np.sum(arr[0:window_size])
             arr_running_sum = [current_sum]
-            for i in range(0,len(arr)-window_size):
+            for i in range(0,(len(arr)-window_size)):
                 current_sum = (current_sum +
                                arr[i+window_size] - arr[i])
                 arr_running_sum.append(current_sum)
@@ -367,25 +366,37 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
 
         coords = []
         for example_idx,single_score_track in enumerate(summed_score_track):
+            #set the stuff near the flanks to -np.inf so that we
+            # don't pick it up during argmax
+            single_score_track[0:self.flank] = -np.inf
+            single_score_track[len(single_score_track)-(self.flank):
+                               len(single_score_track)] = -np.inf
             while True:
                 argmax = np.argmax(single_score_track,axis=0)
                 max_val = single_score_track[argmax]
+
                 #bail if exhausted everything that passed the threshold
                 #and was not suppressed
                 if (max_val == -np.inf):
                     break
+
                 #need to be able to expand without going off the edge
                 if ((argmax >= self.flank) and
-                    (argmax <= (len(single_score_track)
-                                -(self.sliding+self.flank)))): 
+                    (argmax < (len(single_score_track)-self.flank))): 
+
                     coord = SeqletCoordsFWAP(
                         example_idx=example_idx,
                         start=argmax-self.flank,
                         end=argmax+self.sliding+self.flank,
                         score=original_summed_score_track[example_idx][argmax]) 
                     coords.append(coord)
+                else:
+                    assert False,\
+                     ("This shouldn't happen because I set stuff near the"
+                      "border to -np.inf early on")
                 #suppress the chunks within +- self.suppress
-                left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),0))
+                left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),
+                                                 0))
                 right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
                                      len(single_score_track)))
                 single_score_track[left_supp_idx:right_supp_idx] = -np.inf 

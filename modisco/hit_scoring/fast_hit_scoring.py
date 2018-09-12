@@ -57,6 +57,11 @@ class PatternsToSeqletsSimComputer(object):
         self.seqlet_trimmer = seqlet_trimmer
         
     def __call__(self, patterns, seqlets):
+        #fix the orientation of the seqlets so they are
+        # always relative to the forward strand
+        seqlets = [x.revcomp() if x.coor.is_revcomp
+                   else x for x in seqlets] 
+                
         if (self.seqlet_trimmer is not None):
             #trim the seqlets down using seqlet_trimmer
             trimmed_seqlets = self.seqlet_trimmer(seqlets)

@@ -53,7 +53,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        final_min_cluster_size=30,
 
                        final_flank_to_add=10,
-                       verbose=True):
+                       verbose=True, seed=1234):
 
         #affinity_mat calculation
         self.n_cores = n_cores
@@ -107,6 +107,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         #other settings
         self.verbose = verbose
+        self.seed = seed
 
     def get_jsonable_config(self):
         to_return =  OrderedDict([
@@ -225,17 +226,18 @@ class TfModiscoSeqletsToPatternsFactory(object):
         #prepare the clusterers for the different rounds
         affmat_transformer_r1 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
+        print("TfModiscoSeqletsToPatternsFactory: seed=%d" % self.seed)
         for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
             affmat_transformer_r1 = affmat_transformer_r1.chain(
                 affinitymat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
                     level_to_return=level_to_return,
-                    parallel_threads=self.n_cores))
+                    parallel_threads=self.n_cores, seed=self.seed))
         clusterer_r1 = cluster.core.LouvainCluster(
             level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer_r1,
             contin_runs=self.louvain_contin_runs_r1,
-            verbose=self.verbose)
+            verbose=self.verbose, seed=self.seed)
 
         affmat_transformer_r2 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
@@ -244,12 +246,12 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 affinitymat.transformers.LouvainMembershipAverage(
                     n_runs=n_runs,
                     level_to_return=level_to_return,
-                    parallel_threads=self.n_cores))
+                    parallel_threads=self.n_cores, seed=self.seed))
         clusterer_r2 = cluster.core.LouvainCluster(
             level_to_return=self.final_louvain_level_to_return,
             affmat_transformer=affmat_transformer_r2,
             contin_runs=self.louvain_contin_runs_r2,
-            verbose=self.verbose)
+            verbose=self.verbose, seed=self.seed)
         
         clusterer_per_round = [clusterer_r1, clusterer_r2]
 
@@ -313,7 +315,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
             diclusterer=cluster.core.LouvainCluster(
                             level_to_return=1,
                             max_clusters=2, contin_runs=20,
-                            verbose=False),
+                            verbose=False, seed=self.seed),
             is_dissimilar_func=aggregator.PearsonCorrIsDissimilarFunc(
                         threshold=self.threshold_for_spurious_merge_detection,
                         verbose=self.verbose),
@@ -420,13 +422,19 @@ class SeqletsToPatternsResults(object):
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
-        patterns = util.load_patterns(grp=grp["patterns"], track_set=track_set) 
-        cluster_results = None
-        total_time_taken = None
-        return cls(patterns=patterns, cluster_results=cluster_results,
-                   total_time_taken=total_time_taken)
+        success = grp.attrs.get("success", False)
+        if (success):
+            patterns = util.load_patterns(grp=grp["patterns"], track_set=track_set) 
+            cluster_results = None
+            total_time_taken = None
+            return cls(patterns=patterns, cluster_results=cluster_results,
+                       total_time_taken=total_time_taken)
+        else:
+            return cls(success=False, patterns=None, cluster_results=None,
+                       total_time_taken=None)
 
     def save_hdf5(self, grp):
+        grp.attrs["success"] = self.success
         if (self.success):
             util.save_patterns(self.patterns,
                                grp.create_group("patterns"))
@@ -645,6 +653,17 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
         split_patterns = self.spurious_merge_detector(
                             cluster_to_motif.values())
+
+        if (len(split_patterns)==0):
+            if (self.verbose):
+                print("No more surviving patterns - bailing!")
+            return SeqletsToPatternsResults(
+                    patterns=None,
+                    seqlets=None,
+                    affmat=None,
+                    cluster_results=None, 
+                    total_time_taken=None,
+                    success=False)
 
         #Now start merging patterns 
         if (self.verbose):
