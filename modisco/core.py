@@ -10,6 +10,9 @@ import sys
 from . import util
 
 
+EPS = 0.0000001
+
+
 class Snippet(object):
 
     def __init__(self, fwd, rev, has_pos_axis):
@@ -969,9 +972,11 @@ class AggregatedSeqlet(Pattern):
             self.track_name_to_snippet[track_name] =\
              Snippet(
               fwd=(self._track_name_to_agg[track_name]
-                   /self.per_position_counts[:,None]),
+                   /(self.per_position_counts[:,None]+
+                     EPS*(self.per_position_counts[:,None]==0))),
               rev=(self._track_name_to_agg_revcomp[track_name]
-                   /self.per_position_counts[::-1,None]),
+                   /(self.per_position_counts[::-1,None]+
+                     EPS*(self.per_position_counts[::-1,None]==0))),
               has_pos_axis=self.track_name_to_snippet[track_name].has_pos_axis) 
 
     def __len__(self):

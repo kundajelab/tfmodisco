@@ -533,6 +533,23 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         return to_return
 
 
+def full_crosscontinjaccard_single_region(filters, thing_to_scan):
+    assert len(thing_to_scan.shape)==2
+    assert len(filters.shape)==3
+    len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
+    full_crossmetric = np.zeros((filters.shape[0],len_output))
+    for idx in range(len_output):
+        snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
+        full_crossmetric[:,idx] =\
+            (np.sum(np.minimum(np.abs(snapshot[None,:,:]),
+                               np.abs(filters[:,:,:]))*
+                    (np.sign(snapshot[None,:,:])
+                     *np.sign(filters[:,:,:])),axis=(1,2))/
+             np.sum(np.maximum(np.abs(snapshot[None,:,:]),
+                               np.abs(filters[:,:,:])),axis=(1,2)))
+    return full_crossmetric
+
+
 class CrossContinJaccardSingleRegionWithArgmax(object):
 
     def __init__(self):
@@ -542,17 +559,8 @@ class CrossContinJaccardSingleRegionWithArgmax(object):
         assert len(thing_to_scan.shape)==2
         assert len(filters.shape)==3
         len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
-        full_crossmetric = np.zeros((filters.shape[0],len_output))
-    
-        for idx in range(len_output):
-            snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
-            full_crossmetric[:,idx] =\
-                (np.sum(np.minimum(np.abs(snapshot[None,:,:]),
-                                   np.abs(filters[:,:,:]))*
-                        (np.sign(snapshot[None,:,:])
-                         *np.sign(filters[:,:,:])),axis=(1,2))/
-                 np.sum(np.maximum(np.abs(snapshot[None,:,:]),
-                                   np.abs(filters[:,:,:])),axis=(1,2)))
+        full_crossmetric = full_crosscontinjaccard_single_region(
+            filters=filters, things_to_scan=things_to_scan)
         argmax_positions = np.argmax(full_crossmetric, axis=1)
         return np.array([full_crossmetric[np.arange(len(argmax_positions)),
                                           argmax_positions],
@@ -673,6 +681,10 @@ class CrossContinJaccardMultiCoreCPU(AbstractCrossMetric):
                 snapshot = padded_input[:,idx:idx+filters.shape[1],:]
                 assert snapshot.shape[1]==filters.shape[1],\
                     str(snapshape.shape)+" "+filters.shape
+                #subsnap = slice of a snapshot encompassing a subset
+                # of the inputs to be scanned. Useful when the number of
+                # filters is so large that scanning all inputs at a snapsho
+                # takes a while
                 subsnap_size = int(np.ceil(snapshot.shape[0]/self.n_cores))
                 sys.stdout.flush()
                 subsnaps = [snapshot[(i*subsnap_size):(min((i+1)*subsnap_size,
