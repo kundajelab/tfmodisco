@@ -38,10 +38,7 @@ if not os.path.exists(_tfmodisco_dir):
 
 if not os.path.exists(_config_path):
     _config = {
-        'floatx': floatx(),
-        'epsilon': epsilon(),
         'backend': _BACKEND,
-        'image_data_format': image_data_format()
     }
     try:
         with open(_config_path, 'w') as f:
