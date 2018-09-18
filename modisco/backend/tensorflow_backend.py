@@ -106,7 +106,7 @@ def get_gapped_kmer_embedding_func(filters, biases, require_onehot_match):
                                 stride=1,
                                 padding='VALID'))*
                                 (onehot_out if require_onehot_match else 1.0),
-                        axis=2)
+                        axis=1)
     if (require_onehot_match):
         func = compile_func(inputs=[onehot_var, toembed_var],
                             outputs=embedding_out)
