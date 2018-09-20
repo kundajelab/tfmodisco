@@ -72,7 +72,7 @@ class DataTrack(object):
                     has_pos_axis=self.has_pos_axis)
         else:
             assert coor.start >= 0
-            assert len(self.fwd_tracks[coor.example_idx]) >= coor.end
+            assert len(self.fwd_tracks[coor.example_idx]) >= coor.end, coor.end
             snippet = Snippet(
                     fwd=self.fwd_tracks[coor.example_idx][coor.start:coor.end],
                     rev=self.rev_tracks[
@@ -460,7 +460,7 @@ class SeqletCoordinates(object):
         example_idx = int(example_info.split(":")[1])
         start = int(start_info.split(":")[1])
         end = int(end_info.split(":")[1])
-        rc = True if rc_info.split(":")[1] is "True" else False
+        rc = True if (rc_info.split(":")[1] == "True") else False
         return SeqletCoordinates(example_idx=example_idx, start=start,
                                  end=end, is_revcomp=rc)
 
