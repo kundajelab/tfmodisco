@@ -10,7 +10,6 @@ if __name__== '__main__':
           package_data={
                 '': ['cluster/phenograph/louvain/*convert*', 'cluster/phenograph/louvain/*community*', 'cluster/phenograph/louvain/*hierarchy*']
           },
-          include_package_data=True,
           zip_safe=False,
           setup_requires=[],
           install_requires=['numpy>=1.9', 'joblib>=0.11', 
