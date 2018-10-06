@@ -1,4 +1,5 @@
 from distutils.core import setup
+from setuptools import find_packages
 
 if __name__== '__main__':
     setup(include_package_data=True,
