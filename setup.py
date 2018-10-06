@@ -5,7 +5,7 @@ if __name__== '__main__':
           description='TF MOtif Discovery from Importance SCOres',
           url='NA',
           download_url='NA',
-          version='0.4.2.1',
+          version='0.4.2.2',
           packages=['modisco', 'modisco.cluster', 'modisco.cluster.phenograph', 'modisco.backend',
                     'modisco.visualization', 'modisco.affinitymat',
                     'modisco.tfmodisco_workflow', 'modisco.hit_scoring'],
