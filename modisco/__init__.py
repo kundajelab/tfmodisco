@@ -6,3 +6,4 @@ from . import gammamix
 from . import metaclusterers
 from . import nearest_neighbors
 from . import util
+from . import tfmodisco_workflow
