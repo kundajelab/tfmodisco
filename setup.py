@@ -6,7 +6,7 @@ if __name__== '__main__':
           url='NA',
           download_url='NA',
           version='0.4.2.1',
-          packages=['modisco', 'modisco.cluster','modisco.backend',
+          packages=['modisco', 'modisco.cluster', 'modisco.cluster.phenograph', 'modisco.backend',
                     'modisco.visualization', 'modisco.affinitymat',
                     'modisco.tfmodisco_workflow', 'modisco.hit_scoring'],
           setup_requires=[],
