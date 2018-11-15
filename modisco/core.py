@@ -284,7 +284,10 @@ class FittableAbstractValueProvider(AbstractValueProvider):
 class LaplaceCdf(FittableAbstractValueProvider):
                 
     def __init__(self, track_name, central_window):
-        self.track_name = track_name
+        if isinstance(track_name, str):
+            self.track_name = track_name
+        else: 
+            self.track_name = track_name.decode('utf-8')
         self.central_window = central_window
 
     def get_val(self, seqlet):
@@ -311,7 +314,10 @@ class LaplaceCdf(FittableAbstractValueProvider):
     @classmethod
     def from_hdf5(cls, grp):
         from . import coordproducers
-        track_name = grp.attrs["track_name"]
+        if isinstance(grp.attrs["track_name"], str):
+            track_name = grp.attrs["track_name"]
+        else:
+            track_name = grp.attrs["track_name"].decode('utf-8')
         central_window = grp.attrs["central_window"]
         laplace_cdf = cls(track_name=track_name,
                           central_window=central_window) 
