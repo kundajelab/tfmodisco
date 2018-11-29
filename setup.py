@@ -4,8 +4,8 @@ from setuptools import find_packages
 if __name__== '__main__':
     setup(include_package_data=True,
           description='TF MOtif Discovery from Importance SCOres',
-          url='NA',
-          download_url='NA',
+          long_description="""Algorithm for discovering consolidated patterns from base-pair-level importance scores""",
+          url='https://github.com/kundajelab/tfmodisco',
           version='0.4.2.2',
           packages=find_packages(),
           package_data={
