@@ -304,13 +304,6 @@ class LaplaceCdf(FittableAbstractValueProvider):
             coord_producer_results.thresholding_results.pos_b
         self.mu = coord_producer_results.thresholding_results.mu
 
-    def transform_val(self, val):
-        val -= self.mu
-        if (val < 0):
-            return -(1-np.exp(val/self.neg_laplace_b))
-        else:
-            return (1-np.exp(-val/self.pos_laplace_b))
-
     @classmethod
     def from_hdf5(cls, grp):
         from . import coordproducers

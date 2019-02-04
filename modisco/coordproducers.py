@@ -6,6 +6,7 @@ from collections import defaultdict
 import itertools
 from sklearn.neighbors.kde import KernelDensity
 import sys
+import time
 
 
 class AbstractCoordProducer(object):
@@ -31,241 +32,29 @@ class SeqletCoordsFWAP(SeqletCoordinates):
             is_revcomp=False) 
 
 
-class AbstractThresholdingResults(object):
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        the_class = eval(grp.attrs['class'])
-        return the_class.from_hdf5(grp) 
-
-
-class LaplaceThresholdingResults(AbstractThresholdingResults):
-
-    def __init__(self, neg_threshold, neg_threshold_cdf, neg_b,
-                       pos_threshold, pos_threshold_cdf, pos_b, mu):
-        self.neg_threshold = neg_threshold
-        self.neg_threshold_cdf = neg_threshold_cdf
-        self.neg_b = neg_b
-        self.pos_threshold = pos_threshold
-        self.pos_threshold_cdf = pos_threshold_cdf
-        self.pos_b = pos_b
-        self.mu = mu
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        mu = grp.attrs['mu'] 
-        neg_threshold = grp.attrs['neg_threshold']
-        neg_threshold_cdf = grp.attrs['neg_threshold_cdf']
-        neg_b = grp.attrs['neg_b']
-        pos_threshold = grp.attrs['pos_threshold']
-        pos_threshold_cdf = grp.attrs['pos_threshold_cdf']
-        pos_b = grp.attrs['pos_b']
-        return cls(neg_threshold=neg_threshold,
-                   neg_threshold_cdf=neg_threshold_cdf,
-                   neg_b=neg_b,
-                   pos_threshold=pos_threshold,
-                   pos_threshold_cdf=pos_threshold_cdf,
-                   pos_b=pos_b,
-                   mu=mu)
-
-    def save_hdf5(self, grp):
-        grp.attrs['class'] = type(self).__name__
-        grp.attrs['mu'] = self.mu
-        grp.attrs['neg_threshold'] = self.neg_threshold
-        grp.attrs['neg_threshold_cdf'] = self.neg_threshold_cdf
-        grp.attrs['neg_b'] = self.neg_b 
-        grp.attrs['pos_threshold'] = self.pos_threshold
-        grp.attrs['pos_threshold_cdf'] = self.pos_threshold_cdf
-        grp.attrs['pos_b'] = self.pos_b 
-
-
-class AbstractThresholdingFunction(object):
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        the_class = eval(grp.attrs["class"]) 
-        return the_class.from_hdf5(grp) 
- 
-
-class LaplaceThreshold(AbstractThresholdingFunction):
-    count = 0
-    def __init__(self, target_fdr, min_seqlets, verbose):
-        assert (target_fdr > 0.0 and target_fdr < 1.0)
-        self.target_fdr = target_fdr
-        self.verbose = verbose
-        self.min_seqlets = min_seqlets
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        target_fdr = grp.attrs["target_fdr"]
-        min_seqlets = grp.attrs["min_seqlets"]
-        verbose = grp.attrs["verbose"]
-        return cls(target_fdr=target_fdr,
-                   min_seqlets=min_seqlets, verbose=verbose)
-
-    def save_hdf5(self, grp):
-        grp.attrs["class"] = type(self).__name__
-        grp.attrs["target_fdr"] = self.target_fdr
-        grp.attrs["min_seqlets"] = self.min_seqlets
-        grp.attrs["verbose"] = self.verbose 
-
-    def __call__(self, values):
-
-        # first estimate mu, using two level histogram to get to 1e-6
-        hist1, bin_edges1 = np.histogram(values, bins=1000)
-        peak1 = np.argmax(hist1)
-        l_edge = bin_edges1[peak1]
-        r_edge = bin_edges1[peak1+1]
-        top_values = values[ (l_edge < values) & (values < r_edge) ]
-
-        hist2, bin_edges2 = np.histogram(top_values, bins=1000)
-        peak2 = np.argmax(hist2)
-        l_edge = bin_edges2[peak2]
-        r_edge = bin_edges2[peak2+1]
-        mu = (l_edge + r_edge) / 2
-        print("peak(mu)=", mu)
-
-        pos_values = np.array(sorted(values[values > mu] - mu))
-        neg_values = np.array(sorted(values[values < mu] - mu, key=lambda x: -x))
-
-        #We assume that the null is governed by a laplace, because
-        #that's what I (Av Shrikumar) have personally observed
-        #But we calculate a different laplace distribution for
-        # positive and negative values, in case they are
-        # distributed slightly differently
-        #estimate b using the percentile
-        #for x below 0:
-        #cdf = 0.5*exp(x/b)
-        #b = x/(log(cdf/0.5))
-        neg_laplace_b = np.percentile(neg_values, 95)/(np.log(0.95))
-        pos_laplace_b = (-np.percentile(pos_values, 5))/(np.log(0.95))
-
-        #for the pos and neg, compute the expected number above a
-        #particular threshold based on the total number of examples,
-        #and use this to estimate the fdr
-        #for pos_null_above, we estimate the total num of examples
-        #as 2*len(pos_values)
-        pos_fdrs = (len(pos_values)*(np.exp(-pos_values/pos_laplace_b)))/(
-                    len(pos_values)-np.arange(len(pos_values)))
-        pos_fdrs = np.minimum(pos_fdrs, 1.0)
-        neg_fdrs = (len(neg_values)*(np.exp(neg_values/neg_laplace_b)))/(
-                    len(neg_values)-np.arange(len(neg_values)))
-        neg_fdrs = np.minimum(neg_fdrs, 1.0)
-
-        pos_fdrs_passing_thresh = [x for x in zip(pos_values, pos_fdrs)
-                                   if x[1] <= self.target_fdr]
-        neg_fdrs_passing_thresh = [x for x in zip(neg_values, neg_fdrs)
-                                   if x[1] <= self.target_fdr]
-        if (len(pos_fdrs_passing_thresh) > 0):
-            pos_threshold, pos_thresh_fdr = pos_fdrs_passing_thresh[0]
-        else:
-            pos_threshold, pos_thresh_fdr = pos_values[-1], pos_fdrs[-1]
-            pos_threshold += 0.0000001
-        if (len(neg_fdrs_passing_thresh) > 0):
-            neg_threshold, neg_thresh_fdr = neg_fdrs_passing_thresh[0]
-            neg_threshold = neg_threshold - 0.0000001
-        else:
-            neg_threshold, neg_thresh_fdr = neg_values[-1], neg_fdrs[-1]
-
-        if (self.min_seqlets is not None):
-            num_pos_passing = np.sum(pos_values > pos_threshold)
-            num_neg_passing = np.sum(neg_values < neg_threshold)
-            if (num_pos_passing + num_neg_passing < self.min_seqlets):
-                #manually adjust the threshold
-                shifted_values = values - mu
-                values_sorted_by_abs = sorted(np.abs(shifted_values), key=lambda x: -x)
-                abs_threshold = values_sorted_by_abs[self.min_seqlets-1]
-                if (self.verbose):
-                    print("Manually adjusting thresholds to get desired num seqlets")
-                pos_threshold = abs_threshold
-                neg_threshold = -abs_threshold
-        
-        pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b)
-        neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b)
-        #neg_threshold = np.log((1-self.threshold_cdf)*2)*neg_laplace_b
-        #pos_threshold = -np.log((1-self.threshold_cdf)*2)*pos_laplace_b
-        
-        neg_threshold += mu
-        pos_threshold += mu
-        neg_threshold = min(neg_threshold, 0)
-        pos_threshold = max(pos_threshold, 0)
-        
-        
-
-        #plot the result
-        if (self.verbose):
-            print("Mu: %e +/- %e" % (mu, (r_edge-l_edge)/2))
-            print("Lablace_b:",neg_laplace_b,"and",pos_laplace_b)
-            print("Thresholds:",neg_threshold,"and",pos_threshold)
-            print("#fdrs pass:",len(neg_fdrs_passing_thresh),"and", len(pos_fdrs_passing_thresh))
-            print("CDFs:",neg_threshold_cdf,"and",pos_threshold_cdf)
-            print("Est. FDRs:",neg_thresh_fdr,"and",pos_thresh_fdr)
-            neg_linspace = np.linspace(np.min(values), mu, 100)
-            pos_linspace = np.linspace(mu, np.max(values), 100)
-            neg_laplace_vals = (1/(2*neg_laplace_b))*np.exp(
-                            -np.abs(neg_linspace-mu)/neg_laplace_b)
-            pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
-                            -np.abs(pos_linspace-mu)/pos_laplace_b)
-            from matplotlib import pyplot as plt
-            plt.figure()
-            hist, _, _ = plt.hist(values, bins=100)
-            plt.plot(neg_linspace,
-                     neg_laplace_vals/(
-                      np.max(neg_laplace_vals))*np.max(hist))
-            plt.plot(pos_linspace,
-                     pos_laplace_vals/(
-                      np.max(pos_laplace_vals))*np.max(hist))
-            plt.plot([neg_threshold, neg_threshold],
-                     [0, np.max(hist)])
-            plt.plot([pos_threshold, pos_threshold],
-                     [0, np.max(hist)])
-            if plt.isinteractive():
-                plt.show()
-            else:
-                import os, errno
-                try:
-                    os.makedirs("figures")
-                except OSError as e:
-                    if e.errno != errno.EEXIST:
-                        raise
-                fname = "figures/laplace_" + str(LaplaceThreshold.count) + ".png"
-                plt.savefig(fname)
-                print("saving plot to " + fname)
-                LaplaceThreshold.count += 1
-
-        return LaplaceThresholdingResults(
-                neg_threshold=neg_threshold,
-                neg_threshold_cdf=neg_threshold_cdf,
-                neg_b=neg_laplace_b,
-                pos_threshold=pos_threshold,
-                pos_threshold_cdf=pos_threshold_cdf,
-                pos_b=pos_laplace_b,
-                mu = mu)
-
-
 class CoordProducerResults(object):
 
-    def __init__(self, coords, thresholding_results):
+    def __init__(self, coords, tnt_results):
         self.coords = coords
-        self.thresholding_results = thresholding_results
+        self.tnt_results = tnt_results
 
     @classmethod
     def from_hdf5(cls, grp):
         coord_strings = util.load_string_list(dset_name="coords",
                                               grp=grp)  
         coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
-        thresholding_results = AbstractThresholdingResults.from_hdf5(
-                                grp["thresholding_results"])
+        tnt_results = AbstractThresholdingResults.from_hdf5(
+                                grp["tnt_results"])
         return CoordProducerResults(coords=coords,
-                                    thresholding_results=thresholding_results)
+                                    tnt_results=tnt_results)
 
     def save_hdf5(self, grp):
         util.save_string_list(
             string_list=[str(x) for x in self.coords],
             dset_name="coords",
             grp=grp) 
-        self.thresholding_results.save_hdf5(
-              grp=grp.create_group("thresholding_results"))
+        self.tnt_results.save_hdf5(
+              grp=grp.create_group("tnt_results"))
 
 
 def get_simple_window_sum_function(window_size):
@@ -283,15 +72,45 @@ def get_simple_window_sum_function(window_size):
     return window_sum_function
 
 
+class GenerateNullDist(object):
+
+    def __call__(self, score_track):
+        raise NotImplementedError() 
+
+
+class FlipSignNullDist(GenerateNullDist):
+
+    def __init__(self, num_to_samp, seed):
+        self.num_to_samp = num_to_samp
+        self.rng = np.random.RandomState()
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        raise NotImplementedError()
+
+    def save_hdf(cls, grp):
+        raise NotImplementedError()
+
+    def __call__(self, score_track):
+        self.rng.seed(self.seed)
+        null_tracks = []
+        for i in range(self.num_to_samp):
+            random_track = self.rng.choice(score_track) 
+            track_with_sign_flips = [
+             x*(1 if self.rng.random() > 0.5 else -1)
+             for x in random_track]
+            null_tracks.append(track_with_sign_flips)
+        return null_tracks
+
+
 class FixedWindowAroundChunks(AbstractCoordProducer):
 
     def __init__(self, sliding=11,
                        flank=10,
                        suppress=None,
-                       thresholding_function=LaplaceThreshold(
-                            target_fdr=0.05,
-                            min_seqlets=500,
-                            verbose=True),
+                       thresholding_function,
+                       null_dist_gen=FlipSignNullDist(num_to_samp=10000,
+                                                      seed=1234),
                        max_seqlets_total=None,
                        progress_update=5000,
                        verbose=True):
@@ -301,6 +120,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             suppress = int(0.5*sliding) + flank
         self.suppress = suppress
         self.thresholding_function = thresholding_function
+        self.null_dist_gen = null_dist_gen
         self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
@@ -316,6 +136,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             max_seqlets_total = grp.attrs["max_seqlets_total"]
         else:
             max_seqlets_total = None
+        #TODO: load min_seqlets feature
         progress_update = grp.attrs["progress_update"]
         verbose = grp.attrs["verbose"]
         return cls(sliding=sliding, flank=flank, suppress=suppress,
@@ -330,30 +151,38 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         grp.attrs["suppress"] = self.suppress
         self.thresholding_function.save_hdf5(
               grp.create_group("thresholding_function"))
+        #TODO: save min_seqlets feature
         if (self.max_seqlets_total is not None):
             grp.attrs["max_seqlets_total"] = self.max_seqlets_total 
         grp.attrs["progress_update"] = self.progress_update
         grp.attrs["verbose"] = self.verbose
 
-    def __call__(self, score_track, thresholding_results=None):
-     
-        # score_track now can be a list of arrays, comment out the assert for now
-        # assert len(score_track.shape)==2 
+    def __call__(self, score_track, tnt_results=None):
+    
+        # score_track now can be a list of arrays,
+        assert all([x.shape==1 for x in score_track]) 
         window_sum_function = get_simple_window_sum_function(self.sliding)
+
+        if (self.verbose):
+            print("Generating null dist")
+        null_score_track = self.null_dist_gen(score_track=score_track) 
 
         if (self.verbose):
             print("Computing windowed sums")
             sys.stdout.flush()
         original_summed_score_track = window_sum_function(arrs=score_track) 
-        if (thresholding_results is None):
+        null_summed_score_track = window_sum_function(arrs=null_score_track) 
+
+        if (tnt_results is None):
             if (self.verbose):
                 print("Computing threshold")
                 sys.stdout.flush()
-            thresholding_results = self.thresholding_function(
-                                    np.concatenate(original_summed_score_track,
-                                                   axis=0))
-        neg_threshold = thresholding_results.neg_threshold
-        pos_threshold = thresholding_results.pos_threshold
+            tnt_results = self.thresholding_function(
+                                    values=np.concatenate(
+                                     original_summed_score_track,axis=0),
+                                    null_dist=null_summed_score_track)
+        neg_threshold = tnt_results.neg_threshold
+        pos_threshold = tnt_results.pos_threshold
 
         summed_score_track = [x.copy() for x in original_summed_score_track]
 
@@ -414,4 +243,4 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                                [:self.max_seqlets_total]
         return CoordProducerResults(
                     coords=coords,
-                    thresholding_results=thresholding_results) 
+                    tnt_results=tnt_results) 
