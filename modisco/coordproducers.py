@@ -1,5 +1,6 @@
 from __future__ import division, print_function, absolute_import
 from .core import SeqletCoordinates
+from .transform_and_threshold import AbstractTnTResults, AbstractTnTFunction
 from modisco import util
 import numpy as np
 from collections import defaultdict
@@ -43,7 +44,7 @@ class CoordProducerResults(object):
         coord_strings = util.load_string_list(dset_name="coords",
                                               grp=grp)  
         coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
-        tnt_results = AbstractThresholdingResults.from_hdf5(
+        tnt_results = AbstractTnTResults.from_hdf5(
                                 grp["tnt_results"])
         return CoordProducerResults(coords=coords,
                                     tnt_results=tnt_results)
@@ -130,7 +131,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         sliding = grp.attrs["sliding"]
         flank = grp.attrs["flank"]
         suppress = grp.attrs["suppress"] 
-        thresholding_function = AbstractThresholdingFunction.from_hdf5(
+        thresholding_function = AbstractTnTFunction.from_hdf5(
                                  grp["thresholding_function"])
         if ("max_seqlets_total" in grp.attrs):
             max_seqlets_total = grp.attrs["max_seqlets_total"]

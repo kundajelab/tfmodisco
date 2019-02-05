@@ -241,9 +241,9 @@ class MultiTaskSeqletCreationResults(object):
             task_name_to_coord_producer_results
 
     @property
-    def task_name_to_thresholding_results(self):
+    def task_name_to_tnt_results(self):
         return OrderedDict([
-                (x, y.thresholding_results) for x,y
+                (x, y.tnt_results) for x,y
                 in self.task_name_to_coord_producer_results.items()]) 
 
     @classmethod
@@ -305,21 +305,21 @@ class MultiTaskSeqletCreator(object):
         grp.attrs["verbose"] = self.verbose
 
     def __call__(self, task_name_to_score_track,
-                       track_set, task_name_to_thresholding_results=None):
+                       track_set, task_name_to_tnt_results=None):
         task_name_to_coord_producer_results = OrderedDict()
         task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
-            if (task_name_to_thresholding_results is None):
+            if (task_name_to_tnt_results is None):
                 coord_producer_results =\
                     self.coord_producer(score_track=score_track)
             else:
                 coord_producer_results =\
                     self.coord_producer(
                      score_track=score_track,
-                     thresholding_results=
-                      task_name_to_thresholding_results[task_name])
+                     tnt_results=
+                      task_name_to_tnt_results[task_name])
             task_name_to_coord_producer_results[task_name] =\
                 coord_producer_results
             seqlets = track_set.create_seqlets(
