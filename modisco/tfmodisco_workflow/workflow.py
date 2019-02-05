@@ -12,6 +12,7 @@ from .. import coordproducers
 from .. import transform_and_threshold as tnt
 from .. import metaclusterers
 from .. import util
+from .. import value_provider
 
 
 class TfModiscoResults(object):
@@ -149,8 +150,8 @@ class TfModiscoWorkflow(object):
                  max_seqlets_per_task=None,
                  approx_min_seqlets_per_task=500,
                  verbose=True,
-                 thresholding_func_producer=
-                  coordproducers.FdrThreshFromEmpiricalNull
+                 #thresholding_func_producer=
+                 # coordproducers.FdrThreshFromEmpiricalNull,
                  #deprecated...
                  # now called approx_min_seqlets_per_task
                  min_seqlets_per_task=None):
@@ -184,7 +185,8 @@ class TfModiscoWorkflow(object):
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
-                               value_provider=core.CoorScoreValueProvider()))
+                               value_provider=
+                                value_provider.CoorScoreValueProvider()))
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
@@ -192,11 +194,13 @@ class TfModiscoWorkflow(object):
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
             flank=self.flank_size,
+            suppress=(int(0.5*self.sliding_window_size)
+                      + self.flank_size),
             #TODO: update
-            thresholding_function=tnt.LaplaceThreshold(
+            thresholding_function=tnt.LaplaceTnTFunction(
                 target_fdr=self.target_seqlet_fdr,
                 verbose=self.verbose,
-                min_seqlets=int(self.approx_min_seqlets_per_task
+                min_windows=int(self.approx_min_seqlets_per_task
                                 * self.sliding_window_size * 0.5)),
             max_seqlets_total=self.max_seqlets_per_task,
             verbose=self.verbose) 
@@ -219,10 +223,10 @@ class TfModiscoWorkflow(object):
 
         #find the weakest transformed threshold used across all tasks
         weakest_transformed_thresh = (min(
-            [min(x.thresholding_results.transformed_pos_threshold,
-                 x.thresholding_results.transformed_neg_threshold)
-                 for x in multitask_seqlet_creation_results.
-                      task_name_to_coord_producer_results.values()]) -
+            [min(x.tnt_results.transformed_pos_threshold,
+                 x.tnt_results.transformed_neg_threshold)
+                 for x in (multitask_seqlet_creation_results.
+                           task_name_to_coord_producer_results.values())]) -
             0.0000001) #subtract 1e-7 to avoid numerical issues
         print("Across all tasks, the weakest transformed threshold used"
               +" was: "+str(weakest_transformed_thresh))
@@ -251,7 +255,8 @@ class TfModiscoWorkflow(object):
                 track_name=task_name+"_contrib_scores",
                 central_window=self.sliding_window_size))
              for (task_name,coord_producer_results)
-                 in multitask_seqlet_creation_results.items()])
+                 in (multitask_seqlet_creation_results.
+                     task_name_to_coord_producer_results.items())])
 
         metaclusterer = metaclusterers.SignBasedPatternClustering(
                                 min_cluster_size=self.min_metacluster_size,

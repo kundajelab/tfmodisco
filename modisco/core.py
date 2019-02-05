@@ -8,6 +8,7 @@ import scipy.signal
 import itertools
 import sys
 from . import util
+from .value_provider import AbstractValueProvider
 
 
 class Snippet(object):
@@ -163,30 +164,6 @@ class CoordOverlapDetector(object):
         return (overlap_amt >= min_overlap)
 
 
-class AbstractValueProvider(object):
-
-    def __call__(self, seqlet):
-        raise NotImplementedError()
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        the_class = eval(grp.attrs["class"])
-        return the_class.from_hdf5(grp) 
-
-
-class CoorScoreValueProvider(AbstractValueProvider):
-
-    def __call__(self, seqlet):
-        return seqlet.coor.score 
-
-    def save_hdf5(self, grp):
-        grp.attrs["class"] = type(self).__name__
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        return cls()
-
-
 class SeqletComparator(object):
 
     def __init__(self, value_provider):
@@ -251,82 +228,6 @@ class SeqletsOverlapResolver(object):
             example_idx_to_seqlets[example_idx] =\
                 list(final_seqlets_set.keys())
         return list(itertools.chain(*example_idx_to_seqlets.values())) 
-
-
-class AbstractAttributeProvider(object):
-
-    def __init__(self, name):
-        self.name = name
-
-    def annotate(self, seqlets):
-        for seqlet in seqlets:
-            seqlet.set_attribute(self)
-
-    def __call__(self, seqlet):
-        raise NotImplementedError()
-
-
-class FittableAbstractValueProvider(AbstractValueProvider):
-
-    def get_val(self, seqlet):
-        raise NotImplementedError()
-
-    def fit(self, coord_producer_results):
-        raise NotImplementedError()
-
-    def transform_val(self, val):
-        raise NotImplementedError()
-
-    def __call__(self, seqlet):
-        return self.transform_val(self.get_val(seqlet))
-
-
-class LaplaceCdf(FittableAbstractValueProvider):
-                
-    def __init__(self, track_name, central_window):
-        if isinstance(track_name, str):
-            self.track_name = track_name
-        else: 
-            self.track_name = track_name.decode('utf-8')
-        self.central_window = central_window
-
-    def get_val(self, seqlet):
-        flank_to_ignore = int(0.5*(len(seqlet)-self.central_window))
-        track_values = seqlet[self.track_name]\
-                        .fwd[flank_to_ignore:-flank_to_ignore]
-        return np.sum(track_values)
-
-    def fit(self, coord_producer_results):
-        self.coord_producer_results = coord_producer_results
-        self.neg_laplace_b =\
-            coord_producer_results.thresholding_results.neg_b
-        self.pos_laplace_b =\
-            coord_producer_results.thresholding_results.pos_b
-        self.mu = coord_producer_results.thresholding_results.mu
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        from . import coordproducers
-        if isinstance(grp.attrs["track_name"], str):
-            track_name = grp.attrs["track_name"]
-        else:
-            track_name = grp.attrs["track_name"].decode('utf-8')
-        central_window = grp.attrs["central_window"]
-        laplace_cdf = cls(track_name=track_name,
-                          central_window=central_window) 
-        coord_producer_results =\
-            coordproducers.CoordProducerResults.from_hdf5(
-             grp["coord_producer_results"])
-        laplace_cdf.fit(coord_producer_results)
-        return laplace_cdf
-
-    def save_hdf5(self, grp):
-        grp.attrs["class"] = type(self).__name__
-        grp.attrs["track_name"] = self.track_name  
-        grp.attrs["central_window"] = self.central_window
-        if (hasattr(self, "coord_producer_results")):
-            self.coord_producer_results.save_hdf5(
-                grp.create_group("coord_producer_results"))    
 
 
 class MultiTaskSeqletCreationResults(object):
@@ -968,9 +869,11 @@ class AggregatedSeqlet(Pattern):
             self.track_name_to_snippet[track_name] =\
              Snippet(
               fwd=(self._track_name_to_agg[track_name]
-                   /self.per_position_counts[:,None]),
+                   /(self.per_position_counts[:,None]
+                     + 1E-7*(self.per_position_counts[:,None]==0))),
               rev=(self._track_name_to_agg_revcomp[track_name]
-                   /self.per_position_counts[::-1,None]),
+                   /(self.per_position_counts[::-1,None]
+                     + 1E-7*(self.per_position_counts[::-1,None]==0))),
               has_pos_axis=self.track_name_to_snippet[track_name].has_pos_axis) 
 
     def __len__(self):

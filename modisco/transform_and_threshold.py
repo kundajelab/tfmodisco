@@ -1,5 +1,6 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
+from .value_provider import LaplaceCdfValueProvider
 
 
 #TnT = Transform and Threshold
@@ -20,19 +21,8 @@ class AbstractTnTResults(object):
         self.transformed_pos_threshold = transformed_pos_threshold
         assert transformed_pos_threshold >= 0.0
 
-    def get_seqlet_value_provider(track_name, central_window):
-        
-        def seqlet_value_provider(seqlet):
-            flank_to_ignore = int(0.5*(len(seqlet)-central_window))
-            track_values = seqlet[self.track_name]\
-                            .fwd[flank_to_ignore:-flank_to_ignore]
-            val = np.sum(track_values)
-            return self.transform_val(val)
-
-        return seqlet_value_provider
-
-    def transform_val(self, val):
-        raise NotImplementedError()
+    def get_seqlet_value_provider(self, track_name, central_window):
+        raise NotImplementedError()        
 
     @classmethod
     def from_hdf5(cls, grp):
@@ -48,7 +38,7 @@ class LaplaceTnTResults(AbstractTnTResults):
                        pos_threshold,
                        transformed_pos_threshold,
                        pos_b, mu):
-        super(AbstractTnTResults, self).__init__(
+        super(LaplaceTnTResults, self).__init__(
             neg_threshold=neg_threshold,
             transformed_neg_threshold=transformed_neg_threshold,
             pos_threshold=pos_threshold,
@@ -57,12 +47,12 @@ class LaplaceTnTResults(AbstractTnTResults):
         self.pos_b = pos_b
         self.mu = mu
 
-    def transform_val(self, val):
-        val -= self.mu
-        if (val < 0):
-            return -(1-np.exp(val/self.neg_b))
-        else:
-            return (1-np.exp(-val/self.pos_b))
+    def get_seqlet_value_provider(self, track_name, central_window):
+        return LaplaceCdfValueProvider(track_name=track_name,
+                                       central_window=central_window,
+                                       neg_b=self.neg_b,
+                                       pos_b=self.pos_b,
+                                       mu=self.mu) 
 
     @classmethod
     def from_hdf5(cls, grp):
@@ -95,7 +85,7 @@ class LaplaceTnTResults(AbstractTnTResults):
 class EmpiricalNullTnTResults(AbstractTnTResults):
     def __init__(self, neg_threshold, transformed_neg_threshold,
                        empirical_null_neg,
-                       pos_threshold, transformed_neg_threshold,
+                       pos_threshold, transformed_pos_threshold,
                        empirical_null_pos):
         super(AbstractTnTResults, self).__init__(
             neg_threshold=neg_threshold,
@@ -137,6 +127,7 @@ class FdrThreshFromEmpiricalNull(AbstractTnTFunction):
         #return both a positive and negative threshold
         #plot the results if verbose is True
         #TODO: finish implementing 
+        pass
 
 
 class LaplaceTnTFunction(AbstractTnTFunction):
@@ -280,10 +271,10 @@ class LaplaceTnTFunction(AbstractTnTFunction):
                 except OSError as e:
                     if e.errno != errno.EEXIST:
                         raise
-                fname = "figures/laplace_" + str(LaplaceThreshold.count) + ".png"
+                fname = "figures/laplace_" + str(LaplaceTnTFunction.count) + ".png"
                 plt.savefig(fname)
                 print("saving plot to " + fname)
-                LaplaceThreshold.count += 1
+                LaplaceTnTFunction.count += 1
 
         return LaplaceTnTResults(
                 neg_threshold=neg_threshold,

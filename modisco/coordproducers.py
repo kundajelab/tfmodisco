@@ -82,6 +82,7 @@ class FlipSignNullDist(GenerateNullDist):
 
     def __init__(self, num_to_samp, seed):
         self.num_to_samp = num_to_samp
+        self.seed = seed
         self.rng = np.random.RandomState()
 
     @classmethod
@@ -95,9 +96,10 @@ class FlipSignNullDist(GenerateNullDist):
         self.rng.seed(self.seed)
         null_tracks = []
         for i in range(self.num_to_samp):
-            random_track = self.rng.choice(score_track) 
+            random_track = score_track[
+             int(self.rng.randint(0,len(score_track)))]
             track_with_sign_flips = [
-             x*(1 if self.rng.random() > 0.5 else -1)
+             x*(1 if self.rng.uniform() > 0.5 else -1)
              for x in random_track]
             null_tracks.append(track_with_sign_flips)
         return null_tracks
@@ -105,10 +107,10 @@ class FlipSignNullDist(GenerateNullDist):
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
 
-    def __init__(self, sliding=11,
-                       flank=10,
-                       suppress=None,
+    def __init__(self, sliding,
+                       flank,
                        thresholding_function,
+                       suppress, #flanks to suppress
                        null_dist_gen=FlipSignNullDist(num_to_samp=10000,
                                                       seed=1234),
                        max_seqlets_total=None,
@@ -116,8 +118,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        verbose=True):
         self.sliding = sliding
         self.flank = flank
-        if (suppress is None):
-            suppress = int(0.5*sliding) + flank
         self.suppress = suppress
         self.thresholding_function = thresholding_function
         self.null_dist_gen = null_dist_gen
@@ -160,7 +160,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
     def __call__(self, score_track, tnt_results=None):
     
         # score_track now can be a list of arrays,
-        assert all([x.shape==1 for x in score_track]) 
+        assert all([len(x.shape)==1 for x in score_track]) 
         window_sum_function = get_simple_window_sum_function(self.sliding)
 
         if (self.verbose):
