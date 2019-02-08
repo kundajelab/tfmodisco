@@ -3,7 +3,7 @@ from .core import SeqletCoordinates
 from .transform_and_threshold import AbstractTnTResults, AbstractTnTFunction
 from modisco import util
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, Counter
 import itertools
 from sklearn.neighbors.kde import KernelDensity
 import sys
@@ -79,12 +79,7 @@ class GenerateNullDist(object):
         raise NotImplementedError() 
 
 
-class FlipSignNullDist(GenerateNullDist):
-
-    def __init__(self, num_to_samp, seed):
-        self.num_to_samp = num_to_samp
-        self.seed = seed
-        self.rng = np.random.RandomState()
+class TakeSign(GenerateNullDist):
 
     @classmethod
     def from_hdf5(cls, grp):
@@ -94,14 +89,108 @@ class FlipSignNullDist(GenerateNullDist):
         raise NotImplementedError()
 
     def __call__(self, score_track):
+        null_tracks = [np.sign(x) for x in score_track]
+        return null_tracks
+
+
+class TakeAbs(GenerateNullDist):
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        raise NotImplementedError()
+
+    def save_hdf(cls, grp):
+        raise NotImplementedError()
+
+    def __call__(self, score_track):
+        null_tracks = [np.abs(x) for x in score_track]
+        return null_tracks
+
+
+class FlipSignNullDist(GenerateNullDist):
+
+    def __init__(self, num_to_samp, shuffle_pos, seed, num_breaks):
+        self.num_to_samp = num_to_samp
+        self.shuffle_pos = shuffle_pos
+        self.seed = seed
+        self.rng = np.random.RandomState()
+        self.num_breaks = num_breaks
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        raise NotImplementedError()
+
+    def save_hdf(cls, grp):
+        raise NotImplementedError()
+
+    def __call__(self, score_track, windowsize, original_summed_score_track):
+        #summed_score_track is supplied to avoid recomputing it 
+
+        window_sum_function = get_simple_window_sum_function(windowsize)
+        if (original_summed_score_track is not None):
+            original_summed_score_track = window_sum_function(arrs=score_track) 
+
+        all_orig_summed_scores = np.concatenate(score_track, axis=0)
+        all_summed_abs_scores = np.concatenate(window_sum_function(
+                            arrs=[abs(x) for x in score_track]), axis=0)
+    
+        num_breaks = min(self.num_breaks,
+                         int(len(all_orig_summed_scores)/100.0)) 
+        break_widths = float(np.max(all_orig_summed_scores)
+                             - np.min(all_orig_summed_scores))/num_breaks
+        #find the bin where summed_abs_scores exceeds
+        # exceeds orig_summed_scores by the most 
+        bincounter_orig_summed_scores = Counter([
+            int(x/break_widths) for x in all_orig_summed_scores])
+        bincounter_summed_abs_scores = Counter([
+            int(x/break_widths) for x in all_summed_abs_scores])
+        max_pos_bin_indx = max([
+            x for x in bincounter_orig_summed_scores.keys() if x > 0],
+            key=lambda x: (bincounter_summed_abs_scores[x]
+                           - bincounter_orig_summed_scores[x]))
+        max_neg_bin_indx = max([
+            x for x in bincounter_orig_summed_scores.keys() if x < 0],
+            key=lambda x: (bincounter_summed_abs_scores[x]
+                           - bincounter_orig_summed_scores[x]))
+        pos_threshold = (max_pos_bin_indx+0.5)*break_widths
+        neg_threshold = (max_neg_bin_indx+0.5)*break_widths
+
+        #retain only the portions of the tracks that are under the
+        # thresholds
+        retained_track_portions = []
+        num_pos_vals = 0
+        num_neg_vals = 0
+        for (single_score_track, single_summed_score_track)\
+             in zip(score_track, original_summed_score_track):
+            window_passing_track = [
+                (1.0 if (x > neg_threshold and x < pos_threshold) else 0)
+                for x in single_summed_score_track]
+            padded_window_passing_track = [0.0]*int(windowsize-1) 
+            padded_window_passing_track.extend(window_passing_track)
+            padded_window_passing_track.extend([0.0]*int(windowsize-1))
+            pos_in_passing_window = window_sum_function(
+                                      [padded_window_passing_track])[0] 
+            assert len(single_score_track)==len(pos_in_passing_window) 
+            single_retained_track = []
+            for (val, pos_passing) in zip(single_score_track,
+                                          pos_in_passing_window):
+                if (pos_passing > 0):
+                    single_retained_track.append(val) 
+                    num_pos_vals += (1 if val > 0 else 0)
+                    num_neg_vals += (1 if val < 0 else 0)
+            retained_track_portions.append(single_retained_track)
+            
+        prob_pos = num_pos_vals/float(num_pos_vals + num_neg_vals)
         self.rng.seed(self.seed)
         null_tracks = []
         for i in range(self.num_to_samp):
-            random_track = score_track[
-             int(self.rng.randint(0,len(score_track)))]
-            track_with_sign_flips = [
-             x*(1 if self.rng.uniform() > 0.5 else -1)
-             for x in random_track]
+            random_track = retained_track_portions[
+             int(self.rng.randint(0,len(retained_track_portions)))]
+            track_with_sign_flips = np.array([
+             abs(x)*(1 if self.rng.uniform() > prob_pos else -1)
+             for x in random_track])
+            if (self.shuffle_pos):
+                self.rng.shuffle(track_with_sign_flips) 
             null_tracks.append(track_with_sign_flips)
         return null_tracks
 
@@ -112,8 +201,10 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        flank,
                        thresholding_function,
                        suppress, #flanks to suppress
-                       null_dist_gen=FlipSignNullDist(num_to_samp=10000,
-                                                      seed=1234),
+                       null_dist_gen=#TakeAbs(),
+                        FlipSignNullDist(
+                         num_to_samp=10000, shuffle_pos=False,
+                         seed=1234, num_breaks=100),
                        max_seqlets_total=None,
                        progress_update=5000,
                        verbose=True):
@@ -165,13 +256,16 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         window_sum_function = get_simple_window_sum_function(self.sliding)
 
         if (self.verbose):
-            print("Generating null dist")
-        null_score_track = self.null_dist_gen(score_track=score_track) 
-
-        if (self.verbose):
-            print("Computing windowed sums")
+            print("Computing windowed sums on original")
             sys.stdout.flush()
         original_summed_score_track = window_sum_function(arrs=score_track) 
+
+        if (self.verbose):
+            print("Generating null dist")
+            sys.stdout.flush()
+        null_score_track = self.null_dist_gen(
+            score_track=score_track, windowsize=self.sliding,
+            original_summed_score_track=original_summed_score_track) 
         null_summed_score_track = window_sum_function(arrs=null_score_track) 
 
         if (tnt_results is None):
@@ -181,7 +275,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             tnt_results = self.thresholding_function(
                                     values=np.concatenate(
                                      original_summed_score_track,axis=0),
-                                    null_dist=null_summed_score_track)
+                                    null_dist=np.concatenate(
+                                     null_summed_score_track, axis=0))
         neg_threshold = tnt_results.neg_threshold
         pos_threshold = tnt_results.pos_threshold
 

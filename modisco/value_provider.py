@@ -49,6 +49,20 @@ class TransformCentralWindowValueProvider(AbstractValueProvider):
         raise NotImplementedError()
 
 
+class PercentileValueProvider(TransformCentralWindowValueProvider):
+
+    def __init__(self, track_name,
+                       central_window,
+                       distribution):
+        super(PercentileValueProvider, self).__init__(
+            track_name=track_name, central_window=central_window) 
+        self.distribution = np.array(sorted(distribution))
+
+    def transform_val(self, val):
+        return np.searchsorted(a=self.distribution,
+                               v=val)/float(len(self.distribution))
+
+
 class LaplaceCdfValueProvider(TransformCentralWindowValueProvider):
                 
     def __init__(self, track_name,

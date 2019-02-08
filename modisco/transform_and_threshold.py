@@ -1,6 +1,6 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
-from .value_provider import LaplaceCdfValueProvider
+from .value_provider import LaplaceCdfValueProvider, PercentileValueProvider
 
 
 #TnT = Transform and Threshold
@@ -84,16 +84,19 @@ class LaplaceTnTResults(AbstractTnTResults):
 
 class EmpiricalNullTnTResults(AbstractTnTResults):
     def __init__(self, neg_threshold, transformed_neg_threshold,
-                       empirical_null_neg,
                        pos_threshold, transformed_pos_threshold,
-                       empirical_null_pos):
+                       empirical_null):
         super(AbstractTnTResults, self).__init__(
             neg_threshold=neg_threshold,
             transformed_neg_threshold=transformed_neg_threshold,
             pos_threshold=pos_threshold,
             transformed_pos_threshold=transformed_pos_threshold)
-        self.empirical_null_neg = empirical_null_neg
-        self.empirical_null_pos = empirical_null_pos
+        self.empirical_null = empirical_null
+
+    def get_seqlet_value_provider(self, track_name, central_window):
+        return PercentileValueProvider(track_name=track_name,
+                                       central_window=central_window,
+                                       distribution=self.empirical_null)
 
     @classmethod
     def from_hdf5(cls, grp):
@@ -121,6 +124,9 @@ class FdrThreshFromEmpiricalNull(AbstractTnTFunction):
         self.verbose = verbose
 
     def __call__(self, values, null_dist):
+        null_dist = np.abs(null_dist)
+        sorted_null_dist = sorted(null_dist)
+        
         #values and null_dist are both vectors
         #sort values:
         #sort positive and negative values separately
@@ -249,9 +255,35 @@ class LaplaceTnTFunction(AbstractTnTFunction):
                             -np.abs(neg_linspace-mu)/neg_laplace_b)
             pos_laplace_vals = (1/(2*pos_laplace_b))*np.exp(
                             -np.abs(pos_linspace-mu)/pos_laplace_b)
+
             from matplotlib import pyplot as plt
+
+            from sklearn.isotonic import IsotonicRegression 
+            (sorted_values, sorted_labels) = zip(*sorted(
+                [(x,1) for x in np.abs(values)]
+                +[(x,0) for x in np.abs(null_dist)],
+                key=lambda x: x[0]))
+            ir_model = IsotonicRegression().fit(
+                        X=sorted_values, y=sorted_labels)
+            ir_preds = ir_model.predict(sorted_values);
+            #adjust the prior of the ir_preds
+            ir_preds = ir_preds*len(null_dist)/(
+                       ir_preds*len(null_dist) + (1-ir_preds)*len(values))
             plt.figure()
-            hist, _, _ = plt.hist(values, bins=100)
+            plt.plot(sorted_values, ir_preds)
+            plt.xlim(np.min(values),np.max(values))
+            plt.show()
+
+            plt.figure() 
+            import seaborn as sns
+            sns.distplot(null_dist)
+            sns.distplot(values)
+            plt.xlim(np.min(values),np.max(values))
+            plt.show()
+
+            plt.figure() 
+            hist, _, _ = plt.hist(values, bins=100, alpha=0.5)
+            plt.xlim(np.min(values), np.max(values))
             plt.plot(neg_linspace,
                      neg_laplace_vals/(
                       np.max(neg_laplace_vals))*np.max(hist))
