@@ -130,30 +130,11 @@ class FlipSignNullDist(GenerateNullDist):
         if (original_summed_score_track is not None):
             original_summed_score_track = window_sum_function(arrs=score_track) 
 
-        all_orig_summed_scores = np.concatenate(score_track, axis=0)
-        all_summed_abs_scores = np.concatenate(window_sum_function(
-                            arrs=[abs(x) for x in score_track]), axis=0)
-    
-        num_breaks = min(self.num_breaks,
-                         int(len(all_orig_summed_scores)/100.0)) 
-        break_widths = float(np.max(all_orig_summed_scores)
-                             - np.min(all_orig_summed_scores))/num_breaks
-        #find the bin where summed_abs_scores exceeds
-        # exceeds orig_summed_scores by the most 
-        bincounter_orig_summed_scores = Counter([
-            int(x/break_widths) for x in all_orig_summed_scores])
-        bincounter_summed_abs_scores = Counter([
-            int(x/break_widths) for x in all_summed_abs_scores])
-        max_pos_bin_indx = max([
-            x for x in bincounter_orig_summed_scores.keys() if x > 0],
-            key=lambda x: (bincounter_summed_abs_scores[x]
-                           - bincounter_orig_summed_scores[x]))
-        max_neg_bin_indx = max([
-            x for x in bincounter_orig_summed_scores.keys() if x < 0],
-            key=lambda x: (bincounter_summed_abs_scores[x]
-                           - bincounter_orig_summed_scores[x]))
-        pos_threshold = (max_pos_bin_indx+0.5)*break_widths
-        neg_threshold = (max_neg_bin_indx+0.5)*break_widths
+        all_orig_summed_scores = np.concatenate(
+            original_summed_score_track, axis=0)
+        pos_threshold = np.percentile(a=all_orig_summed_scores,
+                                      q=80)
+        neg_threshold = np.percentile(a=all_orig_summed_scores, q=20)
 
         #retain only the portions of the tracks that are under the
         # thresholds
@@ -187,7 +168,7 @@ class FlipSignNullDist(GenerateNullDist):
             random_track = retained_track_portions[
              int(self.rng.randint(0,len(retained_track_portions)))]
             track_with_sign_flips = np.array([
-             abs(x)*(1 if self.rng.uniform() > prob_pos else -1)
+             abs(x)*(1 if self.rng.uniform() < prob_pos else -1)
              for x in random_track])
             if (self.shuffle_pos):
                 self.rng.shuffle(track_with_sign_flips) 

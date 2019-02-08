@@ -282,7 +282,10 @@ class LaplaceTnTFunction(AbstractTnTFunction):
             plt.show()
 
             plt.figure() 
-            hist, _, _ = plt.hist(values, bins=100, alpha=0.5)
+            np.random.shuffle(null_dist)
+            hist, thebins, _ = plt.hist(values, bins=100, alpha=0.5)
+            _, _, _ = plt.hist(null_dist[:len(values)],
+                               bins=thebins, alpha=0.5)
             plt.xlim(np.min(values), np.max(values))
             plt.plot(neg_linspace,
                      neg_laplace_vals/(
