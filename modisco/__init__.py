@@ -8,4 +8,3 @@ from . import nearest_neighbors
 from . import util
 from . import tfmodisco_workflow
 from . import value_provider
-from . import transform_and_threshold 

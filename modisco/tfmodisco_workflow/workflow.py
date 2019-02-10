@@ -143,16 +143,12 @@ class TfModiscoWorkflow(object):
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_metacluster_size=100,
-                 weak_threshold_for_counting_sign=0.99,
+                 weak_threshold_for_counting_sign=0.8,
                  max_seqlets_per_metacluster=20000,
                  target_seqlet_fdr=0.05,
                  min_passing_windows_frac=0.005,
                  max_passing_windows_frac=0.2,
                  verbose=True,
-                 #thresholding_func_producer=
-                 # coordproducers.FdrThreshFromEmpiricalNull,
-                 #min_seqlets_per_task deprecated;
-                 # now called min_passing_windows_frac
                  min_seqlets_per_task=None):
 
         if (min_seqlets_per_task is not None):
@@ -172,7 +168,7 @@ class TfModiscoWorkflow(object):
             weak_threshold_for_counting_sign
         self.max_seqlets_per_metacluster = max_seqlets_per_metacluster
         self.min_passing_windows_frac = min_passing_windows_frac
-        self.thresholding_function = thresholding_function
+        self.max_passing_windows_frac = max_passing_windows_frac
         self.verbose = verbose
 
         self.build()
@@ -187,21 +183,21 @@ class TfModiscoWorkflow(object):
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot,
-                       #null_dist should either be a dictionary
-                       # or a callable
-                       per_position_contrib_scores=None,
-                       null_dist=FlipSignNullDist(
-                         num_to_samp=10000, shuffle_pos=False,
+                       #null_tracks should either be a dictionary
+                       # from task_name to 1d trakcs, or a callable
+                       null_per_pos_scores=coordproducers.FlipSignNullDist(
+                         num_to_samp=5000, shuffle_pos=False,
                          seed=1234, num_breaks=100,
                          lower_null_percentile=20,
-                         upper_null_percentile=80)):
+                         upper_null_percentile=80),
+                       per_position_contrib_scores=None):
 
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
             flank=self.flank_size,
             suppress=(int(0.5*self.sliding_window_size)
                       + self.flank_size),
-            target_fdr=target_seqlet_fdr,
+            target_fdr=self.target_seqlet_fdr,
             min_passing_windows_frac=self.min_passing_windows_frac,
             max_passing_windows_frac=self.max_passing_windows_frac,
             max_seqlets_total=None,
@@ -222,13 +218,13 @@ class TfModiscoWorkflow(object):
             coord_producer=self.coord_producer,
             overlap_resolver=self.overlap_resolver)(
                 task_name_to_score_track=per_position_contrib_scores,
-                null_dist=null_dist,
+                null_tracks=null_per_pos_scores,
                 track_set=track_set)
 
         #find the weakest transformed threshold used across all tasks
         weakest_transformed_thresh = (min(
             [min(x.tnt_results.transformed_pos_threshold,
-                 x.tnt_results.transformed_neg_threshold)
+                 abs(x.tnt_results.transformed_neg_threshold))
                  for x in (multitask_seqlet_creation_results.
                            task_name_to_coord_producer_results.values())]) -
             0.0000001) #subtract 1e-7 to avoid numerical issues
@@ -255,7 +251,7 @@ class TfModiscoWorkflow(object):
 
         task_name_to_value_provider = OrderedDict([
             (task_name,
-             TransformCentralWindowValueProvider(
+             value_provider.TransformCentralWindowValueProvider(
                 track_name=task_name+"_contrib_scores",
                 central_window=self.sliding_window_size,
                 val_transformer= 
