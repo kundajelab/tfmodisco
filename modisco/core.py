@@ -305,19 +305,28 @@ class MultiTaskSeqletCreator(object):
         grp.attrs["verbose"] = self.verbose
 
     def __call__(self, task_name_to_score_track,
+                       null_tracks,
                        track_set, task_name_to_tnt_results=None):
         task_name_to_coord_producer_results = OrderedDict()
         task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
+            if (hasattr(null_tracks, '__call__')):
+                #if a function, then just pass the function on
+                null_track = null_tracks
+            else:
+                null_track = null_tracks[task_name]
             if (task_name_to_tnt_results is None):
                 coord_producer_results =\
-                    self.coord_producer(score_track=score_track)
+                    self.coord_producer(
+                        score_track=score_track,
+                        null_track = null_track)
             else:
                 coord_producer_results =\
                     self.coord_producer(
                      score_track=score_track,
+                     null_track = null_track,
                      tnt_results=
                       task_name_to_tnt_results[task_name])
             task_name_to_coord_producer_results[task_name] =\
