@@ -222,7 +222,7 @@ class FlipSignNullDist(GenerateNullDist):
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
-
+    count = 0
     def __init__(self, sliding,
                        flank,
                        suppress, #flanks to suppress
@@ -315,14 +315,22 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             null_vals = list(np.concatenate(null_summed_score_track, axis=0))
             pos_null_vals = [x for x in null_vals if x >= 0]
             neg_null_vals = [x for x in null_vals if x < 0]
-            pos_val_precisions = IsotonicRegression().fit(
+            pos_ir = IsotonicRegression().fit(
                 X=np.concatenate([pos_orig_vals,pos_null_vals], axis=0),
                 y=([1.0 for x in pos_orig_vals]
-                   +[0.0 for x in pos_null_vals])).transform(pos_orig_vals)
-            neg_val_precisions = IsotonicRegression().fit(
+                   +[0.0 for x in pos_null_vals]),
+                sample_weight=([1.0 for x in pos_orig_vals]+
+                         [len(pos_orig_vals)/len(pos_null_vals)
+                          for x in pos_null_vals]))
+            pos_val_precisions = pos_ir.transform(pos_orig_vals)
+            neg_ir = IsotonicRegression(increasing=False).fit(
                 X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
                 y=([1.0 for x in neg_orig_vals]
-                   +[0.0 for x in neg_null_vals])).transform(neg_orig_vals)
+                   +[0.0 for x in neg_null_vals]),
+                sample_weight=([1.0 for x in neg_orig_vals]+
+                         [len(neg_orig_vals)/len(neg_null_vals)
+                          for x in neg_null_vals]))
+            neg_val_precisions = neg_ir.transform(neg_orig_vals)
 
             pos_threshold = ([x[1] for x in
              zip(pos_val_precisions, pos_orig_vals) if x[0]
@@ -368,6 +376,47 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 print("Final transformed thresholds are",
                       val_transformer(neg_threshold)," and ",
                       val_transformer(pos_threshold))
+
+            from matplotlib import pyplot as plt
+            #plt.figure()
+            #plt.hist(null_vals, bins=100)
+            #plt.show()
+            plt.figure()
+            hist, histbins, _ = plt.hist(orig_vals, bins=100)
+            bincenters = 0.5*(histbins[1:]+histbins[:-1])
+            poshistvals,posbins = zip(*[x for x in zip(hist,bincenters)
+                                         if x[1] > 0])
+            posbin_precisions = pos_ir.transform(posbins) 
+            neghistvals, negbins = zip(*[x for x in zip(hist,bincenters)
+                                         if x[1] < 0])
+            negbin_precisions = neg_ir.transform(negbins) 
+            plt.plot(list(negbins)+list(posbins),
+                     (list(np.minimum(neghistvals,
+                                     neghistvals*(1-negbin_precisions)/
+                                                 (negbin_precisions+1E-7)))+
+                      list(np.minimum(poshistvals,
+                                      poshistvals*(1-posbin_precisions)/
+                                                 (posbin_precisions+1E-7)))),
+                     color="orange")
+            plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
+                     color="red")
+            plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
+                     color="red")
+
+            if plt.isinteractive():
+                plt.show()
+            else:
+                import os, errno
+                try:
+                    os.makedirs("figures")
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        raise
+                fname = ("figures/scoredist_" +
+                         str(FixedWindowAroundChunks.count) + ".png")
+                plt.savefig(fname)
+                print("saving plot to " + fname)
+                FixedWindowAroundChunks.count += 1
 
             tnt_results = TransformAndThresholdResults(
                 neg_threshold=neg_threshold,
