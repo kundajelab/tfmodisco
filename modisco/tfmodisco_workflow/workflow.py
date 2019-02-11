@@ -146,7 +146,7 @@ class TfModiscoWorkflow(object):
                  weak_threshold_for_counting_sign=0.8,
                  max_seqlets_per_metacluster=20000,
                  target_seqlet_fdr=0.05,
-                 min_passing_windows_frac=0.005,
+                 min_passing_windows_frac=0.03,
                  max_passing_windows_frac=0.2,
                  verbose=True,
                  min_seqlets_per_task=None):
@@ -185,11 +185,8 @@ class TfModiscoWorkflow(object):
                        hypothetical_contribs, one_hot,
                        #null_tracks should either be a dictionary
                        # from task_name to 1d trakcs, or a callable
-                       null_per_pos_scores=coordproducers.FlipSignNullDist(
-                         num_to_samp=5000, shuffle_pos=False,
-                         seed=1234, num_breaks=100,
-                         lower_null_percentile=20,
-                         upper_null_percentile=80),
+                       null_per_pos_scores=coordproducers.LaplaceNullDist(
+                         num_to_samp=10000),
                        per_position_contrib_scores=None):
 
         self.coord_producer = coordproducers.FixedWindowAroundChunks(

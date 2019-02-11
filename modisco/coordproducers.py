@@ -146,13 +146,91 @@ class TakeAbs(GenerateNullDist):
         return null_tracks
 
 
+class LaplaceNullDist(GenerateNullDist):
+
+    def __init__(self, num_to_samp, verbose=True,
+                       percentiles_to_use=[5*(x+1) for x in range(12)],
+                       random_seed=1234):
+        self.num_to_samp = num_to_samp
+        self.verbose = verbose
+        self.percentiles_to_use = np.array(percentiles_to_use)
+        self.random_seed = random_seed
+        self.rng = np.random.RandomState()
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        verbose = grp.attrs["verbose"]
+        percentiles_to_use = np.array(grp["percentiles_to_use"][:])
+        return cls(verbose=verbose)
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["verbose"] = self.verbose 
+        grp.create_dataset('percentiles_to_use',
+                           data=self.percentiles_to_use)
+
+    def __call__(self, score_track, windowsize, original_summed_score_track):
+
+        #original_summed_score_track is supplied to avoid recomputing it 
+        window_sum_function = get_simple_window_sum_function(windowsize)
+        if (original_summed_score_track is not None):
+            original_summed_score_track = window_sum_function(arrs=score_track) 
+
+        values = np.concatenate(original_summed_score_track, axis=0)
+       
+        # first estimate mu, using two level histogram to get to 1e-6
+        hist1, bin_edges1 = np.histogram(values, bins=1000)
+        peak1 = np.argmax(hist1)
+        l_edge = bin_edges1[peak1]
+        r_edge = bin_edges1[peak1+1]
+        top_values = values[ (l_edge < values) & (values < r_edge) ]
+        hist2, bin_edges2 = np.histogram(top_values, bins=1000)
+        peak2 = np.argmax(hist2)
+        l_edge = bin_edges2[peak2]
+        r_edge = bin_edges2[peak2+1]
+        mu = (l_edge + r_edge) / 2
+        if (self.verbose):
+            print("peak(mu)=", mu)
+
+        pos_values = [x for x in values if x >= mu]
+        neg_values = [x for x in values if x <= mu] 
+        #for an exponential distribution:
+        # cdf = 1 - exp(-lambda*x)
+        # exp(-lambda*x) = 1-cdf
+        # -lambda*x = log(1-cdf)
+        # lambda = -log(1-cdf)/x
+        # x = -log(1-cdf)/lambda
+        #Take the most aggressive lambda over all percentiles
+        pos_laplace_lambda = np.max(
+            -np.log(1-(self.percentiles_to_use/100.0))/
+            (np.percentile(a=pos_values, q=self.percentiles_to_use)-mu))
+        neg_laplace_lambda = np.max(
+            -np.log(1-(self.percentiles_to_use/100.0))/
+            (np.abs(np.percentile(a=neg_values,
+                                  q=100-self.percentiles_to_use)-mu)))
+
+        self.rng.seed(self.random_seed)
+        prob_pos = float(len(pos_values))/(len(pos_values)+len(neg_values)) 
+        sampled_vals = []
+        for i in range(self.num_to_samp):
+            sign = 1 if (self.rng.uniform() < prob_pos) else -1
+            if (sign == 1):
+                sampled_cdf = self.rng.uniform()
+                val = -np.log(1-sampled_cdf)/pos_laplace_lambda + mu 
+            else:
+                sampled_cdf = self.rng.uniform() 
+                val = mu + np.log(1-sampled_cdf)/neg_laplace_lambda
+            sampled_vals.append(val)
+        return np.array(sampled_vals)
+        
+
 class FlipSignNullDist(GenerateNullDist):
 
-    def __init__(self, num_to_samp, shuffle_pos=False,
+    def __init__(self, num_seq_to_samp, shuffle_pos=False,
                        seed=1234, num_breaks=100,
                        lower_null_percentile=20,
                        upper_null_percentile=80):
-        self.num_to_samp = num_to_samp
+        self.num_seq_to_samp = num_seq_to_samp
         self.shuffle_pos = shuffle_pos
         self.seed = seed
         self.rng = np.random.RandomState()
@@ -205,11 +283,15 @@ class FlipSignNullDist(GenerateNullDist):
                     num_pos_vals += (1 if val > 0 else 0)
                     num_neg_vals += (1 if val < 0 else 0)
             retained_track_portions.append(single_retained_track)
+
+        print("Fraction of positions retained:",
+              sum(len(x) for x in retained_track_portions)/
+              sum(len(x) for x in score_track))
             
         prob_pos = num_pos_vals/float(num_pos_vals + num_neg_vals)
         self.rng.seed(self.seed)
         null_tracks = []
-        for i in range(self.num_to_samp):
+        for i in range(self.num_seq_to_samp):
             random_track = retained_track_portions[
              int(self.rng.randint(0,len(retained_track_portions)))]
             track_with_sign_flips = np.array([
@@ -218,7 +300,7 @@ class FlipSignNullDist(GenerateNullDist):
             if (self.shuffle_pos):
                 self.rng.shuffle(track_with_sign_flips) 
             null_tracks.append(track_with_sign_flips)
-        return null_tracks
+        return np.concatenate(window_sum_function(null_tracks), axis=0)
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -294,12 +376,13 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             print("Generating null dist")
             sys.stdout.flush()
         if (hasattr(null_track, '__call__')):
-            null_summed_score_track = null_track(
+            null_vals = null_track(
                 score_track=score_track,
                 windowsize=self.sliding,
                 original_summed_score_track=original_summed_score_track)
         else:
             null_summed_score_track = window_sum_function(arrs=null_track) 
+            null_vals = list(np.concatenate(null_summed_score_track, axis=0))
 
         #Determine the window thresholds
         if (tnt_results is None):
@@ -312,7 +395,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             pos_orig_vals = np.array(sorted([x for x in orig_vals if x >= 0]))
             neg_orig_vals = np.array(sorted([x for x in orig_vals if x < 0],
                                       key=lambda x: abs(x)))
-            null_vals = list(np.concatenate(null_summed_score_track, axis=0))
             pos_null_vals = [x for x in null_vals if x >= 0]
             neg_null_vals = [x for x in null_vals if x < 0]
             pos_ir = IsotonicRegression().fit(
@@ -378,11 +460,17 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                       val_transformer(pos_threshold))
 
             from matplotlib import pyplot as plt
-            #plt.figure()
-            #plt.hist(null_vals, bins=100)
-            #plt.show()
+
             plt.figure()
-            hist, histbins, _ = plt.hist(orig_vals, bins=100)
+            np.random.shuffle(orig_vals)
+            hist, histbins, _ = plt.hist(orig_vals[:min(len(orig_vals),
+                                                        len(null_vals))],
+                                         bins=100, alpha=0.5)
+            np.random.shuffle(null_vals)
+            _, _, _ = plt.hist(null_vals[:min(len(orig_vals),
+                                              len(null_vals))],
+                               bins=histbins, alpha=0.5)
+
             bincenters = 0.5*(histbins[1:]+histbins[:-1])
             poshistvals,posbins = zip(*[x for x in zip(hist,bincenters)
                                          if x[1] > 0])
@@ -397,7 +485,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                       list(np.minimum(poshistvals,
                                       poshistvals*(1-posbin_precisions)/
                                                  (posbin_precisions+1E-7)))),
-                     color="orange")
+                     color="purple")
             plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
                      color="red")
             plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
