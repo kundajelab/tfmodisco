@@ -4,6 +4,7 @@ import itertools
 from collections import defaultdict, OrderedDict
 import numpy as np
 from . import util
+from . import value_provider
 
 
 class MetaclusteringResults(object):
@@ -212,7 +213,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         task_name_to_value_provider_grp = grp["task_name_to_value_provider"]
         for task_name in task_names:
             task_name_to_value_provider[task_name] =\
-                core.AbstractValueProvider.from_hdf5(
+                value_provider.AbstractValueProvider.from_hdf5(
                     task_name_to_value_provider_grp[task_name])
         min_cluster_size = grp.attrs["min_cluster_size"]
         threshold_for_counting_sign = grp.attrs["threshold_for_counting_sign"]
