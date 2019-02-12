@@ -149,7 +149,7 @@ class TakeAbs(GenerateNullDist):
 class LaplaceNullDist(GenerateNullDist):
 
     def __init__(self, num_to_samp, verbose=True,
-                       percentiles_to_use=[5*(x+1) for x in range(12)],
+                       percentiles_to_use=[5*(x+1) for x in range(19)],
                        random_seed=1234):
         self.num_to_samp = num_to_samp
         self.verbose = verbose

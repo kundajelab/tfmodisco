@@ -145,7 +145,7 @@ class TfModiscoWorkflow(object):
                  min_metacluster_size=100,
                  weak_threshold_for_counting_sign=0.8,
                  max_seqlets_per_metacluster=20000,
-                 target_seqlet_fdr=0.05,
+                 target_seqlet_fdr=0.2,
                  min_passing_windows_frac=0.03,
                  max_passing_windows_frac=0.2,
                  verbose=True,
