@@ -142,6 +142,7 @@ class TfModiscoWorkflow(object):
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_metacluster_size=100,
+                 min_metacluster_size_frac=0.01,
                  target_seqlet_fdr=0.05,
                  weak_threshold_for_counting_sign=0.99,
                  max_seqlets_per_metacluster=20000,
@@ -156,6 +157,7 @@ class TfModiscoWorkflow(object):
         self.percentiles_in_bandwidth = percentiles_in_bandwidth
         self.overlap_portion = overlap_portion
         self.min_metacluster_size = min_metacluster_size
+        self.min_metacluster_size_frac = min_metacluster_size_frac
         self.target_seqlet_fdr = target_seqlet_fdr
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
@@ -217,6 +219,14 @@ class TfModiscoWorkflow(object):
         if (len(seqlets) < 100):
             print("WARNING: you found relatively few seqlets."
                   +" Consider dropping target_seqlet_fdr") 
+
+        
+        if int(self.min_metacluster_size_frac * len(seqlets)) > self.min_metacluster_size:
+            print("min_metacluster_size_frac * len(seqlets) = {0} is more than min_metacluster_size={1}.".\
+                  format(int(self.min_metacluster_size_frac * len(seqlets)), self.min_metacluster_size))
+            print("Using it as a new min_metacluster_size")
+            self.min_metacluster_size = int(self.min_metacluster_size_frac * len(seqlets))
+
 
         if (self.weak_threshold_for_counting_sign is None):
             weak_threshold_for_counting_sign = laplace_threshold_cdf

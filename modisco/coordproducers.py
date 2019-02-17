@@ -170,6 +170,7 @@ class LaplaceThreshold(AbstractThresholdingFunction):
         if (self.min_seqlets is not None):
             num_pos_passing = np.sum(pos_values > pos_threshold)
             num_neg_passing = np.sum(neg_values < neg_threshold)
+            print("testing if {} + {} < {}".format(num_pos_passing, num_neg_passing, self.min_seqlets))
             if (num_pos_passing + num_neg_passing < self.min_seqlets):
                 #manually adjust the threshold
                 shifted_values = values - mu
@@ -179,6 +180,9 @@ class LaplaceThreshold(AbstractThresholdingFunction):
                     print("Manually adjusting thresholds to get desired num seqlets")
                 pos_threshold = abs_threshold
                 neg_threshold = -abs_threshold
+            else:
+                print("thresholds were not adjusted")
+                    
         
         pos_threshold_cdf = 1-np.exp(-pos_threshold/pos_laplace_b)
         neg_threshold_cdf = 1-np.exp(neg_threshold/neg_laplace_b)
