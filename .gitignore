@@ -8,3 +8,4 @@
 **/*.tree_*
 **/*.weights
 **/*DS_Store
+dist
