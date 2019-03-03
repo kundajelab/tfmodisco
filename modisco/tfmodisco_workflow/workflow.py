@@ -109,24 +109,30 @@ class SubMetaclusterResults(object):
 
 
 def prep_track_set(task_names, contrib_scores,
-                    hypothetical_contribs, one_hot):
+                    hypothetical_contribs, one_hot,
+                    revcomp=True):
     contrib_scores_tracks = [
         core.DataTrack(
             name=key+"_contrib_scores",
             fwd_tracks=contrib_scores[key],
-            rev_tracks=[x[::-1, ::-1] for x in 
-                        contrib_scores[key]],
+            rev_tracks=(([x[::-1, ::-1] for x in 
+                         contrib_scores[key]])
+                        if revcomp else
+                         None),
             has_pos_axis=True) for key in task_names] 
     hypothetical_contribs_tracks = [
         core.DataTrack(name=key+"_hypothetical_contribs",
                        fwd_tracks=hypothetical_contribs[key],
-                       rev_tracks=[x[::-1, ::-1] for x in 
-                                    hypothetical_contribs[key]],
+                       rev_tracks=(([x[::-1, ::-1] for x in 
+                                     hypothetical_contribs[key]])
+                                   if revcomp else
+                                    None),
                        has_pos_axis=True)
                        for key in task_names]
     onehot_track = core.DataTrack(
                         name="sequence", fwd_tracks=one_hot,
-                        rev_tracks=[x[::-1, ::-1] for x in one_hot],
+                        rev_tracks=([x[::-1, ::-1] for x in one_hot]
+                                    if revcomp else None),
                         has_pos_axis=True)
     track_set = core.TrackSet(
                     data_tracks=contrib_scores_tracks
@@ -187,7 +193,8 @@ class TfModiscoWorkflow(object):
                        # from task_name to 1d trakcs, or a callable
                        null_per_pos_scores=coordproducers.LaplaceNullDist(
                          num_to_samp=10000),
-                       per_position_contrib_scores=None):
+                       per_position_contrib_scores=None,
+                       revcomp=True):
 
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
@@ -204,7 +211,8 @@ class TfModiscoWorkflow(object):
                         task_names=task_names,
                         contrib_scores=contrib_scores,
                         hypothetical_contribs=hypothetical_contribs,
-                        one_hot=one_hot)
+                        one_hot=one_hot,
+                        revcomp=revcomp)
 
         if (per_position_contrib_scores is None):
             per_position_contrib_scores = OrderedDict([
