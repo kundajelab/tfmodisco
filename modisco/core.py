@@ -14,7 +14,8 @@ from .value_provider import AbstractValueProvider
 class Snippet(object):
 
     def __init__(self, fwd, rev, has_pos_axis):
-        assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
+        if (rev is not None):
+            assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
         self.fwd = fwd
         self.rev = rev
         self.has_pos_axis = has_pos_axis
@@ -58,8 +59,9 @@ class DataTrack(object):
     def __init__(self, name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
         assert (rev_tracks is None) or (len(fwd_tracks)==len(rev_tracks))
-        for fwd,rev in zip(fwd_tracks, rev_tracks):
-            assert len(fwd)==len(rev)
+        if (rev_tracks is not None):
+            for fwd,rev in zip(fwd_tracks, rev_tracks):
+                assert len(fwd)==len(rev)
         self.fwd_tracks = fwd_tracks
         self.rev_tracks = rev_tracks
         self.has_pos_axis = has_pos_axis
@@ -531,7 +533,7 @@ class CrossMetricPatternAligner(AbstractPatternAligner):
                     min_overlap=self.pattern_comparison_settings.min_overlap) 
         else:
             best_crossmetric_rev = None
-        if ((best_crossmetric_rev is not None and)
+        if ((best_crossmetric_rev is not None) and
              best_crossmetric_rev > best_crossmetric):
             return (best_crossmetric_argmax_rev, True, best_crossmetric_rev)
         else:
