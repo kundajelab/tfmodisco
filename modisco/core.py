@@ -14,7 +14,8 @@ from .value_provider import AbstractValueProvider
 class Snippet(object):
 
     def __init__(self, fwd, rev, has_pos_axis):
-        assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
+        if (rev is not None):
+            assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
         self.fwd = fwd
         self.rev = rev
         self.has_pos_axis = has_pos_axis
@@ -23,20 +24,22 @@ class Snippet(object):
         assert end_idx <= len(self)
         assert start_idx >= 0
         new_fwd = self.fwd[start_idx:end_idx]
-        new_rev = self.rev[len(self)-end_idx:len(self)-start_idx]
+        new_rev = (self.rev[len(self)-end_idx:len(self)-start_idx]
+                   if self.rev is not None else None)
         return Snippet(fwd=new_fwd, rev=new_rev,
                        has_pos_axis=self.has_pos_axis)
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
         fwd = np.array(grp["fwd"]) 
-        rev = np.array(grp["rev"])
+        rev = (np.array(grp["rev"]) if "rev" in grp else None)
         has_pos_axis = grp.attrs["has_pos_axis"]
         return cls(fwd=fwd, rev=rev, has_pos_axis=has_pos_axis)
 
     def save_hdf5(self, grp):
         grp.create_dataset("fwd", data=self.fwd)  
-        grp.create_dataset("rev", data=self.rev)
+        if (self.rev is not None):
+            grp.create_dataset("rev", data=self.rev)
         grp.attrs["has_pos_axis"] = self.has_pos_axis
 
     def __len__(self):
@@ -55,9 +58,10 @@ class DataTrack(object):
     """
     def __init__(self, name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
-        assert len(fwd_tracks)==len(rev_tracks)
-        for fwd,rev in zip(fwd_tracks, rev_tracks):
-            assert len(fwd)==len(rev)
+        assert (rev_tracks is None) or (len(fwd_tracks)==len(rev_tracks))
+        if (rev_tracks is not None):
+            for fwd,rev in zip(fwd_tracks, rev_tracks):
+                assert len(fwd)==len(rev)
         self.fwd_tracks = fwd_tracks
         self.rev_tracks = rev_tracks
         self.has_pos_axis = has_pos_axis
@@ -69,17 +73,19 @@ class DataTrack(object):
         if (self.has_pos_axis==False):
             snippet = Snippet(
                     fwd=self.fwd_tracks[coor.example_idx],
-                    rev=self.rev_tracks[coor.example_idx],
+                    rev=(self.rev_tracks[coor.example_idx]
+                         if self.rev_tracks is not None else None),
                     has_pos_axis=self.has_pos_axis)
         else:
             assert coor.start >= 0
             assert len(self.fwd_tracks[coor.example_idx]) >= coor.end, coor.end
             snippet = Snippet(
                     fwd=self.fwd_tracks[coor.example_idx][coor.start:coor.end],
-                    rev=self.rev_tracks[
+                    rev=(self.rev_tracks[
                          coor.example_idx][
                          (len(self.rev_tracks[coor.example_idx])-coor.end):
-                         (len(self.rev_tracks[coor.example_idx])-coor.start)],
+                         (len(self.rev_tracks[coor.example_idx])-coor.start)]
+                         if self.rev_tracks is not None else None),
                     has_pos_axis=self.has_pos_axis)
         if (coor.is_revcomp):
             snippet = snippet.revcomp()
@@ -519,12 +525,16 @@ class CrossMetricPatternAligner(AbstractPatternAligner):
                 parent_matrix=fwd_data_parent,
                 child_matrix=fwd_data_child,
                 min_overlap=self.pattern_comparison_settings.min_overlap)  
-        best_crossmetric_rev, best_crossmetric_argmax_rev =\
-            self.metric(
-                parent_matrix=fwd_data_parent,
-                child_matrix=rev_data_child,
-                min_overlap=self.pattern_comparison_settings.min_overlap) 
-        if (best_crossmetric_rev > best_crossmetric):
+        if (rev_data_child is not None):
+            best_crossmetric_rev, best_crossmetric_argmax_rev =\
+                self.metric(
+                    parent_matrix=fwd_data_parent,
+                    child_matrix=rev_data_child,
+                    min_overlap=self.pattern_comparison_settings.min_overlap) 
+        else:
+            best_crossmetric_rev = None
+        if ((best_crossmetric_rev is not None) and
+             best_crossmetric_rev > best_crossmetric):
             return (best_crossmetric_argmax_rev, True, best_crossmetric_rev)
         else:
             return (best_crossmetric_argmax, False, best_crossmetric)
@@ -759,8 +769,11 @@ class AggregatedSeqlet(Pattern):
                            +list(sample_seqlet[track_name].fwd.shape[1:]))
             self._track_name_to_agg[track_name] =\
                 np.zeros(track_shape).astype("float") 
-            self._track_name_to_agg_revcomp[track_name] =\
-                np.zeros(track_shape).astype("float") 
+            if (sample_seqlet[track_name].rev is not None):
+                self._track_name_to_agg_revcomp[track_name] =\
+                    np.zeros(track_shape).astype("float") 
+            else:
+                self._track_name_to_agg_revcomp[track_name] = None
             self.track_name_to_snippet[track_name] = Snippet(
                 fwd=self._track_name_to_agg[track_name],
                 rev=self._track_name_to_agg_revcomp[track_name],
@@ -768,21 +781,26 @@ class AggregatedSeqlet(Pattern):
 
     def get_nonzero_average(self, track_name, pseudocount):
         fwd_nonzero_count = np.zeros_like(self[track_name].fwd)
-        rev_nonzero_count = np.zeros_like(self[track_name].rev)
+        if (self[track_name].rev is not None):
+            rev_nonzero_count = np.zeros_like(self[track_name].rev)
+        else:
+            rev_nonzero_count = None
         has_pos_axis = self[track_name].has_pos_axis
         for seqlet_and_alnmt in self.seqlets_and_alnmts:
             alnmt = seqlet_and_alnmt.alnmt
             seqlet_length = len(seqlet_and_alnmt.seqlet)
-            motif_length = len(rev_nonzero_count)
-            fwd_nonzero_count[alnmt:(alnmt+seqlet_length)] +=\
-                (np.abs(seqlet_and_alnmt.seqlet[track_name].fwd) > 0.0)
-            rev_nonzero_count[motif_length-(alnmt+seqlet_length):
-                              motif_length-alnmt] +=\
-                (np.abs(seqlet_and_alnmt.seqlet[track_name].rev) > 0.0)
+            motif_length = len(fwd_nonzero_count)
+            fwd_nonzero_count[alnmt:(alnmt+seqlet_length)] += (
+                (np.abs(seqlet_and_alnmt.seqlet[track_name].fwd) > 0.0))
+            if (rev_nonzero_count is not None):
+                rev_nonzero_count[motif_length-(alnmt+seqlet_length):
+                                  motif_length-alnmt] += (
+                 (np.abs(seqlet_and_alnmt.seqlet[track_name].rev) > 0.0))
         return Snippet(fwd=self._track_name_to_agg[track_name]
                            /(fwd_nonzero_count+pseudocount),
-                       rev=self._track_name_to_agg_revcomp[track_name]
-                           /(rev_nonzero_count+pseudocount),
+                       rev=((self._track_name_to_agg_revcomp[track_name]
+                            /(rev_nonzero_count+pseudocount))
+                            if (rev_nonzero_count is not None) else None) ,
                        has_pos_axis=has_pos_axis)
 
 
@@ -801,8 +819,9 @@ class AggregatedSeqlet(Pattern):
                 padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
                 extended_track = np.concatenate(
                     [np.zeros(padding_shape), track], axis=0)
-                extended_rev_track = np.concatenate(
+                extended_rev_track = (np.concatenate(
                     [rev_track, np.zeros(padding_shape)], axis=0)
+                    if (rev_track is not None) else None)
                 self._track_name_to_agg[track_name] = extended_track
                 self._track_name_to_agg_revcomp[track_name] =\
                     extended_rev_track
@@ -820,8 +839,9 @@ class AggregatedSeqlet(Pattern):
                 padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
                 extended_track = np.concatenate(
                     [track, np.zeros(padding_shape)], axis=0)
-                extended_rev_track = np.concatenate(
+                extended_rev_track = (np.concatenate(
                     [np.zeros(padding_shape),rev_track], axis=0)
+                    if (rev_track is not None) else None)
                 self._track_name_to_agg[track_name] = extended_track
                 self._track_name_to_agg_revcomp[track_name] =\
                     extended_rev_track
@@ -868,22 +888,27 @@ class AggregatedSeqlet(Pattern):
             if (self.track_name_to_snippet[track_name].has_pos_axis==False):
                 self._track_name_to_agg[track_name] +=\
                     pattern[track_name].fwd
-                self._track_name_to_agg_revcomp[track_name] +=\
-                    pattern[track_name].rev
+                if (self._track_name_to_agg_revcomp[track_name] is not None):
+                    self._track_name_to_agg_revcomp[track_name] +=\
+                        pattern[track_name].rev
             else:
                 self._track_name_to_agg[track_name][slice_obj] +=\
                     pattern[track_name].fwd 
-                self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
-                     += pattern[track_name].rev
+                if (self._track_name_to_agg_revcomp[track_name] is not None):
+                    self._track_name_to_agg_revcomp[track_name]\
+                         [rev_slice_obj] += pattern[track_name].rev
             self.track_name_to_snippet[track_name] =\
              Snippet(
               fwd=(self._track_name_to_agg[track_name]
                    /(self.per_position_counts[:,None]
                      + 1E-7*(self.per_position_counts[:,None]==0))),
-              rev=(self._track_name_to_agg_revcomp[track_name]
+              rev=((self._track_name_to_agg_revcomp[track_name]
                    /(self.per_position_counts[::-1,None]
-                     + 1E-7*(self.per_position_counts[::-1,None]==0))),
-              has_pos_axis=self.track_name_to_snippet[track_name].has_pos_axis) 
+                     + 1E-7*(self.per_position_counts[::-1,None]==0)))
+                   if (self._track_name_to_agg_revcomp[track_name]
+                       is not None) else None),
+              has_pos_axis=
+               self.track_name_to_snippet[track_name].has_pos_axis) 
 
     def __len__(self):
         return self.length
@@ -938,22 +963,25 @@ def get_2d_data_from_patterns(patterns, track_names, track_transformer):
             pattern=pattern, track_names=track_names,
             track_transformer=track_transformer) 
         all_fwd_data.append(fwd_data)
-        all_rev_data.append(rev_data)
-    return (np.array(all_fwd_data),
-            np.array(all_rev_data))
+        if (rev_data is not None):
+            all_rev_data.append(rev_data)
+    if (len(all_rev_data)==0):
+        return (np.array(all_fwd_data), None)
+    else:
+        return (np.array(all_fwd_data), np.array(all_rev_data))
 
 
 def get_2d_data_from_pattern(pattern, track_names, track_transformer): 
-    snippets = [pattern[track_name]
-                 for track_name in track_names] 
+    snippets = [pattern[track_name] for track_name in track_names] 
     if (track_transformer is None):
         track_transformer = lambda x: x
     fwd_data = np.concatenate([track_transformer(
              np.reshape(snippet.fwd, (len(snippet.fwd), -1)))
             for snippet in snippets], axis=1)
-    rev_data = np.concatenate([track_transformer(
+    rev_data = (np.concatenate([track_transformer(
             np.reshape(snippet.rev, (len(snippet.rev), -1)))
             for snippet in snippets], axis=1)
+            if (snippets[0].rev is not None) else None)
     return fwd_data, rev_data
 
 

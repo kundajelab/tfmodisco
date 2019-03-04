@@ -345,11 +345,16 @@ class AssignSeqletsByBestMetric(object):
                      filters=pattern_fwd_data,
                      things_to_scan=seqlet_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_metric_rev = self.matrix_affinity_metric(
+        if (seqlet_rev_data is not None):
+            cross_metric_rev = self.matrix_affinity_metric(
                      filters=pattern_fwd_data,
                      things_to_scan=seqlet_rev_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_metrics = np.maximum(cross_metric_fwd, cross_metric_rev)
+        if (seqlet_rev_data is not None):
+            cross_metrics = np.maximum(cross_metric_fwd, cross_metric_rev)
+        else:
+            cross_metrics = cross_metric_fwd
+            
         assert cross_metrics.shape == (len(patterns), len(seqlets_to_assign))
         seqlet_assignments = np.argmax(cross_metrics, axis=0) 
         seqlet_assignment_scores = np.max(cross_metrics, axis=0)
@@ -577,40 +582,6 @@ class AdhocMergeAlignedPatternsCondition(
     def __call__(self, parent_pattern, child_pattern, alnmt):
         return self.func(parent_pattern=parent_pattern,
                          child_pattern=child_pattern, alnmt=alnmt)
-
-
-class SimilarityThreshold(AbstractMergeAlignedPatternsCondition):
-
-    def __init__(self, pattern_comparison_settings,
-                       comparison_metric, threshold, verbose):
-        self.pattern_comparison_settings = pattern_comparison_settings
-        self.comparison_metric = comparison_metric
-        self.threshold = threshold
-        self.verbose = verbose
-    
-    def __call__(self, parent_pattern, child_pattern, alnmt):
-        parent_data_fwd, patern_data_rev =\
-            core.get_2d_data_from_pattern(
-                pattern=parent_pattern,
-                track_names=self.pattern_comparison_settings.track_names,
-                track_transformer=
-                    self.pattern_comparison_settings.track_transformer)
-        child_data_fwd, child_data_rev =\
-            core.get_2d_data_from_pattern(
-                pattern=child_pattern,
-                track_names=self.pattern_comparison_settings.track_names,
-                track_transformer=
-                    self.pattern_comparison_settings.track_transformer)
-        metric = self.comparison_metric(
-                    in1=parent_data_fwd[max(alnmt,0):
-                                    min(len(parent_data_fwd),
-                                        (len(child_data_fwd)+alnmt))],
-                    in2=child_data_fwd[max(-alnmt,0):
-                                      min(len(child_data_fwd),
-                                          len(parent_data_fwd)-alnmt)])
-        if (self.verbose):
-            print("Metric",metric)
-        return (metric >= self.threshold)
 
 
 class PatternMergeHierarchy(object):
