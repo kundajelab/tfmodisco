@@ -43,7 +43,7 @@ class TransformCentralWindowValueProvider(AbstractValueProvider):
     def get_val(self, seqlet):
         flank_to_ignore = int(0.5*(len(seqlet)-self.central_window))
         track_values = seqlet[self.track_name]\
-                        .fwd[flank_to_ignore:-flank_to_ignore]
+                        .fwd[flank_to_ignore:(len(seqlet)-flank_to_ignore)]
         return np.sum(track_values)
 
     def save_hdf5(self, grp):
@@ -95,3 +95,37 @@ class AbsPercentileValTransformer(AbstractValTransformer):
         return np.sign(val)*np.searchsorted(
                  a=self.distribution,
                  v=abs(val))/float(len(self.distribution))
+
+
+class SignedPercentileValTransformer(AbstractValTransformer):
+
+    def __init__(self, distribution):
+        self.distribution = np.array(distribution)
+        self.pos_dist = np.array(sorted(
+            [x for x in self.distribution if x > 0]))
+        self.abs_neg_dist = np.array(sorted(
+            [abs(x) for x in self.distribution if x < 0]))
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        distribution = np.array(grp["distribution"][:])
+        return cls(distribution=distribution) 
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.create_dataset("distribution", data=self.distribution)
+
+    def __call__(self, val):
+        if (val == 0):
+            return 0
+        elif (val > 0):
+            #add 1E-7 for complicated numerical stability issues 
+            # basically need robustness when dealing with ties
+            return  np.searchsorted(
+                     a=self.pos_dist, v=(val+1E-7))/float(len(self.pos_dist))
+        else:
+            #add 1E-7 for complicated numerical stability issues 
+            # basically need robustness when dealing with ties
+            return  np.searchsorted(
+                     a=self.abs_neg_dist, v=(abs(val)+1E-7))/float(
+                        len(self.abs_neg_dist))

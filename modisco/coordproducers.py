@@ -7,7 +7,9 @@ import itertools
 from sklearn.neighbors.kde import KernelDensity
 import sys
 import time
-from .value_provider import AbstractValTransformer, AbsPercentileValTransformer
+from .value_provider import (
+    AbstractValTransformer, AbsPercentileValTransformer,
+    SignedPercentileValTransformer)
 
 
 class TransformAndThresholdResults(object):
@@ -101,13 +103,9 @@ def get_simple_window_sum_function(window_size):
     def window_sum_function(arrs):
         to_return = []
         for arr in arrs:
-            current_sum = np.sum(arr[0:window_size])
-            arr_running_sum = [current_sum]
-            for i in range(0,(len(arr)-window_size)):
-                current_sum = (current_sum +
-                               arr[i+window_size] - arr[i])
-                arr_running_sum.append(current_sum)
-            to_return.append(np.array(arr_running_sum))
+            cumsum = np.cumsum(arr)
+            cumsum = np.array([0]+list(cumsum))
+            to_return.append(cumsum[window_size:]-cumsum[:-window_size])
         return to_return
     return window_sum_function
 
@@ -311,9 +309,11 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        target_fdr,
                        min_passing_windows_frac,
                        max_passing_windows_frac,
+                       separate_pos_neg_thresholds=False,
                        max_seqlets_total=None,
                        progress_update=5000,
-                       verbose=True):
+                       verbose=True,
+                       ):
         self.sliding = sliding
         self.flank = flank
         self.suppress = suppress
@@ -321,6 +321,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         assert max_passing_windows_frac >= min_passing_windows_frac
         self.min_passing_windows_frac = min_passing_windows_frac 
         self.max_passing_windows_frac = max_passing_windows_frac
+        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
         self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
@@ -333,6 +334,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         target_fdr = grp.attrs["target_fdr"]
         min_passing_windows_frac = grp.attrs["min_passing_windows_frac"]
         max_passing_windows_frac = grp.attrs["max_passing_windows_frac"]
+        separate_pos_neg_thresholds = grp.attrs["separate_pos_neg_thresholds"]
         if ("max_seqlets_total" in grp.attrs):
             max_seqlets_total = grp.attrs["max_seqlets_total"]
         else:
@@ -344,6 +346,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                     target_fdr=target_fdr,
                     min_passing_windows_frac=min_passing_windows_frac,
                     max_passing_windows_frac=max_passing_windows_frac,
+                    separate_pos_neg_thresholds=separate_pos_neg_thresholds,
                     max_seqlets_total=max_seqlets_total,
                     progress_update=progress_update, verbose=verbose) 
 
@@ -355,6 +358,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         grp.attrs["target_fdr"] = self.target_fdr
         grp.attrs["min_passing_windows_frac"] = self.min_passing_windows_frac
         grp.attrs["max_passing_windows_frac"] = self.max_passing_windows_frac
+        grp.attrs["separate_pos_neg_thresholds"] =\
+            self.separate_pos_neg_thresholds
         #TODO: save min_seqlets feature
         if (self.max_seqlets_total is not None):
             grp.attrs["max_seqlets_total"] = self.max_seqlets_total 
@@ -435,22 +440,42 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                     print("Passing windows frac was",
                           frac_passing_windows,", which is below ",
                           self.min_passing_windows_frac,"; adjusting")
-                pos_threshold = np.percentile(
-                    a=np.abs(orig_vals),
-                    q=100*(1-self.min_passing_windows_frac)) 
-                neg_threshold = -pos_threshold
+                if (self.separate_pos_neg_thresholds):
+                    pos_threshold = np.percentile(
+                        a=[x for x in orig_vals if x > 0],
+                        q=100*(1-self.min_passing_windows_frac))
+                    neg_threshold = np.percentile(
+                        a=[x for x in orig_vals if x < 0],
+                        q=100*(self.min_passing_windows_frac))
+                else:
+                    pos_threshold = np.percentile(
+                        a=np.abs(orig_vals),
+                        q=100*(1-self.min_passing_windows_frac)) 
+                    neg_threshold = -pos_threshold
             if (frac_passing_windows > self.max_passing_windows_frac):
                 if (self.verbose):
                     print("Passing windows frac was",
                           frac_passing_windows,", which is above ",
                           self.max_passing_windows_frac,"; adjusting")
-                pos_threshold = np.percentile(
-                    a=np.abs(orig_vals),
-                    q=100*(1-self.max_passing_windows_frac)) 
-                neg_threshold = -pos_threshold
+                if (self.separate_pos_neg_thresholds):
+                    pos_threshold = np.percentile(
+                        a=[x for x in orig_vals if x > 0],
+                        q=100*(1-self.max_passing_windows_frac))
+                    neg_threshold = np.percentile(
+                        a=[x for x in orig_vals if x < 0],
+                        q=100*(self.max_passing_windows_frac))
+                else:
+                    pos_threshold = np.percentile(
+                        a=np.abs(orig_vals),
+                        q=100*(1-self.max_passing_windows_frac)) 
+                    neg_threshold = -pos_threshold
 
-            val_transformer = AbsPercentileValTransformer(
-                distribution=orig_vals)
+            if (self.separate_pos_neg_thresholds):
+                val_transformer = SignedPercentileValTransformer(
+                    distribution=orig_vals)
+            else:
+                val_transformer = AbsPercentileValTransformer(
+                    distribution=orig_vals)
 
             if (self.verbose):
                 print("Final raw thresholds are",
@@ -516,12 +541,12 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         neg_threshold = tnt_results.neg_threshold
         pos_threshold = tnt_results.pos_threshold
 
-        summed_score_track = [x.copy() for x in original_summed_score_track]
+        summed_score_track = [np.array(x) for x in original_summed_score_track]
 
         #if a position is less than the threshold, set it to -np.inf
         summed_score_track = [
-            np.array([np.abs(y) if (y >= pos_threshold
-                            or y <= neg_threshold)
+            np.array([np.abs(y) if (y > pos_threshold
+                            or y < neg_threshold)
                            else -np.inf for y in x])
             for x in summed_score_track]
 
@@ -550,6 +575,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                         start=argmax-self.flank,
                         end=argmax+self.sliding+self.flank,
                         score=original_summed_score_track[example_idx][argmax]) 
+                    assert (coord.score > pos_threshold
+                            or coord.score < neg_threshold)
                     coords.append(coord)
                 else:
                     assert False,\

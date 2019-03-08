@@ -155,6 +155,7 @@ class TfModiscoWorkflow(object):
                  target_seqlet_fdr=0.2,
                  min_passing_windows_frac=0.03,
                  max_passing_windows_frac=0.2,
+                 separate_pos_neg_thresholds=False,
                  verbose=True,
                  min_seqlets_per_task=None):
 
@@ -177,6 +178,7 @@ class TfModiscoWorkflow(object):
         self.max_seqlets_per_metacluster = max_seqlets_per_metacluster
         self.min_passing_windows_frac = min_passing_windows_frac
         self.max_passing_windows_frac = max_passing_windows_frac
+        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
         self.verbose = verbose
 
         self.build()
@@ -206,6 +208,7 @@ class TfModiscoWorkflow(object):
             target_fdr=self.target_seqlet_fdr,
             min_passing_windows_frac=self.min_passing_windows_frac,
             max_passing_windows_frac=self.max_passing_windows_frac,
+            separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
             max_seqlets_total=None,
             verbose=self.verbose) 
 
@@ -234,7 +237,7 @@ class TfModiscoWorkflow(object):
                  abs(x.tnt_results.transformed_neg_threshold))
                  for x in (multitask_seqlet_creation_results.
                            task_name_to_coord_producer_results.values())]) -
-            0.0000001) #subtract 1e-7 to avoid numerical issues
+            0.0000001) #subtract 1e-7 to avoid weird numerical issues
         print("Across all tasks, the weakest transformed threshold used"
               +" was: "+str(weakest_transformed_thresh))
 
