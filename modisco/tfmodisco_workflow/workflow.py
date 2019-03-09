@@ -110,6 +110,7 @@ class SubMetaclusterResults(object):
 
 def prep_track_set(task_names, contrib_scores,
                     hypothetical_contribs, one_hot,
+                    other_comparison_data_tracks=[],
                     revcomp=True):
     contrib_scores_tracks = [
         core.DataTrack(
@@ -135,8 +136,10 @@ def prep_track_set(task_names, contrib_scores,
                                     if revcomp else None),
                         has_pos_axis=True)
     track_set = core.TrackSet(
-                    data_tracks=contrib_scores_tracks
-                    +hypothetical_contribs_tracks+[onehot_track])
+                    data_tracks=
+                     contrib_scores_tracks
+                     +hypothetical_contribs_tracks
+                     +[onehot_track]+other_comparison_data_tracks)
     return track_set
 
 
@@ -193,6 +196,7 @@ class TfModiscoWorkflow(object):
 
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot,
+                       other_comparison_data_tracks=[],
                        #null_tracks should either be a dictionary
                        # from task_name to 1d trakcs, or a callable
                        null_per_pos_scores=coordproducers.LaplaceNullDist(
@@ -217,6 +221,8 @@ class TfModiscoWorkflow(object):
                         contrib_scores=contrib_scores,
                         hypothetical_contribs=hypothetical_contribs,
                         one_hot=one_hot,
+                        other_comparison_data_tracks=
+                         other_comparison_data_tracks,
                         revcomp=revcomp)
 
         if (per_position_contrib_scores is None):
@@ -339,7 +345,8 @@ class TfModiscoWorkflow(object):
                 hypothetical_contribs_track_names=\
                     [key+"_hypothetical_contribs" for key in relevant_task_names],
                 track_signs=relevant_task_signs,
-                other_comparison_track_names=[])
+                other_comparison_track_names=[
+                  x.name for x in other_comparison_data_tracks])
 
             seqlets_to_patterns_result = seqlets_to_patterns(metacluster_seqlets)
             metacluster_idx_to_submetacluster_results[metacluster_idx] =\

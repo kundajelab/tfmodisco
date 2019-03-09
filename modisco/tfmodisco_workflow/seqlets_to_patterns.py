@@ -155,7 +155,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        contrib_scores_track_names,
                        hypothetical_contribs_track_names,
                        track_signs,
-                       other_comparison_track_names=[]):
+                       other_comparison_track_names):
 
         assert len(track_signs)==len(hypothetical_contribs_track_names)
         assert len(track_signs)==len(contrib_scores_track_names)
