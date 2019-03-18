@@ -10,6 +10,7 @@ modisco/gammamix.py
 modisco/metaclusterers.py
 modisco/nearest_neighbors.py
 modisco/util.py
+modisco/value_provider.py
 modisco.egg-info/PKG-INFO
 modisco.egg-info/SOURCES.txt
 modisco.egg-info/dependency_links.txt
