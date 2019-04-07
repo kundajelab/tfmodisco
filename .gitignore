@@ -9,3 +9,4 @@
 **/*.weights
 **/*DS_Store
 dist
+**/*.pkl

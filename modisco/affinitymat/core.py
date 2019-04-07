@@ -91,6 +91,35 @@ class AbstractSeqletsToOnedEmbedder(object):
         raise NotImplementedError()
 
 
+class TopNPosEmbedder(AbstractSeqletsToOnedEmbedder):
+
+    def __init__(self, topn, toembed_track_names,
+                 normalizer, imppos_track_names):
+        self.topn = topn
+        self.toembed_track_names = toembed_track_names
+        self.imppos_track_names = imppos_track_names
+        self.normalizer = normalizer
+        #imppos track names are used for identifying the important positions...
+        self.imppos_track_names = imppos_track_names
+
+    def __call__(self, seqlets):
+        
+        norm_toembed_fwd_data, norm_toembed_rev_data =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=self.toembed_track_names,
+                track_transformer=self.normalizer)  
+
+        unnorm_imppos_fwd_data, unnorm_imppos_rev_data =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=self.imppos_track_names,
+                track_transformer=None)
+        
+        #get an importance for each position
+        impfwd = np.sum(np.abs(unnorm_imppos_fwd_data, axis=0))
+
+
 class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
     
     def __init__(self, alphabet_size,
