@@ -12,15 +12,14 @@ import sys
 import gc
 
 
-class TfModiscoSeqletsToPatternsFactory(object):
+class CoreTfModiscoSeqletsToPatternsFactory(object):
 
-    def __init__(self, n_cores=4,
+    def __init__(self, #seqlet embedding arguments
+                       seqlet_embedder_factory,
+                       affmat_from_1d,
+
+                       n_cores=4,
                        min_overlap_while_sliding=0.7,
-
-                       #gapped kmer embedding arguments
-                       alphabet_size=4,
-                       kmer_len=8, num_gaps=3, num_mismatches=2,
-                       gpu_batch_size=20,
 
                        nn_n_jobs=4,
                        nearest_neighbors_to_compute=500,
@@ -58,13 +57,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
         #affinity_mat calculation
         self.n_cores = n_cores
         self.min_overlap_while_sliding = min_overlap_while_sliding
-
-        #gapped kmer embedding arguments
-        self.alphabet_size = alphabet_size
-        self.kmer_len = kmer_len
-        self.num_gaps = num_gaps
-        self.num_mismatches = num_mismatches
-        self.gpu_batch_size = gpu_batch_size
 
         self.nn_n_jobs = nn_n_jobs
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
@@ -109,47 +101,11 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.verbose = verbose
         self.seed = seed
 
+        self.seqlet_embedder_factory = seqlet_embedder_factory
+        self.affmat_from_1d = affmat_from_1d
+
     def get_jsonable_config(self):
-        to_return =  OrderedDict([
-                ('class_name', type(self).__name__),
-                ('n_cores', self.n_cores),
-                ('min_overlap_while_sliding', self.min_overlap_while_sliding),
-                ('alphabet_size', self.alphabet_size),
-                ('kmer_len', self.kmer_len),
-                ('num_gaps', self.num_gaps),
-                ('num_mismatches', self.num_mismatches),
-                ('nn_n_jobs', self.nn_n_jobs),
-                ('nearest_neighbors_to_compute',
-                 self.nearest_neighbors_to_compute),
-                ('affmat_correlation_threshold',
-                 self.affmat_correlation_threshold),
-                ('filter_beyond_first_round', filter_beyond_first_round),
-                ('tsne_perplexity', self.tsne_perplexity),
-                ('louvain_num_runs_and_levels_r1',
-                 self.louvain_num_runs_and_levels_r1),
-                ('louvain_num_runs_and_levels_r2',
-                 self.louvain_num_runs_and_levels_r2),
-                ('final_louvain_level_to_return',
-                 self.final_louvain_level_to_return),
-                ('louvain_contin_runs_r1',
-                 self.louvain_contin_runs_r1),
-                ('louvain_contin_runs_r2',
-                 self.louvain_contin_runs_r2),
-                ('frac_support_to_trim_to', self.frac_support_to_trim_to),
-                ('min_num_to_trim_to', self.min_num_to_trim_to),
-                ('trim_to_window_size', self.trim_to_window_size),
-                ('initial_flank_to_add', self.initial_flank_to_add),
-                ('prob_and_pertrack_sim_merge_thresholds',
-                 self.prob_and_pertrack_sim_merge_thresholds),
-                ('prob_and_pertrack_sim_dealbreaker_thresholds',
-                 self.prob_and_pertrack_sim_dealbreaker_thresholds),
-                ('threshold_for_spurious_merge_detection',
-                 self.threshold_for_spurious_merge_detection),
-                ('min_similarity_for_seqlet_assignment',
-                 self.min_similarity_for_seqlet_assignment),
-                ('final_min_cluster_size', self.final_min_cluster_size),
-                ('final_flank_to_add', self.final_flank_to_add)]) 
-        return to_return
+        raise NotImplementedError()
 
     def __call__(self, track_set, onehot_track_name,
                        contrib_scores_track_names,
@@ -175,28 +131,19 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 track_transformer=affinitymat.L1Normalizer(), 
                 min_overlap=self.min_overlap_while_sliding)
 
-        #gapped kmer embedder
-        gkmer_embedder = affinitymat.core.GappedKmerEmbedder(
-            alphabet_size=self.alphabet_size,
-            kmer_len=self.kmer_len,
-            num_gaps=self.num_gaps,
-            num_mismatches=self.num_mismatches,
-            batch_size=self.gpu_batch_size,
-            num_filters_to_retain=None,
+        self.seqlet_embedder = self.seqlet_embedder_factory(
             onehot_track_name=onehot_track_name,
-            toscore_track_names_and_signs=list(
-                zip(hypothetical_contribs_track_names,
-                    [np.sign(x) for x in track_signs])),
-            normalizer=affinitymat.core.MeanNormalizer())
+            contrib_scores_track_names=contrib_scores_track_names,
+            hypothetical_contribs_track_names=
+             hypothetical_contribs_track_names,
+            track_signs=track_signs,
+            other_comparison_track_names=other_comparison_track_names)
 
         #affinity matrix from embeddings
         coarse_affmat_computer =\
             affinitymat.core.AffmatFromSeqletEmbeddings(
-                seqlets_to_1d_embedder=gkmer_embedder,
-                affinity_mat_from_1d=\
-                    affinitymat.core.NumpyCosineSimilarity(
-                        verbose=self.verbose,
-                        gpu_batch_size=None),
+                seqlets_to_1d_embedder=self.seqlet_embedder,
+                affinity_mat_from_1d=self.affmat_from_1d,
                 verbose=self.verbose)
 
         nearest_neighbors_computer = nearest_neighbors.ScikitNearestNeighbors(
@@ -407,6 +354,99 @@ class TfModiscoSeqletsToPatternsFactory(object):
     def save_hdf5(self, grp):
         grp.attrs['jsonable_config'] =\
             json.dumps(self.jsonable_config, indent=4, separators=(',', ': ')) 
+
+
+class GkmerEmbedderTfModiscoSeqletsToPatternsFactory(
+        CoreTfModiscoSeqletsToPatternsFactory):
+
+    def __init__(self, #gapped kmer embedding arguments
+                       alphabet_size=4,
+                       kmer_len=8, num_gaps=3, num_mismatches=2,
+                       gpu_batch_size=20,
+                       verbose=True,
+                       **kwargs):
+
+        self.alphabet_size = alphabet_size
+        self.kmer_len = kmer_len
+        self.num_gaps = num_gaps
+        self.num_mismatches = num_mismatches
+        self.gpu_batch_size = gpu_batch_size
+
+        affmat_from_1d = affinitymat.core.NumpyCosineSimilarity(
+                            verbose=verbose,
+                            gpu_batch_size=None)
+        #seqlet embedder factor
+        seqlet_embedder_factory = (
+                lambda onehot_track_name,
+                       contrib_scores_track_names,
+                       hypothetical_contribs_track_names,
+                       track_signs,
+                       other_comparison_track_names:
+                affinitymat.core.GappedKmerEmbedder(
+                    alphabet_size=alphabet_size,
+                    kmer_len=kmer_len,
+                    num_gaps=num_gaps,
+                    num_mismatches=num_mismatches,
+                    batch_size=gpu_batch_size,
+                    num_filters_to_retain=None,
+                    onehot_track_name=onehot_track_name,
+                    toscore_track_names_and_signs=list(
+                        zip(hypothetical_contribs_track_names,
+                            [np.sign(x) for x in track_signs])),
+                    normalizer=affinitymat.core.MeanNormalizer()))
+
+        super(GkmerEmbedderTfModiscoSeqletsToPatternsFactory, self).__init__(
+            seqlet_embedder_factory=seqlet_embedder_factory,
+            affmat_from_1d=affmat_from_1d,
+            verbose=verbose,
+            **kwargs)
+
+    def get_jsonable_config(self):
+        to_return =  OrderedDict([
+                ('class_name', type(self).__name__),
+                ('n_cores', self.n_cores),
+                ('min_overlap_while_sliding', self.min_overlap_while_sliding),
+                ('alphabet_size', self.alphabet_size),
+                ('kmer_len', self.kmer_len),
+                ('num_gaps', self.num_gaps),
+                ('num_mismatches', self.num_mismatches),
+                ('nn_n_jobs', self.nn_n_jobs),
+                ('nearest_neighbors_to_compute',
+                 self.nearest_neighbors_to_compute),
+                ('affmat_correlation_threshold',
+                 self.affmat_correlation_threshold),
+                ('filter_beyond_first_round', filter_beyond_first_round),
+                ('tsne_perplexity', self.tsne_perplexity),
+                ('louvain_num_runs_and_levels_r1',
+                 self.louvain_num_runs_and_levels_r1),
+                ('louvain_num_runs_and_levels_r2',
+                 self.louvain_num_runs_and_levels_r2),
+                ('final_louvain_level_to_return',
+                 self.final_louvain_level_to_return),
+                ('louvain_contin_runs_r1',
+                 self.louvain_contin_runs_r1),
+                ('louvain_contin_runs_r2',
+                 self.louvain_contin_runs_r2),
+                ('frac_support_to_trim_to', self.frac_support_to_trim_to),
+                ('min_num_to_trim_to', self.min_num_to_trim_to),
+                ('trim_to_window_size', self.trim_to_window_size),
+                ('initial_flank_to_add', self.initial_flank_to_add),
+                ('prob_and_pertrack_sim_merge_thresholds',
+                 self.prob_and_pertrack_sim_merge_thresholds),
+                ('prob_and_pertrack_sim_dealbreaker_thresholds',
+                 self.prob_and_pertrack_sim_dealbreaker_thresholds),
+                ('threshold_for_spurious_merge_detection',
+                 self.threshold_for_spurious_merge_detection),
+                ('min_similarity_for_seqlet_assignment',
+                 self.min_similarity_for_seqlet_assignment),
+                ('final_min_cluster_size', self.final_min_cluster_size),
+                ('final_flank_to_add', self.final_flank_to_add)]
+                +list(self.kwargs.items())) 
+        return to_return
+
+
+TfModiscoSeqletsToPatternsFactory =\
+    GkmerEmbedderTfModiscoSeqletsToPatternsFactory
 
 
 class SeqletsToPatternsResults(object):
