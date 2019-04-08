@@ -94,13 +94,42 @@ class AbstractSeqletsToOnedEmbedder(object):
 class TopNPosEmbedder(AbstractSeqletsToOnedEmbedder):
 
     def __init__(self, topn, toembed_track_names,
-                 normalizer, imppos_track_names):
+                 normalizer, imppos_track_names,
+                 minsubsetsize, maxsubsetsize):
         self.topn = topn
         self.toembed_track_names = toembed_track_names
         self.imppos_track_names = imppos_track_names
         self.normalizer = normalizer
         #imppos track names are used for identifying the important positions...
         self.imppos_track_names = imppos_track_names
+        self.minsubsetsize = minsubsetsize
+        self.maxsubsetsize = maxsubsetsize
+
+    def get_topn_embedding(impscorevec, toembed):
+       
+        assert len(toembed.shape)==2 
+
+        top_n_indices = [x[0] for x in sorted(enumerate(impscorevec),
+                                              key=lambda x: -x[1])[:self.topn]]
+        
+        subsets = []
+        for subsetsize in range(self.minsubsetsize, self.maxsubsetsize+1):
+            subset_indices.extend(
+             itertools.combinations(iterable=top_n_indices, r=subsetsize)) 
+       
+        embedding_dict = {}
+        sum_squares = np.zeros(toembed.shape[1])
+        for subset in subsets:
+            embedding = np.zeros(toembed.shape[1])
+            for idx in subset:
+                embedding += toembed[idx] 
+            embedding_dict[tuple(subset)] = embedding 
+            sum_squares = np.square(embedding)
+
+        for embedding_key, embedding_val in embedding_dict.values():
+            embedding_dict[embedding_key] = embedding_val/sum_squares 
+
+        return embedding_dict 
 
     def __call__(self, seqlets):
         
@@ -115,9 +144,22 @@ class TopNPosEmbedder(AbstractSeqletsToOnedEmbedder):
                 patterns=seqlets,
                 track_names=self.imppos_track_names,
                 track_transformer=None)
-        
-        #get an importance for each position
-        impfwd = np.sum(np.abs(unnorm_imppos_fwd_data, axis=0))
+
+        embedding_fwd = [self.get_topn_embedding(impscorevec=unnorm_imppos,
+                                                  toembed=norm_toembed)
+                          for (unnorm_imppos, norm_toembed)
+                          in zip(unnorm_imppos_fwd_data,
+                                 norm_toembed_fwd_data)]
+        if (norm_toembed_rev_data is not None):
+            embedding_rev = [self.get_topn_embedding(impscorevec=unnorm_imppos,
+                                                      toembed=norm_toembed)
+                              for (unnorm_imppos, norm_toembed)
+                              in zip(unnorm_imppos_rev_data,
+                                     norm_toembed_rev_data)]
+        else:
+            embedding_rev = None
+
+        return embedding_fwd, embedding_rev 
 
 
 class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
@@ -256,6 +298,28 @@ class AbstractAffinityMatrixFromOneD(object):
 
     def __call__(self, vecs1, vecs2):
         raise NotImplementedError()
+
+
+class DictDotProduct(AbstractAffinityMatrixFromOneD):
+
+    def __init__(self, verbose):
+        self.verbose = verbose
+
+    def __call__(self, vecs1, vecs2):
+
+        start_time = time.time()
+        to_return = np.zeros((len(vecs1), len(vecs2)))
+        for idx1,vec1 in enumerate(vecs1):
+            for idx2,vec2 in enumerate(vecs2):
+                if (idx2 >= idx1):
+                    dot_product = 0.0
+                    for key,val in vec1.items():
+                        if key in vec2:
+                            dot_product += vec1[key]*vec2[key]                
+                    to_return[idx1,idx2] = dot_product
+                    to_return[idx2,idx1] = dot_product
+
+        return to_return
 
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
