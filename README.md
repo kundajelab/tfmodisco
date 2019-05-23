@@ -3,7 +3,7 @@
 [![DOI](https://zenodo.org/badge/62352963.svg)](https://zenodo.org/badge/latestdoi/62352963)
 
 Installation:
-At the time of writing, the latest version on pypi is version 0.5.1.1 and can be installed using `pip install modisco`. To install from this source code, clone the repo and then run `pip install --editable /path/to/cloned/repo`.
+At the time of writing, the latest version on pypi is version 0.5.1.2 and can be installed using `pip install modisco`. To install from this source code, clone the repo and then run `pip install --editable /path/to/cloned/repo`.
 
 Video of talk at NIPS MLCB: https://www.youtube.com/watch?v=fXPGVJg956E
 
