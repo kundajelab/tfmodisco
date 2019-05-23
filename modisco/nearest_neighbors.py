@@ -18,4 +18,7 @@ class ScikitNearestNeighbors(AbstractNearestNeighborsComputer):
             n_jobs=self.nn_n_jobs)
 
     def __call__(self, affinity_mat):
-        return self.nn_object.fit(np.max(affinity_mat) - affinity_mat).kneighbors(X=np.max(affinity_mat) - affinity_mat,                                                                                                                        n_neighbors=min(self.n_neighbors+1,                                                                                                                           len(affinity_mat)), return_distance=False)
+        return self.nn_object.fit(np.max(affinity_mat) - affinity_mat).kneighbors(
+                  X=np.max(affinity_mat) - affinity_mat, 
+                  n_neighbors=min(self.n_neighbors+1, len(affinity_mat)),
+                  return_distance=False)
