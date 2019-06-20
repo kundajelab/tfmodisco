@@ -157,7 +157,8 @@ class TfModiscoWorkflow(object):
                  max_passing_windows_frac=0.2,
                  separate_pos_neg_thresholds=False,
                  verbose=True,
-                 min_seqlets_per_task=None):
+                 min_seqlets_per_task=None,
+                 max_seqlets_during_metacluster_fit=np.inf):
 
         if (min_seqlets_per_task is not None):
             raise DeprecationWarning(
@@ -180,6 +181,7 @@ class TfModiscoWorkflow(object):
         self.max_passing_windows_frac = max_passing_windows_frac
         self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
         self.verbose = verbose
+        self.max_seqlets_during_metacluster_fit = max_seqlets_during_metacluster_fit
 
         self.build()
 
@@ -248,11 +250,12 @@ class TfModiscoWorkflow(object):
                   +" Consider dropping target_seqlet_fdr") 
 
         
-        if int(self.min_metacluster_size_frac * len(seqlets)) > self.min_metacluster_size:
-            print("min_metacluster_size_frac * len(seqlets) = {0} is more than min_metacluster_size={1}.".\
-                  format(int(self.min_metacluster_size_frac * len(seqlets)), self.min_metacluster_size))
+        if int(self.min_metacluster_size_frac
+               * min(len(seqlets),self.max_seqlets_during_metacluster_fit)) > self.min_metacluster_size:
+            print("min_metacluster_size_frac * min(len(seqlets),self.max_seqlets_during_metacluster_fit) = {0} is more than min_metacluster_size={1}.".\
+                  format(int(self.min_metacluster_size_frac * min(len(seqlets),self.max_seqlets_during_metacluster_fit)), self.min_metacluster_size))
             print("Using it as a new min_metacluster_size")
-            self.min_metacluster_size = int(self.min_metacluster_size_frac * len(seqlets))
+            self.min_metacluster_size = int(self.min_metacluster_size_frac * min(len(seqlets),self.max_seqlets_during_metacluster_fit))
 
 
         if (self.weak_threshold_for_counting_sign is None):
@@ -288,7 +291,12 @@ class TfModiscoWorkflow(object):
                                 weak_threshold_for_counting_sign=
                                     weak_threshold_for_counting_sign)
 
-        metaclustering_results = metaclusterer.fit_transform(seqlets)
+        if (len(seqlets) > self.max_seqlets_during_metacluster_fit):
+            seqlets_to_metacluster = np.random.RandomState(1234).choice(
+                a=seqlets, size=self.max_seqlets_during_metacluster_fit, replace=False)
+        else:
+            seqlets_to_metacluster = seqlets
+        metaclustering_results = metaclusterer.fit(seqlets_to_metacluster).transform(seqlets)
         metacluster_indices = np.array(
             metaclustering_results.metacluster_indices)
         metacluster_idx_to_activity_pattern =\
