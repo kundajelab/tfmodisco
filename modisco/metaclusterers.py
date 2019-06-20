@@ -291,9 +291,6 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
     
     def _fit(self, attribute_vectors):
 
-        all_possible_activity_patterns =\
-            list(itertools.product(*[(1,-1,0) for x
-                 in range(attribute_vectors.shape[1])]))
         all_possible_activity_patterns = set()
 
         activity_pattern_to_attribute_vectors = defaultdict(list)        
