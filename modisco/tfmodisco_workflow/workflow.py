@@ -292,8 +292,9 @@ class TfModiscoWorkflow(object):
                                     weak_threshold_for_counting_sign)
 
         if (len(seqlets) > self.max_seqlets_during_metacluster_fit):
-            seqlets_to_metacluster = np.random.RandomState(1234).choice(
-                a=seqlets, size=self.max_seqlets_during_metacluster_fit, replace=False)
+            indices = np.random.RandomState(1234).choice(
+                a=len(seqlets), size=self.max_seqlets_during_metacluster_fit, replace=False)
+            seqlets_to_metacluster = [seqlets[x] for x in indices]
         else:
             seqlets_to_metacluster = seqlets
         metaclustering_results = metaclusterer.fit(seqlets_to_metacluster).transform(seqlets)
