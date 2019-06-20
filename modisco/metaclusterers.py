@@ -159,6 +159,10 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             assert False
         return to_return
     
+    def get_all_possible_compatible_patterns(self, pattern):
+        all_possible_patterns = list(
+            itertools.product(*[(x,0) for x in pattern]))
+    
     def check_pattern_compatibility(self, pattern_to_check, reference_pattern):
         return all([(pattern_elem==reference_elem or reference_elem==0)
                     for pattern_elem, reference_elem
@@ -290,14 +294,15 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         all_possible_activity_patterns =\
             list(itertools.product(*[(1,-1,0) for x
                  in range(attribute_vectors.shape[1])]))
+        all_possible_activity_patterns = set()
 
         activity_pattern_to_attribute_vectors = defaultdict(list)        
         for vector in attribute_vectors:
             vector_activity_pattern = self.vector_to_pattern(vector)
             compatible_activity_patterns =\
-                self.get_compatible_patterns(
-                     vector_activity_pattern, all_possible_activity_patterns)
+                self.get_all_possible_compatible_patterns(vector_activity_pattern)
             for compatible_activity_pattern in compatible_activity_patterns:
+                all_possible_activity_patterns.add(compatible_activity_pattern)
                 activity_pattern_to_attribute_vectors[
                     self.pattern_to_str(
                          compatible_activity_pattern)].append(vector)
