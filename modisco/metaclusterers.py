@@ -162,6 +162,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
     def get_all_possible_compatible_patterns(self, pattern):
         all_possible_patterns = list(
             itertools.product(*[(x,0) for x in pattern]))
+        return all_possible_patterns
     
     def check_pattern_compatibility(self, pattern_to_check, reference_pattern):
         return all([(pattern_elem==reference_elem or reference_elem==0)
