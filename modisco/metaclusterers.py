@@ -105,7 +105,8 @@ class AbstractMetaclusterer(object):
                              self.get_vector_from_seqlet(x) 
                              for x in seqlets]))
         self._fit(attribute_vectors)
-        self.fit_called = True 
+        self.fit_called = True
+        return self
 
     def _fit(self, attribute_vectors):
         raise NotImplementedError()
