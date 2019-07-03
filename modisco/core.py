@@ -1054,7 +1054,10 @@ def continjaccard(in1, in2):
     union = np.sum(np.maximum(np.abs(in1),np.abs(in2)))
     intersection = np.minimum(np.abs(in1),np.abs(in2))
     signs = np.sign(in1)*np.sign(in2)
-    return np.sum(signs*intersection)/union
+    if (union==0.0):
+        return 0.0
+    else:
+        return np.sum(signs*intersection)/union
 
 
 def corr(in1, in2):
