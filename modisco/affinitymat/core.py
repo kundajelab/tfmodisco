@@ -267,10 +267,8 @@ def contin_jaccard_vec_mat_sim(a_row, mat):
                                      np.abs(mat))
                           *np.sign(a_row[None,:])
                           *np.sign(mat), axis=1)
-    if (union==0.0):
-        return 0.0
-    else:
-        return intersection.astype("float")/union
+    union = np.maximum(union, 1e-7) #avoid div by 0
+    return intersection.astype("float")/union
 
 
 class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
