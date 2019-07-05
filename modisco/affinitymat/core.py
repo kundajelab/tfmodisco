@@ -280,9 +280,12 @@ class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
 
     def __call__(self, vecs1, vecs2):
 
+        #trying to avoid div by 0 in the normalization
         start_time = time.time()
-        normed_vecs1 = vecs1/np.sum(np.abs(vecs1), axis=1)[:,None] 
-        normed_vecs2 = vecs2/np.sum(np.abs(vecs2), axis=1)[:,None] 
+        normed_vecs1 = vecs1/np.maximum(
+            np.sum(np.abs(vecs1), axis=1)[:,None], 1e-7)
+        normed_vecs2 = vecs2/np.maximum(
+            np.sum(np.abs(vecs2), axis=1)[:,None], 1e-7) 
         if (self.verbose):
             print("Normalization computed in",
                   round(time.time()-start_time,2),"s")

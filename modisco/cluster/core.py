@@ -91,6 +91,8 @@ class LouvainCluster(AbstractAffinityMatClusterer):
     
     def __call__(self, orig_affinity_mat):
 
+        #replace nan values with zeros
+        orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
         assert np.min(orig_affinity_mat) >= 0, np.min(orig_affinity_mat)
 
         if (self.verbose):
