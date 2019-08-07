@@ -110,7 +110,7 @@ class SubMetaclusterResults(object):
 
 def prep_track_set(task_names, contrib_scores,
                     hypothetical_contribs, one_hot,
-                    revcomp=True):
+                    revcomp=True, other_tracks=[]):
     contrib_scores_tracks = [
         core.DataTrack(
             name=key+"_contrib_scores",
@@ -136,7 +136,7 @@ def prep_track_set(task_names, contrib_scores,
                         has_pos_axis=True)
     track_set = core.TrackSet(
                     data_tracks=contrib_scores_tracks
-                    +hypothetical_contribs_tracks+[onehot_track])
+                    +hypothetical_contribs_tracks+[onehot_track]+other_tracks)
     return track_set
 
 
@@ -198,7 +198,8 @@ class TfModiscoWorkflow(object):
                        null_per_pos_scores=coordproducers.LaplaceNullDist(
                          num_to_samp=10000),
                        per_position_contrib_scores=None,
-                       revcomp=True):
+                       revcomp=True,
+                       other_tracks=[]):
 
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
@@ -217,7 +218,8 @@ class TfModiscoWorkflow(object):
                         contrib_scores=contrib_scores,
                         hypothetical_contribs=hypothetical_contribs,
                         one_hot=one_hot,
-                        revcomp=revcomp)
+                        revcomp=revcomp,
+                        other_tracks=other_tracks)
 
         if (per_position_contrib_scores is None):
             per_position_contrib_scores = OrderedDict([
