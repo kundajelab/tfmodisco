@@ -889,11 +889,9 @@ class SumTracksAcrossSeqletEmbedder(AbstractSeqletsToOnedEmbedder):
                 patterns=seqlets,
                 track_names=self.tracknames_to_use_for_embedding,
                 track_transformer=None)
-        conv_filter_tracks_sum_fwd = np.linalg.norm(
-            np.sum(conv_filter_tracks_fwd, axis=1), axis=1)
+        conv_filter_tracks_sum_fwd = np.sum(conv_filter_tracks_fwd, axis=1)
         if (conv_filter_tracks_rev is not None):
-            conv_filter_tracks_sum_rev = np.linalg.norm(
-                np.sum(conv_filter_tracks_rev, axis=1), axis=1)
+            conv_filter_tracks_sum_rev = np.sum(conv_filter_tracks_rev, axis=1)
         else:
             conv_filter_tracks_sum_rev = None
         return (conv_filter_tracks_sum_fwd, conv_filter_tracks_sum_rev) 
