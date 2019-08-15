@@ -875,3 +875,25 @@ class FilterMaskFromCorrelation(object):
         return mask_to_return
 
 
+class SumTracksAcrossSeqletEmbedder(AbstractSeqletsToOnedEmbedder):
+    
+    def __init__(self, tracknames_to_use_for_embedding):
+        self.tracknames_to_use_for_embedding = tracknames_to_use_for_embedding
+
+    def __call__(self, seqlets):
+        print("Computing embedding from ",
+              self.tracknames_to_use_for_embedding)
+        sys.stdout.flush()
+        conv_filter_tracks_fwd, conv_filter_tracks_rev =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=self.tracknames_to_use_for_embedding,
+                track_transformer=None)
+        conv_filter_tracks_sum_fwd = np.linalg.norm(
+            np.sum(conv_filter_tracks_fwd, axis=1), axis=1)
+        if (conv_filter_tracks_rev is not None):
+            conv_filter_tracks_sum_rev = np.linalg.norm(
+                np.sum(conv_filter_tracks_rev, axis=1), axis=1)
+        else:
+            conv_filter_tracks_sum_rev = None
+        return (conv_filter_tracks_sum_fwd, conv_filter_tracks_sum_rev) 
