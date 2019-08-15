@@ -297,7 +297,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
             #affinity matrix from embeddings
             affmat_computer =\
                 affinitymat.core.AffmatFromSeqletEmbeddings(
-                    seqlets_to_1d_embedder=gkmer_embedder,
+                    seqlets_to_1d_embedder=sum_tracks_across_seqlet_embedder,
                     affinity_mat_from_1d=\
                         affinitymat.core.NumpyCosineSimilarity(
                             verbose=self.verbose,
