@@ -163,22 +163,26 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                     track_names=[self.onehot_track_name],
                     track_transformer=None)
 
-        data_to_embed_fwd = np.zeros((len(seqlets),
-                                     len(list(seqlets)[0]), self.alphabet_size))\
-                                     .astype("float32")
-        data_to_embed_rev = np.zeros((len(seqlets),
-                                     len(list(seqlets)[0]), self.alphabet_size))\
-                                     .astype("float32")
+        data_to_embed_fwd = np.zeros(
+            (len(seqlets),
+             len(list(seqlets)[0]), self.alphabet_size)).astype("float32")
+        data_to_embed_rev = (np.zeros(
+            (len(seqlets),
+             len(list(seqlets)[0]), self.alphabet_size)).astype("float32")
+            if (onehot_track_rev is not None) else None)
         for (track_name, sign) in self.toscore_track_names_and_signs:
             fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
                 track_names=[track_name], track_transformer=None)  
             data_to_embed_fwd += fwd_data*sign
-            data_to_embed_rev += rev_data*sign
+            if (rev_data is not None):
+                data_to_embed_rev += (rev_data*sign if
+                                      (rev_data is not None) else None)
         data_to_embed_fwd = np.array([self.normalizer(x) for x in
                                       data_to_embed_fwd])
-        data_to_embed_rev = np.array([self.normalizer(x) for x in
-                                      data_to_embed_rev])
+        if (data_to_embed_rev is not None):
+            data_to_embed_rev = np.array([self.normalizer(x) for x in
+                                          data_to_embed_rev])
         common_args = {'batch_size': self.batch_size,
                        'progress_update': self.progress_update}
         if (self.require_onehot_match):
@@ -186,20 +190,24 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                   onehot=onehot_track_fwd,
                                   to_embed=data_to_embed_fwd,
                                   **common_args)
-            embedding_rev = self.gapped_kmer_embedding_func(
+            embedding_rev = (self.gapped_kmer_embedding_func(
                                   onehot=onehot_track_rev,
                                   to_embed=data_to_embed_rev,
                                   **common_args)
+                             if (onehot_track_rev is not None) else None)
         else:
             embedding_fwd = self.gapped_kmer_embedding_func(
                                   to_embed=data_to_embed_fwd,
                                   **common_args)
-            embedding_rev = self.gapped_kmer_embedding_func(
+            embedding_rev = (self.gapped_kmer_embedding_func(
                                   to_embed=data_to_embed_rev,
                                   **common_args)
+                             if (onehot_track_rev is not None) else None)
         if (self.num_filters_to_retain is not None):
-            all_embeddings = np.concatenate(
-                             [embedding_fwd, embedding_rev], axis=0)
+            all_embeddings = (np.concatenate(
+                              [embedding_fwd, embedding_rev], axis=0)
+                              if (embedding_rev is not None)
+                              else np.array(embedding_fwd))
             embeddings_denominators =\
                 np.sum(np.abs(all_embeddings) > 0, axis=0).astype("float")
             embeddings_denominators += 10.0
@@ -210,7 +218,8 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                 x[0] for x in sorted(enumerate(embeddings_mean_impact),
                 key=lambda x: -x[1])][:self.num_filters_to_retain]
             embedding_fwd = embedding_fwd[:,top_embedding_indices]
-            embedding_rev = embedding_rev[:,top_embedding_indices]
+            embedding_rev = (embedding_rev[:,top_embedding_indices]
+                             if (embedding_rev is not None) else None)
         return embedding_fwd, embedding_rev
 
 
@@ -258,6 +267,7 @@ def contin_jaccard_vec_mat_sim(a_row, mat):
                                      np.abs(mat))
                           *np.sign(a_row[None,:])
                           *np.sign(mat), axis=1)
+    union = np.maximum(union, 1e-7) #avoid div by 0
     return intersection.astype("float")/union
 
 
@@ -270,9 +280,12 @@ class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
 
     def __call__(self, vecs1, vecs2):
 
+        #trying to avoid div by 0 in the normalization
         start_time = time.time()
-        normed_vecs1 = vecs1/np.sum(np.abs(vecs1), axis=1)[:,None] 
-        normed_vecs2 = vecs2/np.sum(np.abs(vecs2), axis=1)[:,None] 
+        normed_vecs1 = vecs1/np.maximum(
+            np.sum(np.abs(vecs1), axis=1)[:,None], 1e-7)
+        normed_vecs2 = vecs2/np.maximum(
+            np.sum(np.abs(vecs2), axis=1)[:,None], 1e-7) 
         if (self.verbose):
             print("Normalization computed in",
                   round(time.time()-start_time,2),"s")
@@ -330,8 +343,9 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
 
         affinity_mat_fwd = self.affinity_mat_from_1d(
                             vecs1=embedding_fwd, vecs2=embedding_fwd)  
-        affinity_mat_rev = self.affinity_mat_from_1d(
-                            vecs1=embedding_fwd, vecs2=embedding_rev)
+        affinity_mat_rev = (self.affinity_mat_from_1d(
+                             vecs1=embedding_fwd, vecs2=embedding_rev)
+                            if (embedding_rev is not None) else None)
 
         cp3_time = time.time()
 
@@ -340,7 +354,9 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
                   round(cp3_time-cp2_time,2),"s")
             sys.stdout.flush()
 
-        return np.maximum(affinity_mat_fwd, affinity_mat_rev) 
+        return (np.maximum(affinity_mat_fwd, affinity_mat_rev) 
+                if (affinity_mat_rev is not None)
+                else np.array(affinity_mat_fwd))
 
 
 class MaxCrossMetricAffinityMatrixFromSeqlets(
@@ -363,11 +379,16 @@ class MaxCrossMetricAffinityMatrixFromSeqlets(
                      filters=all_fwd_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_metrics_rev = self.cross_metric(
+        if (all_rev_data is not None):
+            cross_metrics_rev = self.cross_metric(
                      filters=all_rev_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_metrics = np.maximum(cross_metrics_fwd, cross_metrics_rev)
+        else:
+            cross_metrics_rev = None
+        cross_metrics = (np.maximum(cross_metrics_fwd, cross_metrics_rev)
+            if (cross_metrics_rev is not None) else
+            np.array(cross_metrics_fwd))
         return cross_metrics
 
 
@@ -437,12 +458,16 @@ class AffmatFromSeqletsWithNNpairs(object):
                      filters=filters_all_fwd_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        affmat_rev = self.sim_metric_on_nn_pairs(
+        if (filters_all_rev_data is not None):
+            affmat_rev = self.sim_metric_on_nn_pairs(
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_rev_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        affmat = np.maximum(affmat_fwd, affmat_rev)
+        else:
+            affmat_rev = None
+        affmat = (np.maximum(affmat_fwd, affmat_rev) if
+                  (affmat_rev is not None) else np.array(affmat_fwd))
         return affmat
         
 

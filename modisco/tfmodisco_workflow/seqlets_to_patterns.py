@@ -649,17 +649,17 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     print_memory_use()
                     sys.stdout.flush()
                 motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
-                assert len(motifs)==1
-                motif = motifs[0]
-                if (self.sign_consistency_func(motif)):
-                    cluster_to_motif[i] = motif
-                else:
-                    if (self.verbose):
-                        print("Dropping cluster "+str(i)+
-                              " with "+str(motif.num_seqlets)
-                              +" seqlets due to sign disagreement")
-                    print_memory_use()
-                    cluster_to_eliminated_motif[i] = motif
+                assert len(motifs)<=1
+                if (len(motifs) > 0):
+                    motif = motifs[0]
+                    if (self.sign_consistency_func(motif)):
+                        cluster_to_motif[i] = motif
+                    else:
+                        if (self.verbose):
+                            print("Dropping cluster "+str(i)+
+                                  " with "+str(motif.num_seqlets)
+                                  +" seqlets due to sign disagreement")
+                        cluster_to_eliminated_motif[i] = motif
 
             #obtain unique seqlets from adjusted motifs
             seqlets = dict([(y.exidx_start_end_string, y)
@@ -740,8 +740,4 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             pattern_merge_hierarchy=pattern_merge_hierarchy,
             reassigned_patterns=reassigned_patterns)
 
-        return results 
-
-
-
-
+        return results
