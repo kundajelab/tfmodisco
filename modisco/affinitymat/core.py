@@ -11,6 +11,13 @@ import scipy.stats
 from joblib import Parallel, delayed
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 class AbstractTrackTransformer(object):
 
     def __call__(self, inp):
@@ -499,7 +506,7 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
         assert len(things_to_scan.shape)==3
         assert len(filters.shape)==3
-       
+
         filter_length = filters.shape[1]
         padding_amount = int((filter_length)*(1-min_overlap))
         things_to_scan = np.pad(array=things_to_scan,
@@ -507,7 +514,7 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
                                          (padding_amount, padding_amount),
                                          (0,0)),
                               mode="constant")
- 
+
         #if the metric has returns_pos==False, it means that the metric
         # only returns the best similarity and not the alignment that
         # gives rise to that similarity 
@@ -520,23 +527,32 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
             # The similarity comes first, then the position
             to_return = np.zeros((things_to_scan.shape[0],
                                   filters.shape[0], 2))
-        job_arguments = []
 
-        for neighbors_of_thing_to_scan, thing_to_scan\
-            in zip(neighbors_of_things_to_scan, things_to_scan): 
-            args = (filters[neighbors_of_thing_to_scan], thing_to_scan) 
-            job_arguments.append(args)
-        
+        #job_arguments = []
+
+        #for neighbors_of_thing_to_scan, thing_to_scan\
+        #    in zip(neighbors_of_things_to_scan, things_to_scan): 
+        #    args = (filters[neighbors_of_thing_to_scan], thing_to_scan) 
+        #    job_arguments.append(args)
+
+        #print("cp5"); print_memory_use();        
          
         start = time.time()
         if (self.verbose):
             print("Launching nearest neighbors affmat calculation job")
+            print_memory_use()
             sys.stdout.flush()
 
-        results = (Parallel(n_jobs=self.n_cores)                          
-                   (delayed(self.cross_metric_single_region)
-                           (job_args[0], job_args[1])
-                    for job_args in job_arguments))
+        results = Parallel(n_jobs=self.n_cores, backend="threading")(
+                    (delayed(self.cross_metric_single_region)(
+                        filters[neighbors_of_things_to_scan[i]],
+                        things_to_scan[i])
+                        for i in range(len(things_to_scan))))
+
+        if (self.verbose):
+            print("Parallel runs completed")
+            print_memory_use()
+            sys.stdout.flush()
 
         for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
              in enumerate(zip(results, neighbors_of_things_to_scan)):
@@ -553,6 +569,7 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         end = time.time()
         if (self.verbose):
             print("Job completed in:",round(end-start,2),"s")
+            print_memory_use()
             sys.stdout.flush()
 
         return to_return
