@@ -12,6 +12,13 @@ import sys
 import gc
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 class TfModiscoSeqletsToPatternsFactory(object):
 
     def __init__(self, n_cores=4,
@@ -525,6 +532,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print("(Round "+str(round_num)+
                       ") num seqlets: "+str(len(seqlets)))
                 print("(Round "+str(round_num)+") Computing coarse affmat")
+                print_memory_use()
                 sys.stdout.flush()
             coarse_affmat = self.coarse_affmat_computer(seqlets)
             coarse_affmats.append(coarse_affmat)
@@ -533,6 +541,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             if (self.verbose):
                 print("(Round "+str(round_num)+") Compute nearest neighbors"
                       +" from coarse affmat")
+                print_memory_use()
                 sys.stdout.flush()
 
             seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
@@ -540,12 +549,14 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             if (self.verbose):
                 print("Computed nearest neighbors in",
                       round(time.time()-nn_start,2),"s")
+                print_memory_use()
                 sys.stdout.flush()
 
             nn_affmat_start = time.time() 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing affinity matrix"
                       +" on nearest neighbors")
+                print_memory_use()
                 sys.stdout.flush()
             nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
                                         seqlet_neighbors=seqlet_neighbors,
@@ -556,6 +567,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print("(Round "+str(round_num)+") Computed affinity matrix"
                       +" on nearest neighbors in",
                       round(time.time()-nn_affmat_start,2),"s")
+                print_memory_use()
                 sys.stdout.flush()
 
             #filter by correlation
@@ -568,12 +580,14 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                           +str(np.sum(filtered_rows_mask))
                           +" rows out of "+str(len(filtered_rows_mask))
                           +" after filtering")
+                    print_memory_use()
                     sys.stdout.flush()
             else:
                 filtered_rows_mask = np.array([True for x in seqlets])
                 if (self.verbose):
                     print("Not applying filtering for "
                           +"rounds above first round")
+                    print_memory_use()
                     sys.stdout.flush()
 
             filtered_seqlets = [x[0] for x in
@@ -587,6 +601,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing density "
                       +"adapted affmat")
+                print_memory_use()
                 sys.stdout.flush() 
 
             density_adapted_affmat =\
@@ -595,6 +610,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing clustering")
+                print_memory_use()
                 sys.stdout.flush() 
 
             cluster_results = clusterer(density_adapted_affmat)
@@ -606,11 +622,13 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                       +" clusters after round "+str(round_num))
                 print("Counts:")
                 print(dict([x for x in cluster_idx_counts.items()]))
+                print_memory_use()
                 sys.stdout.flush()
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Aggregating seqlets"
                       +" in each cluster")
+                print_memory_use()
                 sys.stdout.flush()
 
             cluster_to_seqlets = defaultdict(list) 
@@ -628,6 +646,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 if (self.verbose):
                     print("Aggregating for cluster "+str(i)+" with "
                           +str(len(cluster_to_seqlets[i]))+" seqlets")
+                    print_memory_use()
                     sys.stdout.flush()
                 motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
                 assert len(motifs)==1
@@ -639,6 +658,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                         print("Dropping cluster "+str(i)+
                               " with "+str(motif.num_seqlets)
                               +" seqlets due to sign disagreement")
+                    print_memory_use()
                     cluster_to_eliminated_motif[i] = motif
 
             #obtain unique seqlets from adjusted motifs
@@ -649,6 +669,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("Got "+str(len(cluster_to_motif.values()))+" clusters")
             print("Splitting into subclusters...")
+            print_memory_use()
             sys.stdout.flush()
 
         split_patterns = self.spurious_merge_detector(
@@ -668,6 +689,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         #Now start merging patterns 
         if (self.verbose):
             print("Merging on "+str(len(split_patterns))+" clusters")
+            print_memory_use()
             sys.stdout.flush()
         merged_patterns, pattern_merge_hierarchy =\
             self.similar_patterns_collapser( 
@@ -675,22 +697,26 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")
+            print_memory_use()
             sys.stdout.flush()
 
         if (self.verbose):
             print("Performing seqlet reassignment")
+            print_memory_use()
             sys.stdout.flush()
         reassigned_patterns = self.seqlet_reassigner(merged_patterns)
         final_patterns = self.final_postprocessor(reassigned_patterns)
         if (self.verbose):
             print("Got "+str(len(final_patterns))
                   +" patterns after reassignment")
+            print_memory_use()
             sys.stdout.flush()
 
         total_time_taken = round(time.time()-start,2)
         if (self.verbose):
             print("Total time taken is "
                   +str(total_time_taken)+"s")
+            print_memory_use()
             sys.stdout.flush()
 
         results = SeqletsToPatternsResults(

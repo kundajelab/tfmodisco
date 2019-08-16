@@ -13,6 +13,13 @@ from .. import metaclusterers
 from .. import util
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 class TfModiscoResults(object):
 
     def __init__(self,
@@ -176,6 +183,8 @@ class TfModiscoWorkflow(object):
     def __call__(self, task_names, contrib_scores,
                        hypothetical_contribs, one_hot):
 
+        print_memory_use()
+
         self.coord_producer = coordproducers.FixedWindowAroundChunks(
             sliding=self.sliding_window_size,
             flank=self.flank_size,
@@ -211,6 +220,7 @@ class TfModiscoWorkflow(object):
             0.0000001) #subtract 1e-7 to avoid numerical issues
         print("Across all tasks, the weakest laplace threshold used"
               +" was: "+str(laplace_threshold_cdf))
+        print_memory_use()
 
         seqlets = multitask_seqlet_creation_results.final_seqlets
         print(str(len(seqlets))+" identified in total")
@@ -266,6 +276,7 @@ class TfModiscoWorkflow(object):
         if (self.verbose):
             print("Metacluster sizes: ",metacluster_sizes)
             print("Idx to activities: ",metacluster_idx_to_activity_pattern)
+            print_memory_use()
             sys.stdout.flush()
 
         metacluster_idx_to_submetacluster_results = OrderedDict()
