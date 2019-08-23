@@ -12,6 +12,13 @@ import sys
 import gc
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 class TfModiscoSeqletsToPatternsFactory(object):
 
     def __init__(self, n_cores=4,
@@ -493,22 +500,23 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
         start = time.time()
 
-        seqlets_sets = []
-        coarse_affmats = []
-        nn_affmats = []
-        filtered_seqlets_sets = []
-        filtered_affmats = []
-        density_adapted_affmats = []
-        cluster_results_sets = []
-        cluster_to_motif_sets = []
-        cluster_to_eliminated_motif_sets = []
+        #seqlets_sets = []
+        #coarse_affmats = []
+        #nn_affmats = []
+        #filtered_seqlets_sets = []
+        #filtered_affmats = []
+        #density_adapted_affmats = []
+        #cluster_results_sets = []
+        #cluster_to_motif_sets = []
+        #cluster_to_eliminated_motif_sets = []
 
         for round_idx, clusterer in enumerate(self.clusterer_per_round):
-            for i in range(3): gc.collect()
+            import gc
+            gc.collect()
 
             round_num = round_idx+1
 
-            seqlets_sets.append(seqlets)
+            #seqlets_sets.append(seqlets)
             
             if (len(seqlets)==0):
                 if (self.verbose):
@@ -525,14 +533,16 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print("(Round "+str(round_num)+
                       ") num seqlets: "+str(len(seqlets)))
                 print("(Round "+str(round_num)+") Computing coarse affmat")
+                print_memory_use()
                 sys.stdout.flush()
             coarse_affmat = self.coarse_affmat_computer(seqlets)
-            coarse_affmats.append(coarse_affmat)
+            #coarse_affmats.append(coarse_affmat)
 
             nn_start = time.time() 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Compute nearest neighbors"
                       +" from coarse affmat")
+                print_memory_use()
                 sys.stdout.flush()
 
             seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
@@ -540,22 +550,25 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             if (self.verbose):
                 print("Computed nearest neighbors in",
                       round(time.time()-nn_start,2),"s")
+                print_memory_use()
                 sys.stdout.flush()
 
             nn_affmat_start = time.time() 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing affinity matrix"
                       +" on nearest neighbors")
+                print_memory_use()
                 sys.stdout.flush()
             nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
                                         seqlet_neighbors=seqlet_neighbors,
                                         seqlets=seqlets) 
-            nn_affmats.append(nn_affmat)
+            #nn_affmats.append(nn_affmat)
             
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computed affinity matrix"
                       +" on nearest neighbors in",
                       round(time.time()-nn_affmat_start,2),"s")
+                print_memory_use()
                 sys.stdout.flush()
 
             #filter by correlation
@@ -568,37 +581,45 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                           +str(np.sum(filtered_rows_mask))
                           +" rows out of "+str(len(filtered_rows_mask))
                           +" after filtering")
+                    print_memory_use()
                     sys.stdout.flush()
             else:
                 filtered_rows_mask = np.array([True for x in seqlets])
                 if (self.verbose):
                     print("Not applying filtering for "
                           +"rounds above first round")
+                    print_memory_use()
                     sys.stdout.flush()
 
             filtered_seqlets = [x[0] for x in
                        zip(seqlets, filtered_rows_mask) if (x[1])]
-            filtered_seqlets_sets.append(filtered_seqlets)
+            #filtered_seqlets_sets.append(filtered_seqlets)
 
             filtered_affmat =\
                 nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
-            filtered_affmats.append(filtered_affmat)
+            del coarse_affmat
+            del nn_affmat
+            #filtered_affmats.append(filtered_affmat)
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing density "
                       +"adapted affmat")
+                print_memory_use()
                 sys.stdout.flush() 
 
             density_adapted_affmat =\
                 self.density_adapted_affmat_transformer(filtered_affmat)
-            density_adapted_affmats.append(density_adapted_affmat)
+            del filtered_affmat
+            #density_adapted_affmats.append(density_adapted_affmat)
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing clustering")
+                print_memory_use()
                 sys.stdout.flush() 
 
             cluster_results = clusterer(density_adapted_affmat)
-            cluster_results_sets.append(cluster_results)
+            del density_adapted_affmat
+            #cluster_results_sets.append(cluster_results)
             num_clusters = max(cluster_results.cluster_indices+1)
             cluster_idx_counts = Counter(cluster_results.cluster_indices)
             if (self.verbose):
@@ -606,11 +627,13 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                       +" clusters after round "+str(round_num))
                 print("Counts:")
                 print(dict([x for x in cluster_idx_counts.items()]))
+                print_memory_use()
                 sys.stdout.flush()
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Aggregating seqlets"
                       +" in each cluster")
+                print_memory_use()
                 sys.stdout.flush()
 
             cluster_to_seqlets = defaultdict(list) 
@@ -621,13 +644,14 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             cluster_to_eliminated_motif = OrderedDict()
             cluster_to_motif = OrderedDict()
-            cluster_to_motif_sets.append(cluster_to_motif)
-            cluster_to_eliminated_motif_sets.append(
-                cluster_to_eliminated_motif)
+            #cluster_to_motif_sets.append(cluster_to_motif)
+            #cluster_to_eliminated_motif_sets.append(
+            #    cluster_to_eliminated_motif)
             for i in range(num_clusters):
                 if (self.verbose):
                     print("Aggregating for cluster "+str(i)+" with "
                           +str(len(cluster_to_seqlets[i]))+" seqlets")
+                    print_memory_use()
                     sys.stdout.flush()
                 motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
                 assert len(motifs)<=1
@@ -650,6 +674,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         if (self.verbose):
             print("Got "+str(len(cluster_to_motif.values()))+" clusters")
             print("Splitting into subclusters...")
+            print_memory_use()
             sys.stdout.flush()
 
         split_patterns = self.spurious_merge_detector(
@@ -669,6 +694,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         #Now start merging patterns 
         if (self.verbose):
             print("Merging on "+str(len(split_patterns))+" clusters")
+            print_memory_use()
             sys.stdout.flush()
         merged_patterns, pattern_merge_hierarchy =\
             self.similar_patterns_collapser( 
@@ -676,40 +702,44 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")
+            print_memory_use()
             sys.stdout.flush()
 
         if (self.verbose):
             print("Performing seqlet reassignment")
+            print_memory_use()
             sys.stdout.flush()
         reassigned_patterns = self.seqlet_reassigner(merged_patterns)
         final_patterns = self.final_postprocessor(reassigned_patterns)
         if (self.verbose):
             print("Got "+str(len(final_patterns))
                   +" patterns after reassignment")
+            print_memory_use()
             sys.stdout.flush()
 
         total_time_taken = round(time.time()-start,2)
         if (self.verbose):
             print("Total time taken is "
                   +str(total_time_taken)+"s")
+            print_memory_use()
             sys.stdout.flush()
 
         results = SeqletsToPatternsResults(
             patterns=final_patterns,
             seqlets=filtered_seqlets, #last stage of filtered seqlets
-            affmat=filtered_affmat,
+            #affmat=filtered_affmat,
             cluster_results=cluster_results, 
             total_time_taken=total_time_taken,
            
-            seqlets_sets=seqlets_sets,
-            coarse_affmats=coarse_affmats,
-            nn_affmats=nn_affmats,
-            filtered_seqlets_sets=filtered_seqlets_sets,
-            filtered_affmats=filtered_affmats,
-            density_adapted_affmats=density_adapted_affmats,
-            cluster_results_sets=cluster_results_sets,
-            cluster_to_motif_sets=cluster_to_motif_sets,
-            cluster_to_eliminated_motif_sets=cluster_to_eliminated_motif_sets,
+            #seqlets_sets=seqlets_sets,
+            #coarse_affmats=coarse_affmats,
+            #nn_affmats=nn_affmats,
+            #filtered_seqlets_sets=filtered_seqlets_sets,
+            #filtered_affmats=filtered_affmats,
+            #density_adapted_affmats=density_adapted_affmats,
+            #cluster_results_sets=cluster_results_sets,
+            #cluster_to_motif_sets=cluster_to_motif_sets,
+            #cluster_to_eliminated_motif_sets=cluster_to_eliminated_motif_sets,
 
             merged_patterns=merged_patterns,
             pattern_merge_hierarchy=pattern_merge_hierarchy,
