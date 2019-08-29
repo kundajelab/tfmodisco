@@ -34,6 +34,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
                        affmat_correlation_threshold=0.15,
                        filter_beyond_first_round=False,
+                       skip_fine_grained=False,
 
                        tsne_perplexity = 10,
                        louvain_num_runs_and_levels_r1=[(200,-1)],
@@ -78,6 +79,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         self.affmat_correlation_threshold = affmat_correlation_threshold
         self.filter_beyond_first_round = filter_beyond_first_round
+        self.skip_fine_grained = skip_fine_grained
 
         #affinity mat to tsne dist mat setting
         self.tsne_perplexity = tsne_perplexity
@@ -400,6 +402,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                     affmat_from_seqlets_with_nn_pairs, 
                 filter_mask_from_correlation=filter_mask_from_correlation,
                 filter_beyond_first_round=self.filter_beyond_first_round,
+                skip_fine_grained=self.skip_fine_grained,
                 density_adapted_affmat_transformer=
                     density_adapted_affmat_transformer,
                 clusterer_per_round=clusterer_per_round,
@@ -463,6 +466,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        affmat_from_seqlets_with_nn_pairs, 
                        filter_mask_from_correlation,
                        filter_beyond_first_round,
+                       skip_fine_grained,
                        density_adapted_affmat_transformer,
                        clusterer_per_round,
                        seqlet_aggregator,
@@ -480,6 +484,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             affmat_from_seqlets_with_nn_pairs
         self.filter_mask_from_correlation = filter_mask_from_correlation
         self.filter_beyond_first_round = filter_beyond_first_round
+        self.skip_fine_grained = skip_fine_grained
         self.density_adapted_affmat_transformer =\
             density_adapted_affmat_transformer
         self.clusterer_per_round = clusterer_per_round 
@@ -538,68 +543,71 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             coarse_affmat = self.coarse_affmat_computer(seqlets)
             #coarse_affmats.append(coarse_affmat)
 
-            nn_start = time.time() 
-            if (self.verbose):
-                print("(Round "+str(round_num)+") Compute nearest neighbors"
-                      +" from coarse affmat")
-                print_memory_use()
-                sys.stdout.flush()
-
-            seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
-
-            if (self.verbose):
-                print("Computed nearest neighbors in",
-                      round(time.time()-nn_start,2),"s")
-                print_memory_use()
-                sys.stdout.flush()
-
-            nn_affmat_start = time.time() 
-            if (self.verbose):
-                print("(Round "+str(round_num)+") Computing affinity matrix"
-                      +" on nearest neighbors")
-                print_memory_use()
-                sys.stdout.flush()
-            nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
-                                        seqlet_neighbors=seqlet_neighbors,
-                                        seqlets=seqlets) 
-            #nn_affmats.append(nn_affmat)
-            
-            if (self.verbose):
-                print("(Round "+str(round_num)+") Computed affinity matrix"
-                      +" on nearest neighbors in",
-                      round(time.time()-nn_affmat_start,2),"s")
-                print_memory_use()
-                sys.stdout.flush()
-
-            #filter by correlation
-            if (round_idx == 0 or self.filter_beyond_first_round==True):
-                filtered_rows_mask = self.filter_mask_from_correlation(
-                                        main_affmat=nn_affmat,
-                                        other_affmat=coarse_affmat) 
+            if (self.skip_fine_grained==False):
+                nn_start = time.time() 
                 if (self.verbose):
-                    print("(Round "+str(round_num)+") Retained "
-                          +str(np.sum(filtered_rows_mask))
-                          +" rows out of "+str(len(filtered_rows_mask))
-                          +" after filtering")
+                    print("(Round "+str(round_num)+") Compute nearest neighbors"
+                          +" from coarse affmat")
                     print_memory_use()
                     sys.stdout.flush()
+
+                seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
+
+                if (self.verbose):
+                    print("Computed nearest neighbors in",
+                          round(time.time()-nn_start,2),"s")
+                    print_memory_use()
+                    sys.stdout.flush()
+
+                nn_affmat_start = time.time() 
+                if (self.verbose):
+                    print("(Round "+str(round_num)+") Computing affinity matrix"
+                          +" on nearest neighbors")
+                    print_memory_use()
+                    sys.stdout.flush()
+                nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
+                                            seqlet_neighbors=seqlet_neighbors,
+                                            seqlets=seqlets) 
+                #nn_affmats.append(nn_affmat)
+                
+                if (self.verbose):
+                    print("(Round "+str(round_num)+") Computed affinity matrix"
+                          +" on nearest neighbors in",
+                          round(time.time()-nn_affmat_start,2),"s")
+                    print_memory_use()
+                    sys.stdout.flush()
+
+                #filter by correlation
+                if (round_idx == 0 or self.filter_beyond_first_round==True):
+                    filtered_rows_mask = self.filter_mask_from_correlation(
+                                            main_affmat=nn_affmat,
+                                            other_affmat=coarse_affmat) 
+                    if (self.verbose):
+                        print("(Round "+str(round_num)+") Retained "
+                              +str(np.sum(filtered_rows_mask))
+                              +" rows out of "+str(len(filtered_rows_mask))
+                              +" after filtering")
+                        print_memory_use()
+                        sys.stdout.flush()
+                else:
+                    filtered_rows_mask = np.array([True for x in seqlets])
+                    if (self.verbose):
+                        print("Not applying filtering for "
+                              +"rounds above first round")
+                        print_memory_use()
+                        sys.stdout.flush()
+
+                filtered_seqlets = [x[0] for x in
+                           zip(seqlets, filtered_rows_mask) if (x[1])]
+                #filtered_seqlets_sets.append(filtered_seqlets)
+
+                filtered_affmat =\
+                    nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
+                del coarse_affmat
+                del nn_affmat
             else:
-                filtered_rows_mask = np.array([True for x in seqlets])
-                if (self.verbose):
-                    print("Not applying filtering for "
-                          +"rounds above first round")
-                    print_memory_use()
-                    sys.stdout.flush()
-
-            filtered_seqlets = [x[0] for x in
-                       zip(seqlets, filtered_rows_mask) if (x[1])]
-            #filtered_seqlets_sets.append(filtered_seqlets)
-
-            filtered_affmat =\
-                nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
-            del coarse_affmat
-            del nn_affmat
-            #filtered_affmats.append(filtered_affmat)
+                filtered_affmat = coarse_affmat
+                filtered_seqlets = seqlets
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing density "
