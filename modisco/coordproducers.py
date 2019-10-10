@@ -76,8 +76,9 @@ class SeqletCoordsFWAP(SeqletCoordinates):
 
 class CoordProducerResults(object):
 
-    def __init__(self, coords, tnt_results):
-        self.coords = coords
+    def __init__(self, pos_coords, neg_coords, tnt_results):
+        self.pos_coords = pos_coords
+        self.neg_coords = neg_coords
         self.tnt_results = tnt_results
 
     @classmethod
@@ -87,13 +88,18 @@ class CoordProducerResults(object):
         coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
         tnt_results = TransformAndThresholdResults.from_hdf5(
                                 grp["tnt_results"])
-        return CoordProducerResults(coords=coords,
+        return CoordProducerResults(pos_coords=self.pos_coords,
+                                    neg_coords=self.neg_coords,
                                     tnt_results=tnt_results)
 
     def save_hdf5(self, grp):
         util.save_string_list(
-            string_list=[str(x) for x in self.coords],
-            dset_name="coords",
+            string_list=[str(x) for x in self.pos_coords],
+            dset_name="pos_coords",
+            grp=grp) 
+        util.save_string_list(
+            string_list=[str(x) for x in self.neg_coords],
+            dset_name="neg_coords",
             grp=grp) 
         self.tnt_results.save_hdf5(
               grp=grp.create_group("tnt_results"))
@@ -310,7 +316,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        min_passing_windows_frac,
                        max_passing_windows_frac,
                        separate_pos_neg_thresholds=False,
-                       max_seqlets_total=None,
                        progress_update=5000,
                        verbose=True,
                        ):
@@ -322,7 +327,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.min_passing_windows_frac = min_passing_windows_frac 
         self.max_passing_windows_frac = max_passing_windows_frac
         self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
-        self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
 
@@ -335,11 +339,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         min_passing_windows_frac = grp.attrs["min_passing_windows_frac"]
         max_passing_windows_frac = grp.attrs["max_passing_windows_frac"]
         separate_pos_neg_thresholds = grp.attrs["separate_pos_neg_thresholds"]
-        if ("max_seqlets_total" in grp.attrs):
-            max_seqlets_total = grp.attrs["max_seqlets_total"]
-        else:
-            max_seqlets_total = None
-        #TODO: load min_seqlets feature
         progress_update = grp.attrs["progress_update"]
         verbose = grp.attrs["verbose"]
         return cls(sliding=sliding, flank=flank, suppress=suppress,
@@ -347,7 +346,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                     min_passing_windows_frac=min_passing_windows_frac,
                     max_passing_windows_frac=max_passing_windows_frac,
                     separate_pos_neg_thresholds=separate_pos_neg_thresholds,
-                    max_seqlets_total=max_seqlets_total,
                     progress_update=progress_update, verbose=verbose) 
 
     def save_hdf5(self, grp):
@@ -360,9 +358,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         grp.attrs["max_passing_windows_frac"] = self.max_passing_windows_frac
         grp.attrs["separate_pos_neg_thresholds"] =\
             self.separate_pos_neg_thresholds
-        #TODO: save min_seqlets feature
-        if (self.max_seqlets_total is not None):
-            grp.attrs["max_seqlets_total"] = self.max_seqlets_total 
         grp.attrs["progress_update"] = self.progress_update
         grp.attrs["verbose"] = self.verbose
 
@@ -550,7 +545,8 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                            else -np.inf for y in x])
             for x in summed_score_track]
 
-        coords = []
+        pos_coords = []
+        neg_coords = []
         for example_idx,single_score_track in enumerate(summed_score_track):
             #set the stuff near the flanks to -np.inf so that we
             # don't pick it up during argmax
@@ -575,9 +571,16 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                         start=argmax-self.flank,
                         end=argmax+self.sliding+self.flank,
                         score=original_summed_score_track[example_idx][argmax]) 
-                    assert (coord.score > pos_threshold
-                            or coord.score < neg_threshold)
-                    coords.append(coord)
+                    if (coord.score > pos_threshold):
+                        pos_coords.append(coord)
+                    elif (coord.score < neg_threshold):
+                        neg_coords.append(coord)
+                    else:
+                        raise RuntimeError(coord.score,
+                               "does not meet thresholds",
+                               pos_threshold,neg_threshold)
+                    pos_coords.append(coord)
+                    neg_coords.append(coord)
                 else:
                     assert False,\
                      ("This shouldn't happen because I set stuff near the"
@@ -590,16 +593,10 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
 
         if (self.verbose):
-            print("Got "+str(len(coords))+" coords")
+            print("Got "+str(len(pos_coords))+" pos_coords and "
+                  +str(len(neg_coords))+" neg_coords")
             sys.stdout.flush()
-
-        if ((self.max_seqlets_total is not None) and
-            len(coords) > self.max_seqlets_total):
-            if (self.verbose):
-                print("Limiting to top "+str(self.max_seqlets_total))
-                sys.stdout.flush()
-            coords = sorted(coords, key=lambda x: -np.abs(x.score))\
-                               [:self.max_seqlets_total]
         return CoordProducerResults(
-                    coords=coords,
+                    pos_coords=pos_coords,
+                    neg_coords=neg_coords,
                     tnt_results=tnt_results) 
