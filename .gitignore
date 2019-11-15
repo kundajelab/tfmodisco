@@ -8,4 +8,5 @@
 **/*.tree_*
 **/*.weights
 **/*DS_Store
+**/*.pkl
 dist

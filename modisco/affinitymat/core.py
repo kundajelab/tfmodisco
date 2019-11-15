@@ -433,16 +433,15 @@ class TwoTierAffinityMatrixFromSeqlets(AbstractAffinityMatrixFromSeqlets):
 
 class AffmatFromSeqletsWithNNpairs(object):
 
-    def __init__(self, pattern_comparison_settings,
-                       sim_metric_on_nn_pairs):
-        self.pattern_comparison_settings = pattern_comparison_settings 
+    def __init__(self, sim_metric_on_nn_pairs):
         self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
 
-    def __call__(self, seqlets, filter_seqlets=None, seqlet_neighbors=None):
+    def __call__(self, seqlets, pattern_comparison_settings,
+                       filter_seqlets=None, seqlet_neighbors=None):
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
-                track_names=self.pattern_comparison_settings.track_names,
+                track_names=pattern_comparison_settings.track_names,
                 track_transformer=
                     self.pattern_comparison_settings.track_transformer)
 
@@ -451,7 +450,7 @@ class AffmatFromSeqletsWithNNpairs(object):
         (filters_all_fwd_data, filters_all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=filter_seqlets,
-                track_names=self.pattern_comparison_settings.track_names,
+                track_names=pattern_comparison_settings.track_names,
                 track_transformer=
                     self.pattern_comparison_settings.track_transformer)
 
@@ -464,13 +463,13 @@ class AffmatFromSeqletsWithNNpairs(object):
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_fwd_data,
                      things_to_scan=all_fwd_data,
-                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+                     min_overlap=pattern_comparison_settings.min_overlap) 
         if (filters_all_rev_data is not None):
             affmat_rev = self.sim_metric_on_nn_pairs(
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_rev_data,
                      things_to_scan=all_fwd_data,
-                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+                     min_overlap=pattern_comparison_settings.min_overlap) 
         else:
             affmat_rev = None
         affmat = (np.maximum(affmat_fwd, affmat_rev) if

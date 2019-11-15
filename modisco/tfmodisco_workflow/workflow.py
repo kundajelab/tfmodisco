@@ -143,101 +143,83 @@ def prep_track_set(contrib_scores, hyp_contrib_scores, one_hot,
     return track_set
 
 
-class TfModiscoSingleTaskWorkflow(object):
 
-    def __init__(self,
-                 seqlets_to_patterns_factory=
-                 seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
-                 sliding_window_size=21, flank_size=10,
-                 overlap_portion=0.5,
-                 max_seqlets_per_metacluster=20000,
-                 target_seqlet_fdr=0.2,
-                 min_passing_windows_frac=0.03,
-                 max_passing_windows_frac=0.2,
-                 separate_pos_neg_thresholds=False,
-                 verbose=True):
+# self.coord_producer = coordproducers.FixedWindowAroundChunks(
+#     sliding=self.sliding_window_size,
+#     flank=self.flank_size,
+#     suppress=(int(0.5*self.sliding_window_size)
+#               + self.flank_size),
+#     target_fdr=self.target_seqlet_fdr,
+#     min_passing_windows_frac=self.min_passing_windows_frac,
+#     max_passing_windows_frac=self.max_passing_windows_frac,
+#     separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+#     max_seqlets_total=None,
+#     verbose=self.verbose) 
 
-        self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
-        self.sliding_window_size = sliding_window_size
-        self.flank_size = flank_size
-        self.overlap_portion = overlap_portion
-        self.target_seqlet_fdr = target_seqlet_fdr
-        self.min_passing_windows_frac = min_passing_windows_frac
-        self.max_passing_windows_frac = max_passing_windows_frac
-        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
-        self.verbose = verbose
 
-    def __call__(self, contrib_scores,
-                       hyp_contrib_scores,
-                       one_hot,
-                       #null_tracks should either be a dictionary
-                       # from task_name to 1d tracks, or a callable
-                       # that will generate the null distribution given
-                       # scores
-                       null_per_pos_scores=coordproducers.LaplaceNullDist(
-                         num_to_samp=10000),
-                       per_position_contrib_scores=None,
-                       revcomp=True,
-                       other_tracks=[]):
+def make_seqlets_to_patterns_settings(per_position_contrib_track_name,
+                                      tracknames_for_finegrained_sim,
+                                      tracknames_for_coarsegrained_sim,
+                                      pattern_comparison_min_overlap):
+    
+    seqlets_sorter = (lambda arr:
+                           sorted(arr,
+                             key=lambda x:
+                                  -np.sum(x[per_position_contrib_scores].fwd)))
 
-        print_memory_use()
+    pattern_comparison_settings = pattern_comparison_settings =\
+            affinitymat.core.PatternComparisonSettings(
+                track_names=tracknames_for_finegrained_sim, 
+                track_transformer=affinitymat.L1Normalizer(), 
+                min_overlap=pattern_comparison_min_overlap)
 
-        self.coord_producer = coordproducers.FixedWindowAroundChunks(
-            sliding=self.sliding_window_size,
-            flank=self.flank_size,
-            suppress=(int(0.5*self.sliding_window_size)
-                      + self.flank_size),
-            target_fdr=self.target_seqlet_fdr,
-            min_passing_windows_frac=self.min_passing_windows_frac,
-            max_passing_windows_frac=self.max_passing_windows_frac,
-            separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
-            max_seqlets_total=None,
-            verbose=self.verbose) 
+    settings = {
+        'seqlets_sorter': seqlets_sorter,
+        'pattern_comparison_settings': pattern_comparison_settings,
+        'tracknames_for_coarsegrained_sim': tracknames_for_coarsegrained_sim}
+    return settings
 
-        if (per_position_contrib_scores is None):
-            per_position_contrib_scores = [np.sum(s,axis=1)
-                                           for s in contrib_scores]
+
+class TfModiscoCoreWorkflow(object):
+
+    def __init__(self, coord_producer, seqlets_to_patterns):
+        self.coord_producer = coord_producer
+        self.seqlets_to_patterns = seqlets_to_patterns
+
+    def __call__(self, per_position_contrib_scores,
+                       per_position_contrib_track_name,
+                       null_per_pos_scores,
+                       all_tracks,
+                       seqlets_to_patterns_settings):
+
         coord_producer_results = self.coord_producer(
                                     score_track=per_position_contrib_scores,
                                     null_track=null_per_pos_scores)
+        track_set = core.TrackSet(
+            data_tracks=all_tracks+[
+                core.DataTrack(
+                    name=per_position_contrib_track_name,
+                    fwd_tracks=per_position_contrib_scores[:,:,None],
+                    rev_tracks=per_position_contrib_scores[:,::-1,None],
+                    has_pos_axis=False)])
 
-        track_set = prep_track_set(task_names=task_names,
-                                   contrib_scores=contrib_scores,
-                                   hyp_contrib_scores=hyp_contrib_scores,
-                                   one_hot=one_hot,
-                                   revcomp=revcomp,
-                                   other_tracks=other_tracks)
-        pos_seqlets = track_set.create_seqlets(
-                        coords=coord_producer_results.pos_coords)
-        neg_seqlets = track_set.create_seqlets(
-                        coords=coord_producer_results.neg_coords)
+        #create seqlets from the positive coordinates; user can flip
+        # sign of per_position_contrib scores if needed
+        seqlets = track_set.create_seqlets(
+                    coords=coord_producer_results.pos_coords)
+        print(str(len(seqlets))+" identified in total")
 
-        print(str(len(pos_seqlets))+" identified in total")
-        print(str(len(neg_seqlets))+" identified in total")
 
-        seqletgroupname_to_seqletgroupresults = OrderedDict()
+        settings = make_seqlets_to_patterns_settings(
+                     per_position_contrib_track_name,
+                     tracknames_for_finegrained_sim,
+                     tracknames_for_coarsegrained_sim)
 
-        for seqletgroupname, seqlets in [("pos_seqlets", pos_seqlets),
-                                           ("neg_seqlets", neg_seqlets)]:
-            print("On seqlet group "+seqletgroupname)
-            sys.stdout.flush()
-            
-            seqlets_to_patterns = self.seqlets_to_patterns_factory(
-                track_set=track_set,
-                onehot_track_name="sequence",
-                contrib_scores_track_name="contrib_scores",
-                hypothetical_contribs_track_name="hyp_contrib_scores",
-                track_signs=relevant_task_signs,
-                other_comparison_track_names=[])
-            seqlets_to_patterns_result = seqlets_to_patterns(seqlets)
-            seqletgroupname_to_seqletgroupresults[seqletgroupname] =\
-                SeqletGroupResults(
-                    num_seqlet=len(seqlets),
-                    seqletgroupname=seqletgroupname,
-                    seqlets=seqlets,
-                    seqlets_to_patterns_result=seqlets_to_patterns_result)
+        seqlets_to_patterns_result = seqlets_to_patterns(
+            seqlets=seqlets,
+            settings=settings)
 
         return TfModiscoResults(
                  coord_producer_results=coord_producer_results,
-                 seqletgroupname_to_seqletgroupresults=
+                 seqlets_to_patterns_result=
                   seqletgroupname_to_seqletgroupresults)
