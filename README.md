@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/62352963.svg)](https://zenodo.org/badge/latestdoi/62352963)
 
-**NOTE: we are still refining the multi-task version of TF-MoDISco. If you encounter difficulties running TF-MoDISco with multiple task, our recommendation is to run it on one task at a time.**
+**NOTE: we are still refining the multi-task version of TF-MoDISco. If you encounter difficulties running TF-MoDISco with multiple tasks, our recommendation is to run it on one task at a time.**
 
 Installation:
 At the time of writing, the latest version on pypi is version 0.5.1.2 and can be installed using `pip install modisco`. To install from this source code, clone the repo and then run `pip install --editable /path/to/cloned/repo`.
