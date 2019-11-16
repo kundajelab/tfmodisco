@@ -6,7 +6,7 @@ from . import util
 
 def ic_scale(pwm,background):
     per_position_ic = util.compute_per_position_ic(
-                       ppm=pwm, background, pseudocount=0.001)
+                       ppm=pwm, background=background, pseudocount=0.001)
     return pwm*(per_position_ic[:,None])
 
 
