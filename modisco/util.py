@@ -421,11 +421,59 @@ def binary_search_perplexity(desired_perplexity, distances):
                 beta = (beta + beta_min) / 2.0
     return beta, ps
 
+
+def get_ic_trimming_indices(ppm, background, threshold, pseudocount=0.001):
+    """Return tuple of indices to trim to if ppm is trimmed by info content.
+
+    The ppm will be trimmed from the left and from the right until a position
+     that meets the information content specified by threshold is found. A
+     base of 2 is used for the infromation content.
+
+    Arguments:
+        threshold: the minimum information content.
+        remaining arguments same as for compute_per_position_ic
+
+    Returns:
+        (start_idx, end_idx). start_idx is inclusive, end_idx is exclusive.
+    """
+    per_position_ic = compute_per_position_ic(
+                       ppm=ppm, background=background, pseudocount=pseudocount)
+    passing_positions = np.where(per_position_ic >= threshold)
+    return (passing_positions[0][0], passing_positions[0][-1]+1)
+
+
+def compute_per_position_ic(ppm, background, pseudocount):
+    """Compute information content at each position of ppm.
+
+    Arguments:
+        ppm: should have dimensions of length x alphabet. Entries along the
+            alphabet axis should sum to 1.
+        background: the background base frequencies
+        pseudocount: pseudocount to be added to the probabilities of the ppm
+            to prevent overflow/underflow.
+
+    Returns:
+        total information content at each positon of the ppm.
+    """
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background),\
+            "Make sure the letter axis is the second axis"
+    assert np.testing.assert_allclose(np.sum(ppm, axis=1), 1.0),\
+            "Probabilities don't sum to 1 along axis 1 in "+str(ppm)
+    alphabet_len = len(background)
+    odds_ratio = ((pwm+pseudocount)/(1 + pseudocount*alphabet_len))/(
+                  background[None,:])
+    ic = ((np.log((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/np.log(2))
+          *ppm - (np.log(background)*background/np.log(2))[None,:])
+    return np.sum(ic,axis=1)
+
+
 def trim_ppm(ppm, t=0.45):
     maxes = np.max(ppm,-1)
     maxes = np.where(maxes>=t)
     return ppm[maxes[0][0]:maxes[0][-1]+1] 
         
+
 def write_meme_file(ppm, bg, fname):
     f = open(fname, 'w')
     f.write('MEME version 4\n\n')
@@ -438,7 +486,8 @@ def write_meme_file(ppm, bg, fname):
     for s in ppm:
         f.write('%.5f %.5f %.5f %.5f\n' % tuple(s))
     f.close()
-    
+
+
 def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_path='tomtom', motifs_db='HOCOMOCOv11_core_HUMAN_mono_meme_format.meme' , n=5, temp_dir='./', trim_threshold=0.45):
     """Fetches top matches from a motifs database using TomTom.
     
