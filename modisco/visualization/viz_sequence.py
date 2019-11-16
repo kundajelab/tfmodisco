@@ -1,7 +1,7 @@
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from . import util
+from .. import util
 
 
 def ic_scale(pwm,background):
