@@ -83,66 +83,6 @@ class TfModiscoResults(object):
                     .create_group("metacluster_"+str(idx))) 
 
 
-class SeqletGroupResults(object):
-
-    #TODO: REWRITE
-    def __init__(self, metacluster_size, activity_pattern,
-                       seqlets, seqlets_to_patterns_result):
-        self.metacluster_size = metacluster_size
-        self.activity_pattern = activity_pattern
-        self.seqlets = seqlets
-        self.seqlets_to_patterns_result = seqlets_to_patterns_result
-
-    @classmethod
-    def from_hdf5(cls, grp, track_set):
-        metacluster_size = int(grp.attrs['size'])
-        activity_pattern = np.array(grp['activity_pattern'])
-        seqlet_coords = util.load_seqlet_coords(dset_name="seqlets", grp=grp)
-        seqlets = track_set.create_seqlets(coords=seqlet_coords)
-        seqlets_to_patterns_result =\
-            seqlets_to_patterns.SeqletsToPatternsResults.from_hdf5(
-                grp=grp["seqlets_to_patterns_result"],
-                track_set=track_set) 
-        return cls(metacluster_size=metacluster_size,
-                   activity_pattern=activity_pattern,
-                   seqlets=seqlets,
-                   seqlets_to_patterns_result=seqlets_to_patterns_result) 
-
-    def save_hdf5(self, grp):
-        grp.attrs['size'] = self.metacluster_size
-        grp.create_dataset('activity_pattern', data=self.activity_pattern)
-        util.save_seqlet_coords(seqlets=self.seqlets,
-                                dset_name="seqlets", grp=grp)   
-        self.seqlets_to_patterns_result.save_hdf5(
-            grp=grp.create_group('seqlets_to_patterns_result'))
-
-
-def prep_track_set(contrib_scores, hyp_contrib_scores, one_hot,
-                   revcomp=True, other_tracks=[]):
-    contrib_scores_track = core.DataTrack(
-                            name="contrib_scores",
-                            fwd_tracks=contrib_scores,
-                            rev_tracks=([x[::-1, ::-1] contrib_scores]
-                                        if revcomp else None),
-                            has_pos_axis=True) 
-    hypothetical_contribs_tracks = core.DataTrack(
-                       name="hyp_contrib_scores",
-                       fwd_tracks=hyp_contribs[key],
-                       rev_tracks=([x[::-1, ::-1] for x in hyp_contrib_scores]
-                                   if revcomp else None),
-                       has_pos_axis=True)
-    onehot_track = core.DataTrack(
-                        name="sequence",
-                        fwd_tracks=one_hot,
-                        rev_tracks=([x[::-1, ::-1] for x in one_hot]
-                                    if revcomp else None),
-                        has_pos_axis=True)
-    track_set = core.TrackSet(data_tracks=[contrib_scores_track,
-                                           hypothetical_contribs_track,
-                                           onehot_track]+other_tracks)
-    return track_set
-
-
 
 # self.coord_producer = coordproducers.FixedWindowAroundChunks(
 #     sliding=self.sliding_window_size,
@@ -173,10 +113,10 @@ def make_seqlets_to_patterns_settings(per_position_contrib_track_name,
                 track_transformer=affinitymat.L1Normalizer(), 
                 min_overlap=pattern_comparison_min_overlap)
 
-    settings = {
-        'seqlets_sorter': seqlets_sorter,
-        'pattern_comparison_settings': pattern_comparison_settings,
-        'tracknames_for_coarsegrained_sim': tracknames_for_coarsegrained_sim}
+    settings = util.enum(
+        seqlets_sorter=seqlets_sorter
+        pattern_comparison_settings=pattern_comparison_settings,
+        tracknames_for_coarsegrained_sim=tracknames_for_coarsegrained_sim)
     return settings
 
 
@@ -190,7 +130,8 @@ class TfModiscoCoreWorkflow(object):
                        per_position_contrib_track_name,
                        null_per_pos_scores,
                        all_tracks,
-                       seqlets_to_patterns_settings):
+                       tracknames_for_finegrained_sim,
+                       tracknames_for_coarsegrained_sim):
 
         coord_producer_results = self.coord_producer(
                                     score_track=per_position_contrib_scores,
@@ -209,7 +150,6 @@ class TfModiscoCoreWorkflow(object):
                     coords=coord_producer_results.pos_coords)
         print(str(len(seqlets))+" identified in total")
 
-
         settings = make_seqlets_to_patterns_settings(
                      per_position_contrib_track_name,
                      tracknames_for_finegrained_sim,
@@ -221,5 +161,4 @@ class TfModiscoCoreWorkflow(object):
 
         return TfModiscoResults(
                  coord_producer_results=coord_producer_results,
-                 seqlets_to_patterns_result=
-                  seqletgroupname_to_seqletgroupresults)
+                 seqlets_to_patterns_result=seqlets_to_patterns_result)

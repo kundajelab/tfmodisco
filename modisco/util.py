@@ -8,6 +8,20 @@ import traceback
 from sklearn.neighbors.kde import KernelDensity
 
 
+def enum(**enums):
+    class Enum(object):
+        pass
+    to_return = Enum
+    for key,val in enums.items():
+        if hasattr(val, '__call__'): 
+            setattr(to_return, key, staticmethod(val))
+        else:
+            setattr(to_return, key, val)
+    to_return.vals = [x for x in enums.values()]
+    to_return.the_dict = enums
+    return to_return
+
+
 def load_patterns(grp, track_set):
     from modisco.core import AggregatedSeqlet
     all_pattern_names = load_string_list(dset_name="all_pattern_names",

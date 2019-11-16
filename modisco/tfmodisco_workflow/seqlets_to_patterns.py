@@ -66,10 +66,10 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
     def __call__(self, seqlets, settings):
 
 
-        pattern_comparison_settings = settings['pattern_comparison_settings']
-        seqlets_sorter = settings['seqlets_sorter']
+        pattern_comparison_settings = settings.pattern_comparison_settings
+        seqlets_sorter = settings.seqlets_sorter
         tracknames_for_coarsegrained_sim =\
-            settings['tracknames_for_coarsegrained_sim']
+            settings.tracknames_for_coarsegrained_sim
 
         seqlets = settings.seqlets_sorter(seqlets) #deterministic ordering?
 
@@ -97,8 +97,8 @@ class SeqletsToPatterns(AbstractSeqletsToPatterns):
                 if (self.verbose):
                     print("len(seqlets) is 0 - bailing!")
                 return SeqletsToPatternsResults(
-                        patterns=None,
-                        seqlets=None,
+                        patterns=[],
+                        seqlets=[],
                         affmat=None,
                         cluster_results=None, 
                         total_time_taken=None,
