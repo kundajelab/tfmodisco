@@ -469,6 +469,54 @@ def compute_per_position_ic(ppm, background, pseudocount):
     return np.sum(ic,axis=1)
 
 
+#rolling_window is from this blog post by Erik Rigtorp:
+# https://rigtorp.se/2011/01/01/rolling-statistics-numpy.html
+def rolling_window(a, window):
+    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+    strides = a.strides + (a.strides[-1],)
+    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat): 
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+    strided_onehotseq = rolling_window(
+        onehot_seq.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+
+    #this finds the cosine similarity with a masked version of the weightmat
+    # where only the positions that are nonzero in the deeplift scores are
+    # considered
+    dot_product_imp_weightmat = np.sum(
+        strided_impscores*weightmat[None,None,:,:], axis=(2,3))
+    norm_deeplift_scores = np.sqrt(np.sum(np.square(strided_impscores),
+                                   axis=(2,3)))
+    norm_masked_weightmat = np.sqrt(np.sum(np.square(
+                                     onehot_seq*weightmat[None,None,:,:]),
+                                     axis=(2,3)))
+    cosine_sim = dot_product_imp_weightmat/(
+                  norm_deeplift_scores*norm_masked_weightmat)
+    return cosine_sim
+
+
+def compute_pwm_scan(onehot_seq, weightmat):
+    strided_onehotseq = rolling_window(
+        onehot_seq.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+    pwm_scan = np.sum(
+        strided_onehotseq*weightmat[None,None,:,:], axis=(2,3)) 
+    return pwm_scan
+
+
+def compute_sum_scores(imp_scores, window_size):
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=window_size).transpose((0,2,3,1))
+    sum_scores = np.sum(strided_impscores, axis=(2,3))
+    return sum_scores
+
+
 def trim_ppm(ppm, t=0.45):
     maxes = np.max(ppm,-1)
     maxes = np.where(maxes>=t)
