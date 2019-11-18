@@ -1,13 +1,13 @@
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from .. import util
 
 
 def ic_scale(pwm,background):
-    odds_ratio = ((pwm+0.001)/(1.004))/(background[None,:])
-    ic = ((np.log((pwm+0.001)/(1.004))/np.log(2))*pwm -\
-            (np.log(background)*background/np.log(2))[None,:])
-    return pwm*(np.sum(ic,axis=1)[:,None])
+    per_position_ic = util.compute_per_position_ic(
+                       ppm=pwm, background=background, pseudocount=0.001)
+    return pwm*(per_position_ic[:,None])
 
 
 def plot_a(ax, base, left_edge, height, color):
