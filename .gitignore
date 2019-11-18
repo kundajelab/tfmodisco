@@ -8,4 +8,6 @@
 **/*.tree_*
 **/*.weights
 **/*DS_Store
+**/*.pkl
+**/*.gz
 dist
