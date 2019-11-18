@@ -462,8 +462,6 @@ def compute_per_position_ic(ppm, background, pseudocount):
              "Probabilities don't sum to 1 along axis 1 in "
              +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
     alphabet_len = len(background)
-    odds_ratio = ((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/(
-                  background[None,:])
     ic = ((np.log((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/np.log(2))
           *ppm - (np.log(background)*background/np.log(2))[None,:])
     return np.sum(ic,axis=1)
@@ -493,11 +491,24 @@ def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat):
     norm_deeplift_scores = np.sqrt(np.sum(np.square(strided_impscores),
                                    axis=(2,3)))
     norm_masked_weightmat = np.sqrt(np.sum(np.square(
-                                     onehot_seq*weightmat[None,None,:,:]),
-                                     axis=(2,3)))
+                                strided_onehotseq*weightmat[None,None,:,:]),
+                                axis=(2,3)))
     cosine_sim = dot_product_imp_weightmat/(
                   norm_deeplift_scores*norm_masked_weightmat)
     return cosine_sim
+
+
+def get_logodds_pwm(ppm, background, pseudocount):
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background),\
+            "Make sure the letter axis is the second axis"
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+             "Probabilities don't sum to 1 along axis 1 in "
+             +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
+    alphabet_len = len(background)
+    odds_ratio = ((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/(
+                  background[None,:])
+    return np.log(odds_ratio)
 
 
 def compute_pwm_scan(onehot_seq, weightmat):
