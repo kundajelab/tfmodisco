@@ -10,4 +10,5 @@
 **/*DS_Store
 **/*.pkl
 **/*.gz
+**/*.json
 dist
