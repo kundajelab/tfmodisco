@@ -435,11 +435,119 @@ def binary_search_perplexity(desired_perplexity, distances):
                 beta = (beta + beta_min) / 2.0
     return beta, ps
 
+
+def get_ic_trimming_indices(ppm, background, threshold, pseudocount=0.001):
+    """Return tuple of indices to trim to if ppm is trimmed by info content.
+
+    The ppm will be trimmed from the left and from the right until a position
+     that meets the information content specified by threshold is found. A
+     base of 2 is used for the infromation content.
+
+    Arguments:
+        threshold: the minimum information content.
+        remaining arguments same as for compute_per_position_ic
+
+    Returns:
+        (start_idx, end_idx). start_idx is inclusive, end_idx is exclusive.
+    """
+    per_position_ic = compute_per_position_ic(
+                       ppm=ppm, background=background, pseudocount=pseudocount)
+    passing_positions = np.where(per_position_ic >= threshold)
+    return (passing_positions[0][0], passing_positions[0][-1]+1)
+
+
+def compute_per_position_ic(ppm, background, pseudocount):
+    """Compute information content at each position of ppm.
+
+    Arguments:
+        ppm: should have dimensions of length x alphabet. Entries along the
+            alphabet axis should sum to 1.
+        background: the background base frequencies
+        pseudocount: pseudocount to be added to the probabilities of the ppm
+            to prevent overflow/underflow.
+
+    Returns:
+        total information content at each positon of the ppm.
+    """
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background),\
+            "Make sure the letter axis is the second axis"
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+             "Probabilities don't sum to 1 along axis 1 in "
+             +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
+    alphabet_len = len(background)
+    ic = ((np.log((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/np.log(2))
+          *ppm - (np.log(background)*background/np.log(2))[None,:])
+    return np.sum(ic,axis=1)
+
+
+#rolling_window is from this blog post by Erik Rigtorp:
+# https://rigtorp.se/2011/01/01/rolling-statistics-numpy.html
+def rolling_window(a, window):
+    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+    strides = a.strides + (a.strides[-1],)
+    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat): 
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+    strided_onehotseq = rolling_window(
+        onehot_seq.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+
+    #this finds the cosine similarity with a masked version of the weightmat
+    # where only the positions that are nonzero in the deeplift scores are
+    # considered
+    dot_product_imp_weightmat = np.sum(
+        strided_impscores*weightmat[None,None,:,:], axis=(2,3))
+    norm_deeplift_scores = np.sqrt(np.sum(np.square(strided_impscores),
+                                   axis=(2,3)))
+    norm_masked_weightmat = np.sqrt(np.sum(np.square(
+                                strided_onehotseq*weightmat[None,None,:,:]),
+                                axis=(2,3)))
+    cosine_sim = dot_product_imp_weightmat/(
+                  norm_deeplift_scores*norm_masked_weightmat)
+    return cosine_sim
+
+
+def get_logodds_pwm(ppm, background, pseudocount):
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background),\
+            "Make sure the letter axis is the second axis"
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+             "Probabilities don't sum to 1 along axis 1 in "
+             +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
+    alphabet_len = len(background)
+    odds_ratio = ((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/(
+                  background[None,:])
+    return np.log(odds_ratio)
+
+
+def compute_pwm_scan(onehot_seq, weightmat):
+    strided_onehotseq = rolling_window(
+        onehot_seq.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+    pwm_scan = np.sum(
+        strided_onehotseq*weightmat[None,None,:,:], axis=(2,3)) 
+    return pwm_scan
+
+
+def compute_sum_scores(imp_scores, window_size):
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=window_size).transpose((0,2,3,1))
+    sum_scores = np.sum(strided_impscores, axis=(2,3))
+    return sum_scores
+
+
 def trim_ppm(ppm, t=0.45):
     maxes = np.max(ppm,-1)
     maxes = np.where(maxes>=t)
     return ppm[maxes[0][0]:maxes[0][-1]+1] 
         
+
 def write_meme_file(ppm, bg, fname):
     f = open(fname, 'w')
     f.write('MEME version 4\n\n')
@@ -452,7 +560,8 @@ def write_meme_file(ppm, bg, fname):
     for s in ppm:
         f.write('%.5f %.5f %.5f %.5f\n' % tuple(s))
     f.close()
-    
+
+
 def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_path='tomtom', motifs_db='HOCOMOCOv11_core_HUMAN_mono_meme_format.meme' , n=5, temp_dir='./', trim_threshold=0.45):
     """Fetches top matches from a motifs database using TomTom.
     

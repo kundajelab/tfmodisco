@@ -372,20 +372,21 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             sys.stdout.flush()
         original_summed_score_track = window_sum_function(arrs=score_track) 
 
-        if (self.verbose):
-            print("Generating null dist")
-            sys.stdout.flush()
-        if (hasattr(null_track, '__call__')):
-            null_vals = null_track(
-                score_track=score_track,
-                windowsize=self.sliding,
-                original_summed_score_track=original_summed_score_track)
-        else:
-            null_summed_score_track = window_sum_function(arrs=null_track) 
-            null_vals = list(np.concatenate(null_summed_score_track, axis=0))
-
         #Determine the window thresholds
         if (tnt_results is None):
+
+            if (self.verbose):
+                print("Generating null dist")
+                sys.stdout.flush()
+            if (hasattr(null_track, '__call__')):
+                null_vals = null_track(
+                    score_track=score_track,
+                    windowsize=self.sliding,
+                    original_summed_score_track=original_summed_score_track)
+            else:
+                null_summed_score_track = window_sum_function(arrs=null_track) 
+                null_vals = list(np.concatenate(null_summed_score_track, axis=0))
+
             if (self.verbose):
                 print("Computing threshold")
                 sys.stdout.flush()

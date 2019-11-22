@@ -675,6 +675,23 @@ class AggregatedSeqlet(Pattern):
         
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
 
+    def trim_by_ic(self, ppm_track_name, background, threshold,
+                         pseudocount=0.001):
+        """Trimming based on information content"""
+        ppm = self[ppm_track_name].fwd
+        (start_idx, end_idx) = util.get_ic_trimming_indices(
+            ppm=ppm, background=background,
+            threshold=threshold, pseudocount=pseudocount)
+        return self.trim_to_start_and_end_idx(start_idx=start_idx,
+                                              end_idx=end_idx)
+
+    def trim_by_sum_abs_score(self, track_name, threshold):
+        track_vals = np.sum(np.abs(self[track_name].fwd), axis=1)
+        passing_positions = np.where(track_vals >= threshold)
+        return self.trim_to_start_and_end_idx(
+                  start_idx=passing_positions[0][0],
+                  end_idx=passing_positions[0][-1]+1)
+
     def trim_to_start_and_end_idx(self, start_idx, end_idx):
         new_seqlets_and_alnmnts = [] 
         for seqlet_and_alnmt in self._seqlets_and_alnmts:
