@@ -541,6 +541,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print_memory_use()
                 sys.stdout.flush()
             coarse_affmat = self.coarse_affmat_computer(seqlets)
+            gc.collect()
             #coarse_affmats.append(coarse_affmat)
 
             if (self.skip_fine_grained==False):
@@ -552,6 +553,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     sys.stdout.flush()
 
                 seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
+                gc.collect()
 
                 if (self.verbose):
                     print("Computed nearest neighbors in",
@@ -568,6 +570,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
                                             seqlet_neighbors=seqlet_neighbors,
                                             seqlets=seqlets) 
+                gc.collect()
                 #nn_affmats.append(nn_affmat)
                 
                 if (self.verbose):

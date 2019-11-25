@@ -16,6 +16,13 @@ from collections import defaultdict
 from joblib import Parallel, delayed
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 def find_neighbors(data, k=30, metric='minkowski', p=2, method='brute', n_jobs=-1):
     from .bruteforce_nn import knnsearch
     """
@@ -183,6 +190,8 @@ def graph2binary(filename, graph):
             f.write(ij[idx])
             f.write( s[idx])
     print("Wrote graph to binary file in {} seconds".format(time.time() - tic))
+    print_memory_use()
+    sys.stdout.flush()
 
 
 def get_modularity(msg):
@@ -268,6 +277,8 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3,
     rng = np.random.RandomState(seed)
 
     print('Running Louvain modularity optimization')
+    print_memory_use()
+    sys.stdout.flush()
     tic = time.time()
 
     (lpath, community_binary, hierarchy_binary) =\
@@ -322,8 +333,11 @@ def runlouvain(filename, level_to_return=-1, tol=1e-3,
                 communities = parse_l1_clusters(out.decode())
 
             print("After {} runs, maximum modularity is Q = {}".format(run, Q))
+            print_memory_use()
+            sys.stdout.flush()
 
     print("Louvain completed {} runs in {} seconds".format(run, time.time() - tic))
+    print_memory_use()
     sys.stdout.flush()
 
     return communities, Q
@@ -382,6 +396,8 @@ def runlouvain_average_runs(filename, n_runs,
     rng = np.random.RandomState(seed)
 
     print('Running Louvain modularity optimization')
+    print_memory_use()
+    sys.stdout.flush()
     tic = time.time()
 
     (lpath, community_binary, hierarchy_binary) =\
@@ -413,6 +429,7 @@ def runlouvain_average_runs(filename, n_runs,
         coocc_count += (communities[:,None] == communities[None,:])
     print("Louvain completed {} runs in {} seconds".format(
           n_runs, time.time() - tic))
+    print_memory_use()
     sys.stdout.flush()
 
     return coocc_count.astype("float32")/float(len(communities_list))

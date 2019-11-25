@@ -9,6 +9,7 @@ import time
 import itertools
 import scipy.stats
 from joblib import Parallel, delayed
+import gc
 
 
 def print_memory_use():
@@ -162,6 +163,7 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
 
     def __call__(self, seqlets):
         print("Computing embeddings")
+        print_memory_use()
         sys.stdout.flush()
         if (self.require_onehot_match):
             onehot_track_fwd, onehot_track_rev =\
@@ -227,6 +229,9 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
             embedding_fwd = embedding_fwd[:,top_embedding_indices]
             embedding_rev = (embedding_rev[:,top_embedding_indices]
                              if (embedding_rev is not None) else None)
+        print("Finished embeddings computation - intermediate vars in scope")
+        print_memory_use()
+        sys.stdout.flush()
         return embedding_fwd, embedding_rev
 
 
@@ -248,12 +253,21 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
         normed_vecs1 = np.nan_to_num(
                         vecs1/np.linalg.norm(vecs1, axis=1)[:,None],
                         copy=False)
+        if (self.verbose):
+            print("Computed normalized vectors - 1")
+            print_memory_use()
+            sys.stdout.flush()
         normed_vecs2 = np.nan_to_num(
                         vecs2/np.linalg.norm(vecs2, axis=1)[:,None],
                         copy=False)
         if (self.verbose):
+            print("Computed normalized vectors - 2")
+            print_memory_use()
+            sys.stdout.flush()
+        if (self.verbose):
             print("Normalization computed in",
                   round(time.time()-start_time,2),"s")
+            print_memory_use()
             sys.stdout.flush()
         if (self.gpu_batch_size is not None):
             to_return = B.matrix_dot_product(normed_vecs1, normed_vecs2.T,
@@ -261,11 +275,16 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
         else:
             #do the multiplication on the CPU
             to_return = np.dot(normed_vecs1,normed_vecs2.T)
+            if (self.verbose):
+                print("Computed dot product")
+                print_memory_use()
+                sys.stdout.flush()
         end_time = time.time()
     
         if (self.verbose):
             print("Cosine similarity mat computed in",
                   round(end_time-start_time,2),"s")
+            print_memory_use()
             sys.stdout.flush()
 
         return to_return
@@ -338,31 +357,44 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
         cp1_time = time.time()
         if (self.verbose):
             print("Beginning embedding computation")
+            print_memory_use()
             sys.stdout.flush()
 
         embedding_fwd, embedding_rev = self.seqlets_to_1d_embedder(seqlets)
+        gc.collect()
 
         cp2_time = time.time()
         if (self.verbose):
             print("Finished embedding computation in",
                   round(cp2_time-cp1_time,2),"s")
+            print_memory_use()
             sys.stdout.flush()
 
         if (self.verbose):
             print("Starting affinity matrix computations")
+            print_memory_use()
             sys.stdout.flush()
 
         affinity_mat_fwd = self.affinity_mat_from_1d(
                             vecs1=embedding_fwd, vecs2=embedding_fwd)  
+        if (self.verbose):
+            print("Fwd affmat computed")
+            print_memory_use()
+            sys.stdout.flush()
         affinity_mat_rev = (self.affinity_mat_from_1d(
                              vecs1=embedding_fwd, vecs2=embedding_rev)
                             if (embedding_rev is not None) else None)
+        if (self.verbose):
+            print("Rev affmat computed")
+            print_memory_use()
+            sys.stdout.flush()
 
         cp3_time = time.time()
 
         if (self.verbose):
             print("Finished affinity matrix computations in",
                   round(cp3_time-cp2_time,2),"s")
+            print_memory_use()
             sys.stdout.flush()
 
         return (np.maximum(affinity_mat_fwd, affinity_mat_rev) 
@@ -569,6 +601,7 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
             else:
                 to_return[thing_to_scan_idx,
                           thing_to_scan_neighbor_indices] = result
+        gc.collect()
 
         end = time.time()
         if (self.verbose):

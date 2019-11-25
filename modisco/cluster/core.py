@@ -6,6 +6,13 @@ import time
 import sys
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 class ClusterResults(object):
 
     def __init__(self, cluster_indices, **kwargs):
@@ -97,12 +104,18 @@ class LouvainCluster(AbstractAffinityMatClusterer):
 
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
+            print_memory_use()
             sys.stdout.flush()
         all_start = time.time()
         if (self.affmat_transformer is not None):
             affinity_mat = self.affmat_transformer(orig_affinity_mat)
         else:
             affinity_mat = orig_affinity_mat
+
+        if (self.verbose):
+            print("Transformed affinity matrix")
+            print_memory_use()
+            sys.stdout.flush()
 
         communities, graph, Q, =\
             ph.cluster.runlouvain_given_graph(
@@ -115,14 +128,26 @@ class LouvainCluster(AbstractAffinityMatClusterer):
                 louvain_time_limit=self.louvain_time_limit,
                 seed=self.seed)
 
+        if (self.verbose):
+            print("Got communities, graph, Q")
+            print_memory_use()
+            sys.stdout.flush()
+
         cluster_results = LouvainClusterResults(
                 cluster_indices=communities,
                 level_to_return=self.level_to_return,
                 Q=Q)
 
         if (self.verbose):
-            print("Preproc + Louvain took "+str(time.time()-all_start)+" s")
+            print("Packaged as cluster results")
+            print_memory_use()
             sys.stdout.flush()
+
+        if (self.verbose):
+            print("Preproc + Louvain took "+str(time.time()-all_start)+" s")
+            print_memory_use()
+            sys.stdout.flush()
+
         return cluster_results
 
 
