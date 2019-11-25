@@ -247,10 +247,10 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
         start_time = time.time()
         normed_vecs1 = np.nan_to_num(
                         vecs1/np.linalg.norm(vecs1, axis=1)[:,None],
-                        copy=False, nan=0.0)
+                        copy=False)
         normed_vecs2 = np.nan_to_num(
                         vecs2/np.linalg.norm(vecs2, axis=1)[:,None],
-                        copy=False, nan=0.0)
+                        copy=False)
         if (self.verbose):
             print("Normalization computed in",
                   round(time.time()-start_time,2),"s")
