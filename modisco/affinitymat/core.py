@@ -131,6 +131,9 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                     filters=self.filters,
                     biases=self.biases,
                     require_onehot_match=self.require_onehot_match)
+        print("kmer embedding func instantiated")
+        print_memory_use()
+        sys.stdout.flush()
 
     def prepare_gapped_kmer_filters(self):
         nonzero_position_combos = list(itertools.combinations(
@@ -171,6 +174,9 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                     patterns=seqlets,
                     track_names=[self.onehot_track_name],
                     track_transformer=None)
+        print("After onehot_track_fwd and onehot_track_rev")
+        print_memory_use()
+        sys.stdout.flush()
 
         data_to_embed_fwd = np.zeros(
             (len(seqlets),
@@ -179,6 +185,9 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
             (len(seqlets),
              len(list(seqlets)[0]), self.alphabet_size)).astype("float32")
             if (onehot_track_rev is not None) else None)
+        print("data_to_embed_fwd and data_to_embed_rev instantiated")
+        print_memory_use()
+        sys.stdout.flush()
         for (track_name, sign) in self.toscore_track_names_and_signs:
             fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
@@ -187,11 +196,21 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
             if (rev_data is not None):
                 data_to_embed_rev += (rev_data*sign if
                                       (rev_data is not None) else None)
+        print("data_to_embed_fwd and data_to_embed_rev prepared"
+              +" shapes are "+str(data_to_embed_fwd.shape)+" and "
+              +str(data_to_embed_rev.shape))
+        print_memory_use()
+        sys.stdout.flush()
+        del fwd_data
+        del rev_data
         data_to_embed_fwd = np.array([self.normalizer(x) for x in
                                       data_to_embed_fwd])
         if (data_to_embed_rev is not None):
             data_to_embed_rev = np.array([self.normalizer(x) for x in
                                           data_to_embed_rev])
+        print("data_to_embed_fwd and data_to_embed_rev normalized")
+        print_memory_use()
+        sys.stdout.flush()
         common_args = {'batch_size': self.batch_size,
                        'progress_update': self.progress_update}
         if (self.require_onehot_match):
@@ -212,6 +231,9 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                   to_embed=data_to_embed_rev,
                                   **common_args)
                              if (onehot_track_rev is not None) else None)
+        print("embedding_fwd and embedding_rev prepared")
+        print_memory_use()
+        sys.stdout.flush()
         if (self.num_filters_to_retain is not None):
             all_embeddings = (np.concatenate(
                               [embedding_fwd, embedding_rev], axis=0)
