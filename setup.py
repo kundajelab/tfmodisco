@@ -14,7 +14,7 @@ if __name__== '__main__':
           zip_safe=False,
           setup_requires=[],
           install_requires=['numpy>=1.9', 'joblib>=0.11', 
-                            'scikit-learn>=0.19,<0.22',
+                            'scikit-learn>=0.19',
                             'h5py>=2.5'],
           extras_require={
             'tensorflow': ['tensorflow>=1.7'],
