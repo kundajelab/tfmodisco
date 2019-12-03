@@ -568,6 +568,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                                             coarse_affmat2)))
             print("diff", np.mean(np.abs(seqlet_neighbors - seqlet_neighbors2)))
 
+            sparse_coarse_affmat = coarse_affmat2
+            seqlet_neighbors = seqlet_neighbors2
+
             gc.collect()
             print_memory_use()
             sys.stdout.flush()
