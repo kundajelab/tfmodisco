@@ -200,6 +200,15 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         #affinity matrix from embeddings
         coarse_affmat_computer =\
+            affinitymat.core.SparseAffmatFromFwdAndRevSeqletEmbeddings(
+                seqlets_to_1d_embedder=gkmer_embedder,
+                sparse_affmat_from_fwdnrev1dvecs=\
+                    affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
+                        n_neighbors=self.nearest_neighbors_to_compute, 
+                        nn_n_jobs=self.nn_n_jobs, 
+                        verbose=self.verbose),
+                verbose=self.verbose)
+        coarse_affmat_computer2 =\
             affinitymat.core.AffmatFromSeqletEmbeddings(
                 seqlets_to_1d_embedder=gkmer_embedder,
                 affinity_mat_from_1d=\
@@ -397,6 +406,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         return TfModiscoSeqletsToPatterns(
                 seqlets_sorter=seqlets_sorter,
                 coarse_affmat_computer=coarse_affmat_computer,
+                coarse_affmat_computer2=coarse_affmat_computer2,
                 nearest_neighbors_computer=nearest_neighbors_computer,
                 affmat_from_seqlets_with_nn_pairs=
                     affmat_from_seqlets_with_nn_pairs, 
@@ -462,6 +472,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
     def __init__(self, seqlets_sorter, 
                        coarse_affmat_computer,
+                       coarse_affmat_computer2,
                        nearest_neighbors_computer,
                        affmat_from_seqlets_with_nn_pairs, 
                        filter_mask_from_correlation,
@@ -479,6 +490,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
         self.seqlets_sorter = seqlets_sorter
         self.coarse_affmat_computer = coarse_affmat_computer
+        self.coarse_affmat_computer2 = coarse_affmat_computer2
         self.nearest_neighbors_computer = nearest_neighbors_computer
         self.affmat_from_seqlets_with_nn_pairs =\
             affmat_from_seqlets_with_nn_pairs
@@ -540,26 +552,27 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print("(Round "+str(round_num)+") Computing coarse affmat")
                 print_memory_use()
                 sys.stdout.flush()
-            coarse_affmat = self.coarse_affmat_computer(seqlets)
+
+            sparse_coarse_affmat, seqlet_neighbors =\
+                self.coarse_affmat_computer(seqlets)
+
+            coarse_affmat2 = self.coarse_affmat_computer2(seqlets)
+            seqlet_neighbors2 = self.nearest_neighbors_computer(coarse_affmat2)
+
+            sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
+            print("seqlet neighbors:", seqlet_neighbors)
+            print("seqlet neighbors 2:", seqlet_neighbors2)
+            print("sparse coarse affmat", sparse_coarse_affmat)
+            print("coarse affmat 2", coarse_affmat2)
+            print("sim diff", np.max(np.abs(sparse_coarse_affmat-
+                                            coarse_affmat2)))
+            print("diff", np.mean(np.abs(seqlet_neighbors - seqlet_neighbors2)))
+
             gc.collect()
-            #coarse_affmats.append(coarse_affmat)
+            print_memory_use()
+            sys.stdout.flush()
 
             if (self.skip_fine_grained==False):
-                nn_start = time.time() 
-                if (self.verbose):
-                    print("(Round "+str(round_num)+") Compute nearest neighbors"
-                          +" from coarse affmat")
-                    print_memory_use()
-                    sys.stdout.flush()
-
-                seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
-                gc.collect()
-
-                if (self.verbose):
-                    print("Computed nearest neighbors in",
-                          round(time.time()-nn_start,2),"s")
-                    print_memory_use()
-                    sys.stdout.flush()
 
                 nn_affmat_start = time.time() 
                 if (self.verbose):
@@ -567,11 +580,12 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                           +" on nearest neighbors")
                     print_memory_use()
                     sys.stdout.flush()
-                nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
+                sparse_nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
                                             seqlet_neighbors=seqlet_neighbors,
-                                            seqlets=seqlets) 
+                                            seqlets=seqlets#,
+                                            #TODO: return_sparse=True) 
+                                   )
                 gc.collect()
-                #nn_affmats.append(nn_affmat)
                 
                 if (self.verbose):
                     print("(Round "+str(round_num)+") Computed affinity matrix"
@@ -582,9 +596,11 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
                 #filter by correlation
                 if (round_idx == 0 or self.filter_beyond_first_round==True):
+                    #TODO: restrict corr to only nn
                     filtered_rows_mask = self.filter_mask_from_correlation(
-                                            main_affmat=nn_affmat,
-                                            other_affmat=coarse_affmat) 
+                                            main_affmat=sparse_nn_affmat,
+                                            other_affmat=sparse_coarse_affmat#,
+                                            )#seqlet_neighbors=seqlet_neighbors) 
                     if (self.verbose):
                         print("(Round "+str(round_num)+") Retained "
                               +str(np.sum(filtered_rows_mask))
@@ -599,15 +615,17 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                               +"rounds above first round")
                         print_memory_use()
                         sys.stdout.flush()
+                del sparse_coarse_affmat
+                gc.collect()
 
                 filtered_seqlets = [x[0] for x in
                            zip(seqlets, filtered_rows_mask) if (x[1])]
-                #filtered_seqlets_sets.append(filtered_seqlets)
-
+                #filtered_affmat should also be a sparse matrix
                 filtered_affmat =\
-                    nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
-                del coarse_affmat
-                del nn_affmat
+                    sparse_nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
+                #TODO: Check that filtered_affmat is sparse
+
+                del sparse_nn_affmat
             else:
                 filtered_affmat = coarse_affmat
                 filtered_seqlets = seqlets
@@ -618,19 +636,19 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print_memory_use()
                 sys.stdout.flush() 
 
-            density_adapted_affmat =\
+            #TODO: Implement sparse density adaptation
+            sparse_density_adapted_affmat =\
                 self.density_adapted_affmat_transformer(filtered_affmat)
             del filtered_affmat
-            #density_adapted_affmats.append(density_adapted_affmat)
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing clustering")
                 print_memory_use()
                 sys.stdout.flush() 
 
-            cluster_results = clusterer(density_adapted_affmat)
-            del density_adapted_affmat
-            #cluster_results_sets.append(cluster_results)
+            #TODO: Update clusterer to work with spare affmat
+            cluster_results = clusterer(sparse_density_adapted_affmat)
+            del sparse_density_adapted_affmat
             num_clusters = max(cluster_results.cluster_indices+1)
             cluster_idx_counts = Counter(cluster_results.cluster_indices)
             if (self.verbose):

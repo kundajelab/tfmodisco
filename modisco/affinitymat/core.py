@@ -8,6 +8,7 @@ import sys
 import time
 import itertools
 import scipy.stats
+from scipy.sparse import coo_matrix
 from joblib import Parallel, delayed
 import gc
 
@@ -144,24 +145,32 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                   range(self.kmer_len-self.num_gaps)]))
         filters = []
         biases = []
-        unique_nonzero_positions = set()
+        #unique_nonzero_positions = set()
         for nonzero_positions in nonzero_position_combos:
             string_representation = [" " for x in range(self.kmer_len)]
             for nonzero_position in nonzero_positions:
                 string_representation[nonzero_position] = "X"
-            nonzero_positions_string =\
-                ("".join(string_representation)).lstrip().rstrip()
-            if (nonzero_positions_string not in unique_nonzero_positions):
-                unique_nonzero_positions.add(nonzero_positions_string) 
-                for letter_permutation in letter_permutations:
-                    assert len(nonzero_positions)==len(letter_permutation)
-                    the_filter = np.zeros((self.kmer_len, self.alphabet_size)) 
-                    for nonzero_position, letter\
-                        in zip(nonzero_positions, letter_permutation):
-                        the_filter[nonzero_position, letter] = 1 
-                    filters.append(the_filter)
-                    biases.append(-(len(nonzero_positions)-1
-                                    -self.num_mismatches))
+            #The logic for using a 'nonzero_positions_string' was that
+            # ' XX' and 'XX ' are in principle equivalent, so I did not want
+            # to double-count them. However, ' XX' and 'XX ' would generate
+            # slightly different embeddings, and if we don't include both, then
+            # the forward and reverse-complement version of the same seqlet
+            # would not wind up generating equivalent embeddings...
+            #So I have decided to just accept the double-counting and
+            # include both in order to preserve reverse-complement symmetry
+            #nonzero_positions_string =\
+            #    ("".join(string_representation)).lstrip().rstrip()
+            #if (nonzero_positions_string not in unique_nonzero_positions):
+            #unique_nonzero_positions.add(nonzero_positions_string) 
+            for letter_permutation in letter_permutations:
+                assert len(nonzero_positions)==len(letter_permutation)
+                the_filter = np.zeros((self.kmer_len, self.alphabet_size)) 
+                for nonzero_position, letter\
+                    in zip(nonzero_positions, letter_permutation):
+                    the_filter[nonzero_position, letter] = 1 
+                filters.append(the_filter)
+                biases.append(-(len(nonzero_positions)-1
+                                -self.num_mismatches))
         return np.array(filters), np.array(biases)
 
     def __call__(self, seqlets):
@@ -203,11 +212,14 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         sys.stdout.flush()
         del fwd_data
         del rev_data
+
         data_to_embed_fwd = np.array([self.normalizer(x) for x in
                                       data_to_embed_fwd])
         if (data_to_embed_rev is not None):
             data_to_embed_rev = np.array([self.normalizer(x) for x in
                                           data_to_embed_rev])
+        
+
         print("data_to_embed_fwd and data_to_embed_rev normalized")
         print_memory_use()
         sys.stdout.flush()
@@ -231,6 +243,7 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                   to_embed=data_to_embed_rev,
                                   **common_args)
                              if (onehot_track_rev is not None) else None)
+
         print("embedding_fwd and embedding_rev prepared")
         print_memory_use()
         sys.stdout.flush()
@@ -257,10 +270,104 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         return embedding_fwd, embedding_rev
 
 
+class AbstractSparseAffmatFromFwdAndRevOneDVecs(object):
+    def __call__(self, fwd_vecs, rev_vecs):
+        raise NotImplementedError()
+
+
 class AbstractAffinityMatrixFromOneD(object):
 
     def __call__(self, vecs1, vecs2):
         raise NotImplementedError()
+
+
+#take the dot product of fwd_vec and rev_vec with
+# fwd_mat, take max over the fwd and rev sim, then return
+# the top k
+def top_k_fwdandrev_dot_prod(fwd_vec, rev_vec, fwd_vecs, k):
+    fwd_dot = np.dot(fwd_vecs, fwd_vec) 
+    k = min(k, len(fwd_vecs))
+    if (rev_vec is not None):
+        rev_dot = np.dot(fwd_vecs, rev_vec)
+        dotprod = rev_dot
+        dotprod = np.maximum(fwd_dot, rev_dot)
+    else:
+        dotprod = fwd_dot
+    #get the top k indices
+    top_k_indices = np.argpartition(dotprod, -k)[-k:]
+    sims = dotprod[top_k_indices]
+    #sort by similarity
+    sorted_topk_sims, sorted_topk_indices =\
+        zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
+    sorted_topk_sims = np.array(sorted_topk_sims)
+    sorted_topk_indices = np.array(sorted_topk_indices)
+    return (sorted_topk_indices, sorted_topk_sims)
+
+
+def top_k_fwdandrev_dot_prod2(fwd_vec, rev_vec, fwd_vecs, k):
+    k = min(k, len(fwd_vecs))
+
+    rev_dot = np.dot(fwd_vecs, rev_vec)
+    dotprod = rev_dot
+
+    #get the top k indices
+    top_k_indices = np.argpartition(dotprod, -k)[-k:]
+    sims = dotprod[top_k_indices]
+    #sort by similarity
+    sorted_topk_sims, sorted_topk_indices =\
+        zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
+    sorted_topk_sims = np.array(sorted_topk_sims)
+    sorted_topk_indices = np.array(sorted_topk_indices)
+    return (sorted_topk_indices, sorted_topk_sims)
+
+
+class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
+        AbstractSparseAffmatFromFwdAndRevOneDVecs):
+
+    def __init__(self, n_neighbors, verbose, nn_n_jobs=1):
+        self.n_neighbors = n_neighbors   
+        self.nn_n_jobs = nn_n_jobs
+        self.verbose = verbose
+
+    def __call__(self, fwd_vecs, rev_vecs):
+
+        #normalize the vectors 
+        fwd_vecs = np.nan_to_num(
+                        fwd_vecs/np.linalg.norm(fwd_vecs, axis=1)[:,None],
+                        copy=False)
+        rev_vecs = np.nan_to_num(
+                        rev_vecs/np.linalg.norm(rev_vecs, axis=1)[:,None],
+                        copy=False)
+
+        topk_cosine_sim_results = (
+            Parallel(self.nn_n_jobs)(
+                 delayed(top_k_fwdandrev_dot_prod)(
+                    fwd_vecs[i],
+                    (rev_vecs[i] if rev_vecs is not None else None),
+                    fwd_vecs, self.n_neighbors)
+                 for i in range(len(fwd_vecs)) ))
+
+        neighbors = np.array([x[0] for x in topk_cosine_sim_results])
+
+        rows = []
+        cols = []
+        data = []
+        for (i, (js, vals)) in enumerate(topk_cosine_sim_results):
+            rows.extend([i for j in js]) 
+            cols.extend(js)
+            data.extend(vals) 
+       
+        del topk_cosine_sim_results 
+
+        coo_mat = coo_matrix((data, (rows, cols)), shape=(len(fwd_vecs),
+                                                          len(fwd_vecs)))
+
+        densedotprod = np.maximum(np.dot(fwd_vecs, fwd_vecs.T),
+                                  np.dot(fwd_vecs, rev_vecs.T))
+        #densedotprod = np.dot(rev_vecs, fwd_vecs.T)
+        coo_mat_todense = coo_mat.todense()
+
+        return coo_mat, neighbors 
 
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
@@ -364,6 +471,53 @@ class ContinJaccardSimilarity(AbstractAffinityMatrixFromOneD):
             to_return = to_return + 1.0
 
         return to_return
+
+
+class SparseAffmatFromFwdAndRevSeqletEmbeddings(
+        AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, seqlets_to_1d_embedder,
+                       sparse_affmat_from_fwdnrev1dvecs, verbose):
+        self.seqlets_to_1d_embedder = seqlets_to_1d_embedder
+        self.sparse_affmat_from_fwdnrev1dvecs =\
+            sparse_affmat_from_fwdnrev1dvecs
+        self.verbose = verbose
+
+    def __call__(self, seqlets):
+
+        cp1_time = time.time()
+        if (self.verbose):
+            print("Beginning embedding computation")
+            print_memory_use()
+            sys.stdout.flush()
+
+        embedding_fwd, embedding_rev = self.seqlets_to_1d_embedder(seqlets)
+        gc.collect()
+
+        cp2_time = time.time()
+        if (self.verbose):
+            print("Finished embedding computation in",
+                  round(cp2_time-cp1_time,2),"s")
+            print_memory_use()
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("Starting affinity matrix computations")
+            print_memory_use()
+            sys.stdout.flush()
+
+        sparse_affmat, neighbors = self.sparse_affmat_from_fwdnrev1dvecs(
+                                        fwd_vecs=embedding_fwd,
+                                        rev_vecs=embedding_rev)
+
+        cp3_time = time.time()
+
+        if (self.verbose):
+            print("Finished affinity matrix computations in",
+                  round(cp3_time-cp2_time,2),"s")
+            print_memory_use()
+            sys.stdout.flush()
+        return sparse_affmat, neighbors
 
 
 class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
@@ -534,7 +688,6 @@ class AffmatFromSeqletsWithNNpairs(object):
         affmat = (np.maximum(affmat_fwd, affmat_rev) if
                   (affmat_rev is not None) else np.array(affmat_fwd))
         return affmat
-        
 
 
 class AbstractSimMetricOnNNpairs(object):
