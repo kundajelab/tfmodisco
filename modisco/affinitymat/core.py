@@ -273,41 +273,31 @@ class AbstractAffinityMatrixFromOneD(object):
         raise NotImplementedError()
 
 
-#take the dot product of fwd_vec and rev_vec with
-# fwd_mat, take max over the fwd and rev sim, then return
+#take the dot product of fwd_vec with
+# fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
 # the top k
-def top_k_fwdandrev_dot_prod(fwd_vec, rev_vec, fwd_vecs, k):
+def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
     fwd_dot = np.dot(fwd_vecs, fwd_vec) 
     k = min(k, len(fwd_vecs))
-    if (rev_vec is not None):
-        rev_dot = np.dot(fwd_vecs, rev_vec)
+    if (rev_vecs is not None):
+        rev_dot = np.dot(rev_vecs, fwd_vec)
         dotprod = rev_dot
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
     #get the top k indices
+
+    #sorted_topk_indices,sorted_topk_sims =\
+    #    zip(*sorted(enumerate(dotprod), key=lambda x: -x[1]))
+    #sorted_topk_sims = np.array(sorted_topk_sims[:k])
+    #sorted_topk_indices = np.array(sorted_topk_indices[:k])
+
     top_k_indices = np.argpartition(dotprod, -k)[-k:]
     sims = dotprod[top_k_indices]
     #sort by similarity
     sorted_topk_sims, sorted_topk_indices =\
         zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
-    sorted_topk_sims = np.array(sorted_topk_sims)
-    sorted_topk_indices = np.array(sorted_topk_indices)
-    return (sorted_topk_indices, sorted_topk_sims)
 
-
-def top_k_fwdandrev_dot_prod2(fwd_vec, rev_vec, fwd_vecs, k):
-    k = min(k, len(fwd_vecs))
-
-    rev_dot = np.dot(fwd_vecs, rev_vec)
-    dotprod = rev_dot
-
-    #get the top k indices
-    top_k_indices = np.argpartition(dotprod, -k)[-k:]
-    sims = dotprod[top_k_indices]
-    #sort by similarity
-    sorted_topk_sims, sorted_topk_indices =\
-        zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
     sorted_topk_sims = np.array(sorted_topk_sims)
     sorted_topk_indices = np.array(sorted_topk_indices)
     return (sorted_topk_indices, sorted_topk_sims)
@@ -335,8 +325,8 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
             Parallel(self.nn_n_jobs)(
                  delayed(top_k_fwdandrev_dot_prod)(
                     fwd_vecs[i],
-                    (rev_vecs[i] if rev_vecs is not None else None),
-                    fwd_vecs, self.n_neighbors)
+                    rev_vecs if rev_vecs is not None else None,
+                    fwd_vecs, self.n_neighbors+1)
                  for i in range(len(fwd_vecs)) ))
 
         neighbors = np.array([x[0] for x in topk_cosine_sim_results])
@@ -353,12 +343,6 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
 
         coo_mat = coo_matrix((data, (rows, cols)), shape=(len(fwd_vecs),
                                                           len(fwd_vecs)))
-
-        densedotprod = np.maximum(np.dot(fwd_vecs, fwd_vecs.T),
-                                  np.dot(fwd_vecs, rev_vecs.T))
-        #densedotprod = np.dot(rev_vecs, fwd_vecs.T)
-        coo_mat_todense = coo_mat.todense()
-
         return coo_mat, neighbors 
 
 

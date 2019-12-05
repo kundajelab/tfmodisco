@@ -556,17 +556,18 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             sparse_coarse_affmat, seqlet_neighbors =\
                 self.coarse_affmat_computer(seqlets)
 
+            sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
             coarse_affmat2 = self.coarse_affmat_computer2(seqlets)
+            seqlet_neighbors = self.nearest_neighbors_computer(sparse_coarse_affmat)
             seqlet_neighbors2 = self.nearest_neighbors_computer(coarse_affmat2)
 
-            sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
             print("seqlet neighbors:", seqlet_neighbors)
             print("seqlet neighbors 2:", seqlet_neighbors2)
             print("sparse coarse affmat", sparse_coarse_affmat)
             print("coarse affmat 2", coarse_affmat2)
             print("sim diff", np.max(np.abs(sparse_coarse_affmat-
                                             coarse_affmat2)))
-            print("diff", np.mean(np.abs(seqlet_neighbors - seqlet_neighbors2)))
+            print("neighb diff", np.mean(np.abs(seqlet_neighbors - seqlet_neighbors2)))
 
             sparse_coarse_affmat = coarse_affmat2
             seqlet_neighbors = seqlet_neighbors2
