@@ -140,24 +140,32 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                   range(self.kmer_len-self.num_gaps)]))
         filters = []
         biases = []
-        unique_nonzero_positions = set()
+        ##removed: unique_nonzero_positions = set()
         for nonzero_positions in nonzero_position_combos:
             string_representation = [" " for x in range(self.kmer_len)]
             for nonzero_position in nonzero_positions:
                 string_representation[nonzero_position] = "X"
             nonzero_positions_string =\
                 ("".join(string_representation)).lstrip().rstrip()
-            if (nonzero_positions_string not in unique_nonzero_positions):
-                unique_nonzero_positions.add(nonzero_positions_string) 
-                for letter_permutation in letter_permutations:
-                    assert len(nonzero_positions)==len(letter_permutation)
-                    the_filter = np.zeros((self.kmer_len, self.alphabet_size)) 
-                    for nonzero_position, letter\
-                        in zip(nonzero_positions, letter_permutation):
-                        the_filter[nonzero_position, letter] = 1 
-                    filters.append(the_filter)
-                    biases.append(-(len(nonzero_positions)-1
-                                    -self.num_mismatches))
+            #The logic for using 'unique_nonzero_positions' was that
+            # ' XX' and 'XX ' are in principle equivalent, so I did not want
+            # to double-count them. However, ' XX' and 'XX ' would generate
+            # slightly different embeddings, and if we don't include both, then 
+            # the forward and reverse-complement version of the same seqlet 
+            # would not wind up generating equivalent embeddings... 
+            #So I have decided to just accept the double-counting and
+            # include both in order to preserve reverse-complement symmetry
+            ##removed: if (nonzero_positions_string not in unique_nonzero_positions):
+            ##removed: unique_nonzero_positions.add(nonzero_positions_string) 
+            for letter_permutation in letter_permutations:
+                assert len(nonzero_positions)==len(letter_permutation)
+                the_filter = np.zeros((self.kmer_len, self.alphabet_size))
+                for nonzero_position, letter\
+                    in zip(nonzero_positions, letter_permutation):
+                    the_filter[nonzero_position, letter] = 1 
+                filters.append(the_filter)
+                biases.append(-(len(nonzero_positions)-1
+                                -self.num_mismatches))
         return np.array(filters), np.array(biases)
 
     def __call__(self, seqlets):
@@ -357,6 +365,9 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
         affinity_mat_rev = (self.affinity_mat_from_1d(
                              vecs1=embedding_fwd, vecs2=embedding_rev)
                             if (embedding_rev is not None) else None)
+        #enforce symmetry
+        assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-6,\
+                np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))
 
         cp3_time = time.time()
 
