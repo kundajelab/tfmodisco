@@ -206,7 +206,8 @@ class TfModiscoWorkflow(object):
                          num_to_samp=10000),
                        per_position_contrib_scores=None,
                        revcomp=True,
-                       other_tracks=[]):
+                       other_tracks=[],
+                       just_return_seqlets=False):
 
         print_memory_use()
 
@@ -258,7 +259,6 @@ class TfModiscoWorkflow(object):
         if (len(seqlets) < 100):
             print("WARNING: you found relatively few seqlets."
                   +" Consider dropping target_seqlet_fdr") 
-
         
         if int(self.min_metacluster_size_frac * len(seqlets)) > self.min_metacluster_size:
             print("min_metacluster_size_frac * len(seqlets) = {0} is more than min_metacluster_size={1}.".\
@@ -344,17 +344,22 @@ class TfModiscoWorkflow(object):
                 assert False, "This should not happen"
                 sys.stdout.flush()
             
-            seqlets_to_patterns = self.seqlets_to_patterns_factory(
-                track_set=track_set,
-                onehot_track_name="sequence",
-                contrib_scores_track_names =\
-                    [key+"_contrib_scores" for key in relevant_task_names],
-                hypothetical_contribs_track_names=\
-                    [key+"_hypothetical_contribs" for key in relevant_task_names],
-                track_signs=relevant_task_signs,
-                other_comparison_track_names=[])
-
-            seqlets_to_patterns_result = seqlets_to_patterns(metacluster_seqlets)
+            if (just_return_seqlets==False):
+                seqlets_to_patterns = self.seqlets_to_patterns_factory(
+                  track_set=track_set,
+                  onehot_track_name="sequence",
+                  contrib_scores_track_names =\
+                      [key+"_contrib_scores"
+                       for key in relevant_task_names],
+                  hypothetical_contribs_track_names=\
+                      [key+"_hypothetical_contribs"
+                       for key in relevant_task_names],
+                  track_signs=relevant_task_signs,
+                  other_comparison_track_names=[])
+                seqlets_to_patterns_result = seqlets_to_patterns(
+                                              metacluster_seqlets)
+            else:
+                seqlets_to_patterns_result = None 
             metacluster_idx_to_submetacluster_results[metacluster_idx] =\
                 SubMetaclusterResults(
                     metacluster_size=metacluster_size,
