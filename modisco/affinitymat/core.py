@@ -293,13 +293,8 @@ def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
+
     #get the top k indices
-
-    #sorted_topk_indices,sorted_topk_sims =\
-    #    zip(*sorted(enumerate(dotprod), key=lambda x: -x[1]))
-    #sorted_topk_sims = np.array(sorted_topk_sims[:k])
-    #sorted_topk_indices = np.array(sorted_topk_indices[:k])
-
     top_k_indices = np.argpartition(dotprod, -k)[-k:]
     sims = dotprod[top_k_indices]
     #sort by similarity

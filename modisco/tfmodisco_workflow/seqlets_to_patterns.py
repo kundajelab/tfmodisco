@@ -208,18 +208,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                         nn_n_jobs=self.nn_n_jobs, 
                         verbose=self.verbose),
                 verbose=self.verbose)
-        coarse_affmat_computer2 =\
-            affinitymat.core.AffmatFromSeqletEmbeddings(
-                seqlets_to_1d_embedder=gkmer_embedder,
-                affinity_mat_from_1d=\
-                    affinitymat.core.NumpyCosineSimilarity(
-                        verbose=self.verbose,
-                        gpu_batch_size=None),
-                verbose=self.verbose)
-
-        nearest_neighbors_computer = nearest_neighbors.ScikitNearestNeighbors(
-            n_neighbors=self.nearest_neighbors_to_compute,
-            nn_n_jobs=self.nn_n_jobs)  
 
         affmat_from_seqlets_with_nn_pairs =\
             affinitymat.core.AffmatFromSeqletsWithNNpairs(
@@ -406,8 +394,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
         return TfModiscoSeqletsToPatterns(
                 seqlets_sorter=seqlets_sorter,
                 coarse_affmat_computer=coarse_affmat_computer,
-                coarse_affmat_computer2=coarse_affmat_computer2,
-                nearest_neighbors_computer=nearest_neighbors_computer,
                 affmat_from_seqlets_with_nn_pairs=
                     affmat_from_seqlets_with_nn_pairs, 
                 filter_mask_from_correlation=filter_mask_from_correlation,
@@ -472,8 +458,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
     def __init__(self, seqlets_sorter, 
                        coarse_affmat_computer,
-                       coarse_affmat_computer2,
-                       nearest_neighbors_computer,
                        affmat_from_seqlets_with_nn_pairs, 
                        filter_mask_from_correlation,
                        filter_beyond_first_round,
@@ -490,8 +474,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
         self.seqlets_sorter = seqlets_sorter
         self.coarse_affmat_computer = coarse_affmat_computer
-        self.coarse_affmat_computer2 = coarse_affmat_computer2
-        self.nearest_neighbors_computer = nearest_neighbors_computer
         self.affmat_from_seqlets_with_nn_pairs =\
             affmat_from_seqlets_with_nn_pairs
         self.filter_mask_from_correlation = filter_mask_from_correlation
@@ -555,22 +537,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             sparse_coarse_affmat, seqlet_neighbors =\
                 self.coarse_affmat_computer(seqlets)
-
             sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
-            coarse_affmat2 = self.coarse_affmat_computer2(seqlets)
-            seqlet_neighbors = self.nearest_neighbors_computer(sparse_coarse_affmat)
-            seqlet_neighbors2 = self.nearest_neighbors_computer(coarse_affmat2)
-
-            print("seqlet neighbors:", seqlet_neighbors)
-            print("seqlet neighbors 2:", seqlet_neighbors2)
-            print("sparse coarse affmat", sparse_coarse_affmat)
-            print("coarse affmat 2", coarse_affmat2)
-            print("sim diff", np.max(np.abs(sparse_coarse_affmat-
-                                            coarse_affmat2)))
-            print("neighb diff", np.mean(np.abs(seqlet_neighbors - seqlet_neighbors2)))
-
-            sparse_coarse_affmat = coarse_affmat2
-            seqlet_neighbors = seqlet_neighbors2
 
             gc.collect()
             print_memory_use()
