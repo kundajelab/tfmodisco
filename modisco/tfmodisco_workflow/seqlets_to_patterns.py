@@ -537,7 +537,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             sparse_coarse_affmat, seqlet_neighbors =\
                 self.coarse_affmat_computer(seqlets)
-            sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
 
             gc.collect()
             print_memory_use()
@@ -553,9 +552,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     sys.stdout.flush()
                 sparse_nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
                                             seqlet_neighbors=seqlet_neighbors,
-                                            seqlets=seqlets#,
-                                            #TODO: return_sparse=True) 
-                                   )
+                                            seqlets=seqlets,
+                                            return_sparse=True) 
                 gc.collect()
                 
                 if (self.verbose):

@@ -633,7 +633,8 @@ class AffmatFromSeqletsWithNNpairs(object):
         self.pattern_comparison_settings = pattern_comparison_settings 
         self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
 
-    def __call__(self, seqlets, filter_seqlets=None, seqlet_neighbors=None):
+    def __call__(self, seqlets, filter_seqlets=None,
+                       seqlet_neighbors=None, return_sparse=False):
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
@@ -655,22 +656,43 @@ class AffmatFromSeqletsWithNNpairs(object):
                                          for x in seqlets]) 
 
         #apply the cross metric
-        affmat_fwd = self.sim_metric_on_nn_pairs(
-                     neighbors_of_things_to_scan=seqlet_neighbors,
-                     filters=filters_all_fwd_data,
-                     things_to_scan=all_fwd_data,
-                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+        fwd_returnvals = self.sim_metric_on_nn_pairs(
+                 neighbors_of_things_to_scan=seqlet_neighbors,
+                 filters=filters_all_fwd_data,
+                 things_to_scan=all_fwd_data,
+                 min_overlap=self.pattern_comparison_settings.min_overlap,
+                 return_sparse=return_sparse) 
+        if (return_sparse):
+            fwd_rows,fwd_cols,fwd_dat = fwd_returnvals
+        else:
+            affmat_fwd = returnvals
+            
         if (filters_all_rev_data is not None):
-            affmat_rev = self.sim_metric_on_nn_pairs(
+            rev_returnvals = self.sim_metric_on_nn_pairs(
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_rev_data,
                      things_to_scan=all_fwd_data,
-                     min_overlap=self.pattern_comparison_settings.min_overlap) 
+                     min_overlap=self.pattern_comparison_settings.min_overlap,
+                     return_sparse=return_sparse) 
+            if (return_sparse):
+                rev_rows,rev_cols,rev_dat = rev_returnvals
+            else:
+                affmat_rev = rev_returnvals
+
+        if (return_sparse):
+            if (filters_all_rev_data is not None):
+                assert np.max(np.abs(fwd_rows-rev_rows))==0.0
+                assert np.max(np.abs(fwd_cols-rev_cols))==0.0
+                dat = np.maximum(fwd_dat, rev_dat)
+            else:
+                dat = fwd_dat
+            return coo_matrix((dat, (fwd_rows, fwd_cols)),
+                               shape=(len(seqlets), len(filter_seqlets)))
         else:
-            affmat_rev = None
-        affmat = (np.maximum(affmat_fwd, affmat_rev) if
-                  (affmat_rev is not None) else np.array(affmat_fwd))
-        return affmat
+            affmat = affmat_fwd
+            if (filters_all_rev_data is not None):
+                affmat = np.maximum(affmat, affmat_rev)
+            return affmat
 
 
 class AbstractSimMetricOnNNpairs(object):
@@ -691,7 +713,8 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         self.verbose = verbose
 
     def __call__(self, filters, things_to_scan, min_overlap,
-                       neighbors_of_things_to_scan=None):
+                       neighbors_of_things_to_scan=None,
+                       return_sparse=False):
         if (neighbors_of_things_to_scan is None):
             neighbors_of_things_to_scan =\
                 np.array([list(range(len(filters)))
@@ -713,8 +736,13 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         # only returns the best similarity and not the alignment that
         # gives rise to that similarity 
         if (self.cross_metric_single_region.returns_pos==False):
-            to_return = np.zeros((things_to_scan.shape[0], filters.shape[0]))
+            if (return_sparse==False):
+                to_return = np.zeros((things_to_scan.shape[0],
+                                      filters.shape[0]))
         else:
+            assert return_sparse==False,\
+                ("return_sparse is not supported when "
+                 +"self.cross_metric_single_region.returns_pos==True")
             #each return value will contain both the position of the alignment
             # as well as the similarity at that position; hence the
             # length of the third dimension is 2.
@@ -748,6 +776,11 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
             print_memory_use()
             sys.stdout.flush()
 
+        if (return_sparse==True):
+            rows = []
+            cols = []
+            data = []
+
         for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
              in enumerate(zip(results, neighbors_of_things_to_scan)):
             #adjust the "position" to remove the effect of the padding
@@ -757,8 +790,17 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
                           thing_to_scan_neighbor_indices] =\
                     np.transpose(result,(1,0))
             else:
-                to_return[thing_to_scan_idx,
-                          thing_to_scan_neighbor_indices] = result
+                if (return_sparse==True):
+                    rows.extend([thing_to_scan_idx for
+                                 x in thing_to_scan_neighbor_indices])
+                    cols.extend(thing_to_scan_neighbor_indices)
+                    data.extend(result) 
+                else:
+                    to_return[thing_to_scan_idx,
+                              thing_to_scan_neighbor_indices] = result
+        if (return_sparse==True):
+            to_return = (np.array(rows), np.array(cols), np.array(data))
+
         gc.collect()
 
         end = time.time()
