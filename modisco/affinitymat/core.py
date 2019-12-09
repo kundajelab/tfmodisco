@@ -665,7 +665,7 @@ class AffmatFromSeqletsWithNNpairs(object):
         if (return_sparse):
             fwd_rows,fwd_cols,fwd_dat = fwd_returnvals
         else:
-            affmat_fwd = returnvals
+            affmat_fwd = fwd_returnvals
             
         if (filters_all_rev_data is not None):
             rev_returnvals = self.sim_metric_on_nn_pairs(

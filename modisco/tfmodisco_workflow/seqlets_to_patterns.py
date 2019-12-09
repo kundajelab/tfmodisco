@@ -554,6 +554,14 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                                             seqlet_neighbors=seqlet_neighbors,
                                             seqlets=seqlets,
                                             return_sparse=True) 
+                sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
+                sparse_nn_affmat = np.array(sparse_nn_affmat.todense())
+                dense_nn_affmat =  self.affmat_from_seqlets_with_nn_pairs(
+                                            seqlet_neighbors=seqlet_neighbors,
+                                            seqlets=seqlets,
+                                            return_sparse=False)
+                print(np.max(np.abs(dense_nn_affmat-sparse_nn_affmat)))
+                assert np.max(np.abs(dense_nn_affmat-sparse_nn_affmat)) < 1e-6
                 gc.collect()
                 
                 if (self.verbose):
