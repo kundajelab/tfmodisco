@@ -6,6 +6,7 @@ from .. import aggregator
 from .. import core
 from .. import util
 from collections import defaultdict, OrderedDict, Counter
+from scipy.sparse import coo_matrix
 import numpy as np
 import time
 import sys
@@ -29,7 +30,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        kmer_len=8, num_gaps=3, num_mismatches=2,
                        gpu_batch_size=20,
 
-                       nn_n_jobs=4,
+                       nn_n_jobs=None,
                        nearest_neighbors_to_compute=500,
 
                        affmat_correlation_threshold=0.15,
@@ -74,7 +75,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.num_mismatches = num_mismatches
         self.gpu_batch_size = gpu_batch_size
 
-        self.nn_n_jobs = nn_n_jobs
+        self.nn_n_jobs = (nn_n_jobs if nn_n_jobs is not None else n_cores)
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
 
         self.affmat_correlation_threshold = affmat_correlation_threshold
@@ -537,6 +538,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             sparse_coarse_affmat, seqlet_neighbors =\
                 self.coarse_affmat_computer(seqlets)
+            sparse_coarse_affmat = sparse_coarse_affmat.todok()
 
             gc.collect()
             print_memory_use()
@@ -554,14 +556,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                                             seqlet_neighbors=seqlet_neighbors,
                                             seqlets=seqlets,
                                             return_sparse=True) 
-                sparse_coarse_affmat = np.array(sparse_coarse_affmat.todense())
-                sparse_nn_affmat = np.array(sparse_nn_affmat.todense())
-                dense_nn_affmat =  self.affmat_from_seqlets_with_nn_pairs(
-                                            seqlet_neighbors=seqlet_neighbors,
-                                            seqlets=seqlets,
-                                            return_sparse=False)
-                print(np.max(np.abs(dense_nn_affmat-sparse_nn_affmat)))
-                assert np.max(np.abs(dense_nn_affmat-sparse_nn_affmat)) < 1e-6
+                sparse_nn_affmat = sparse_nn_affmat.todok()
                 gc.collect()
                 
                 if (self.verbose):
@@ -576,8 +571,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     #TODO: restrict corr to only nn
                     filtered_rows_mask = self.filter_mask_from_correlation(
                                             main_affmat=sparse_nn_affmat,
-                                            other_affmat=sparse_coarse_affmat#,
-                                            )#seqlet_neighbors=seqlet_neighbors) 
+                                            other_affmat=sparse_coarse_affmat,
+                                            seqlet_neighbors=seqlet_neighbors) 
                     if (self.verbose):
                         print("(Round "+str(round_num)+") Retained "
                               +str(np.sum(filtered_rows_mask))
@@ -596,12 +591,38 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 gc.collect()
 
                 filtered_seqlets = [x[0] for x in
-                           zip(seqlets, filtered_rows_mask) if (x[1])]
+                           zip(seqlets, filtered_rows_mask) if x[1]]
                 #filtered_affmat should also be a sparse matrix
-                filtered_affmat =\
-                    sparse_nn_affmat[filtered_rows_mask][:,filtered_rows_mask]
-                #TODO: Check that filtered_affmat is sparse
+                
+                #figure out a mapping from pre-filtering to the
+                # post-filtering indices
+                new_idx_mapping = (
+                    np.cumsum(1.0*(filtered_rows_mask)).astype("int")-1)
+                new_num_rows = sum(filtered_rows_mask)
+                retained_indices = set(np.arange(len(filtered_rows_mask))[
+                                                  filtered_rows_mask])
+                new_coo_rows = []
+                new_coo_cols = []
+                new_coo_data = []
+                for old_row_idx, old_neighbors in enumerate(seqlet_neighbors): 
+                    if old_row_idx in retained_indices:
+                        new_row_idx = new_idx_mapping[old_row_idx] 
+                        filtered_old_neighbors = [
+                            neighbor for neighbor in old_neighbors if neighbor
+                            in retained_indices]
+                        new_neighbors = [new_idx_mapping[neighbor] for neighbor
+                                         in filtered_old_neighbors]
+                        new_coo_rows.extend([
+                            new_row_idx for x in new_neighbors])
+                        new_coo_cols.extend(new_neighbors)
+                        new_coo_data.extend([
+                            sparse_nn_affmat[old_row_idx,neighbor]
+                            for neighbor in filtered_old_neighbors])
+                filtered_affmat = coo_matrix(
+                    (new_coo_data, (new_coo_rows, new_coo_cols)),
+                    shape=(new_num_rows, new_num_rows)).todok()
 
+                filtered_affmat = np.array(filtered_affmat.todense())
                 del sparse_nn_affmat
             else:
                 filtered_affmat = coarse_affmat

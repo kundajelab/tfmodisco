@@ -245,12 +245,31 @@ class AffToDistViaInvLogistic(AbstractAffToDistMat):
         return to_return
 
 
-class AffToDistViaLogInv(AbstractAffToDistMat):
+class NNAffToDistMatWrapper(object):
 
-    def __call__(self, affinity_mat):
-        to_return = np.log(1.0/np.maximum(affinity_mat, 0.0000001))
-        to_return = np.maximum(to_return, 0.0) #eliminate tiny neg floats
-        return to_return
+    def __init__(self, aff_to_dist_mat):
+        self.aff_to_dist_mat = aff_to_dist_mat
+
+    def __call__(self, affinity_mat, nearest_neighbors):
+        assert all([x[0]==i for i,x in enumerate(nearest_neighbors)])
+        affmat_nn = np.array([[affinity_mat[i,nn] for nn in nn_row]
+                               for i,nn_row in enumerate(nearest_neighbors)])
+        distmat_nn = self.aff_to_dist_mat(affmat_nn)
+        return distmat_nn
+
+
+class AbstractNNTsneProbs(AbstractAffMatTransformer):
+
+    def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
+        self.perplexity = perplexity 
+        self.verbose=verbose
+        self.nn_aff_to_dist_mat = NNAffToDistMatWrapper(
+                                   aff_to_dist_mat=aff_to_dist_mat)
+
+    def __call__(self, affinity_mat, nearest_neighbors):
+       distmat_nn = self.nn_aff_to_dist_mat(
+                        affinity_mat=affinity_mat,
+                        nearest_neighbors=nearest_neighbors) 
 
 
 class AbstractTsneProbs(AbstractAffMatTransformer):

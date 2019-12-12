@@ -309,7 +309,7 @@ def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
 class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         AbstractSparseAffmatFromFwdAndRevOneDVecs):
 
-    def __init__(self, n_neighbors, verbose, nn_n_jobs=1):
+    def __init__(self, n_neighbors, verbose, nn_n_jobs):
         self.n_neighbors = n_neighbors   
         self.nn_n_jobs = nn_n_jobs
         self.verbose = verbose
@@ -1107,18 +1107,29 @@ class FilterMaskFromCorrelation(object):
         self.correlation_threshold = correlation_threshold
         self.verbose = verbose
 
-    def __call__(self, main_affmat, other_affmat):
+    def __call__(self, main_affmat, other_affmat, seqlet_neighbors=None):
         correlations = []
         neg_log_pvals = []
-        for main_affmat_row, other_affmat_row\
-            in zip(main_affmat, other_affmat):
-            #compare correlation on the nonzero rows
-            to_compare_mask = np.abs(main_affmat_row) > 0
-            corr = scipy.stats.spearmanr(
-                    main_affmat_row[to_compare_mask],
-                    other_affmat_row[to_compare_mask])
-            correlations.append(corr.correlation)
-            neg_log_pvals.append(-np.log(corr.pvalue)) 
+        if (seqlet_neighbors is None):
+            for main_affmat_row, other_affmat_row\
+                in zip(main_affmat, other_affmat):
+                #compare correlation on the nonzero rows
+                to_compare_mask = np.abs(main_affmat_row) > 0
+                corr = scipy.stats.spearmanr(
+                        main_affmat_row[to_compare_mask],
+                        other_affmat_row[to_compare_mask])
+                correlations.append(corr.correlation)
+                neg_log_pvals.append(-np.log(corr.pvalue)) 
+        else:
+            for i,row in enumerate(seqlet_neighbors):
+                main_affmat_entries = np.array(
+                    [main_affmat[i,x] for x in row])
+                other_affmat_entries = np.array(
+                    [other_affmat[i,x] for x in row])
+                corr = scipy.stats.spearmanr(main_affmat_entries,
+                                             other_affmat_entries) 
+                correlations.append(corr.correlation)
+                neg_log_pvals.append(-np.log(corr.pvalue))
         correlations = np.array(correlations)
         neg_log_pvals = np.array(neg_log_pvals)
         mask_to_return = (correlations > self.correlation_threshold)
