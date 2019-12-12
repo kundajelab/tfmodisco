@@ -365,8 +365,8 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
         affinity_mat_rev = (self.affinity_mat_from_1d(
                              vecs1=embedding_fwd, vecs2=embedding_rev)
                             if (embedding_rev is not None) else None)
-        #enforce symmetry
-        assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-6,\
+        #check for enforced symmetry
+        assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-3,\
                 np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))
 
         cp3_time = time.time()
