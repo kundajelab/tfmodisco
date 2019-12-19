@@ -165,6 +165,7 @@ def graph2binary(filename, graph):
     :param graph:
     :return None: graph is written to filename.bin
     """
+    assert sp.issparse(graph) #expecting a coo matrix
     tic = time.time()
     # Unpack values in graph
     i, j = graph.nonzero()
@@ -175,6 +176,7 @@ def graph2binary(filename, graph):
     ijmax = np.union1d(i, j).max()
     n = graph.shape[0]
     missing = np.arange(ijmax+1, n)
+
     for q in missing:
         ij = np.append(ij, [[q, q]], axis=0)
         s = np.append(s, [0.], axis=0)

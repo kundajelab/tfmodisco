@@ -96,7 +96,8 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         self.verbose = verbose
         self.seed=seed
     
-    def __call__(self, orig_affinity_mat):
+    def __call__(self, orig_affinity_mat,
+                       nonzero_rows=None, nonzero_cols=None):
 
         #replace nan values with zeros
         orig_affinity_mat = np.nan_to_num(orig_affinity_mat)

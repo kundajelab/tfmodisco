@@ -226,7 +226,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         aff_to_dist_mat = affinitymat.transformers.AffToDistViaInvLogistic() 
         density_adapted_affmat_transformer =\
-            affinitymat.transformers.TsneConditionalProbs(
+            affinitymat.transformers.NNTsneConditionalProbs(
                 perplexity=self.tsne_perplexity,
                 aff_to_dist_mat=aff_to_dist_mat)
 
@@ -540,6 +540,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 self.coarse_affmat_computer(seqlets)
             sparse_coarse_affmat = sparse_coarse_affmat.todok()
 
+
             gc.collect()
             print_memory_use()
             sys.stdout.flush()
@@ -557,6 +558,14 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                                             seqlets=seqlets,
                                             return_sparse=True) 
                 sparse_nn_affmat = sparse_nn_affmat.todok()
+
+                #reoarder the seqlet neighbors in order of affinity
+                seqlet_neighbors = np.array(
+                    [[x[1] for x in
+                      sorted([(sparse_nn_affmat[i,nn],nn) for nn in row],
+                             key=lambda x: -x[0])]
+                    for (i,row) in enumerate(seqlet_neighbors)])
+
                 gc.collect()
                 
                 if (self.verbose):
@@ -604,17 +613,20 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 new_coo_rows = []
                 new_coo_cols = []
                 new_coo_data = []
+                new_neighbors = []
                 for old_row_idx, old_neighbors in enumerate(seqlet_neighbors): 
                     if old_row_idx in retained_indices:
                         new_row_idx = new_idx_mapping[old_row_idx] 
                         filtered_old_neighbors = [
                             neighbor for neighbor in old_neighbors if neighbor
                             in retained_indices]
-                        new_neighbors = [new_idx_mapping[neighbor] for neighbor
-                                         in filtered_old_neighbors]
+                        new_neighbors_row = [
+                            new_idx_mapping[neighbor] for neighbor
+                            in filtered_old_neighbors]
+                        new_neighbors.append(new_neighbors_row)
                         new_coo_rows.extend([
-                            new_row_idx for x in new_neighbors])
-                        new_coo_cols.extend(new_neighbors)
+                            new_row_idx for x in new_neighbors_row])
+                        new_coo_cols.extend(new_neighbors_row)
                         new_coo_data.extend([
                             sparse_nn_affmat[old_row_idx,neighbor]
                             for neighbor in filtered_old_neighbors])
@@ -622,7 +634,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     (new_coo_data, (new_coo_rows, new_coo_cols)),
                     shape=(new_num_rows, new_num_rows)).todok()
 
-                filtered_affmat = np.array(filtered_affmat.todense())
                 del sparse_nn_affmat
             else:
                 filtered_affmat = coarse_affmat
@@ -634,9 +645,19 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print_memory_use()
                 sys.stdout.flush() 
 
+            #pad the new_neighbors so all rows are of equal length
+            padded_neighbors = [list(row)+[np.nan for x in
+                                    range(len(seqlet_neighbors) - len(row))]
+                                for row in new_neighbors]
+            assert len(set([len(row) for row in padded_neighbors]))==1
+            
+            
             #TODO: Implement sparse density adaptation
-            sparse_density_adapted_affmat =\
-                self.density_adapted_affmat_transformer(filtered_affmat)
+            sparse_density_adapted_affmat,nonzero_rows,nonzero_cols =\
+                self.density_adapted_affmat_transformer(
+                    filtered_affmat, padded_neighbors)
+            sparse_density_adapted_affmat = np.array(
+                sparse_density_adapted_affmat.todense())
             del filtered_affmat
 
             if (self.verbose):
@@ -645,7 +666,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 sys.stdout.flush() 
 
             #TODO: Update clusterer to work with spare affmat
-            cluster_results = clusterer(sparse_density_adapted_affmat)
+            cluster_results = clusterer(sparse_density_adapted_affmat,
+                                        nonzero_rows=nonzero_rows,
+                                        nonzero_cols=nonzero_cols)
             del sparse_density_adapted_affmat
             num_clusters = max(cluster_results.cluster_indices+1)
             cluster_idx_counts = Counter(cluster_results.cluster_indices)
