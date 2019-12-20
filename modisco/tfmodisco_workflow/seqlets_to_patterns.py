@@ -653,11 +653,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             
             
             #TODO: Implement sparse density adaptation
-            sparse_density_adapted_affmat,nonzero_rows,nonzero_cols =\
+            sparse_density_adapted_affmat =\
                 self.density_adapted_affmat_transformer(
                     filtered_affmat, padded_neighbors)
-            sparse_density_adapted_affmat = np.array(
-                sparse_density_adapted_affmat.todense())
             del filtered_affmat
 
             if (self.verbose):
@@ -666,9 +664,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 sys.stdout.flush() 
 
             #TODO: Update clusterer to work with spare affmat
-            cluster_results = clusterer(sparse_density_adapted_affmat,
-                                        nonzero_rows=nonzero_rows,
-                                        nonzero_cols=nonzero_cols)
+            cluster_results = clusterer(sparse_density_adapted_affmat)
             del sparse_density_adapted_affmat
             num_clusters = max(cluster_results.cluster_indices+1)
             cluster_idx_counts = Counter(cluster_results.cluster_indices)

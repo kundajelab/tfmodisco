@@ -4,6 +4,7 @@ from . import phenograph as ph
 import numpy as np
 import time
 import sys
+from scipy import sparse as sp
 
 
 def print_memory_use():
@@ -96,12 +97,18 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         self.verbose = verbose
         self.seed=seed
     
-    def __call__(self, orig_affinity_mat,
-                       nonzero_rows=None, nonzero_cols=None):
+    def __call__(self, orig_affinity_mat):
 
-        #replace nan values with zeros
-        orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
-        assert np.min(orig_affinity_mat) >= 0, np.min(orig_affinity_mat)
+        if (not isinstance(orig_affinity_mat,sp.coo_matrix)):
+            sparse_affinity_mat = sp.coo_matrix(orig_affinity_mat) 
+        else:
+            sparse_affinity_mat = orig_affinity_mat
+        
+        #assert there are no nan values in data
+        assert np.sum(np.isnan(sparse_affinity_mat.data))==0
+        #assert that the min affinity is >= 0
+        assert np.min(sparse_affinity_mat.data) >= 0,\
+                np.min(sparse_affinity_mat.data)
 
         if (self.verbose):
             print("Beginning preprocessing + Louvain")
@@ -109,9 +116,9 @@ class LouvainCluster(AbstractAffinityMatClusterer):
             sys.stdout.flush()
         all_start = time.time()
         if (self.affmat_transformer is not None):
-            affinity_mat = self.affmat_transformer(orig_affinity_mat)
+            affinity_mat = self.affmat_transformer(sparse_affinity_mat)
         else:
-            affinity_mat = orig_affinity_mat
+            affinity_mat = sparse_affinity_mat
 
         if (self.verbose):
             print("Transformed affinity matrix")

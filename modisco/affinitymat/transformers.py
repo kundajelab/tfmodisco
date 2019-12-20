@@ -292,11 +292,10 @@ class AbstractNNTsneProbs(AbstractAffMatTransformer):
             "Not enough neighbors for perplexity calc! Need over"
             +" "+str(k)+" but have "+str(distmat_nn.shape[1]))
 
-        P,nonzero_rows,nonzero_cols =\
-            self.tsne_probs_calc(distances_nn=distmat_nn[:,1:(k+1)],
+        P = self.tsne_probs_calc(distances_nn=distmat_nn[:,1:(k+1)],
                                  neighbors_nn=[row[1:(k+1)] for row in 
                                                nearest_neighbors])
-        return P, nonzero_rows, nonzero_cols
+        return P
 
 
 class NNTsneConditionalProbs(AbstractNNTsneProbs):
@@ -336,8 +335,8 @@ class NNTsneConditionalProbs(AbstractNNTsneProbs):
             cols.extend([neighbor for neighbor in neigh_row
                          if np.isnan(neighbor)==False])
         P = coo_matrix((data, (rows, cols)),
-                       shape=(len(neighbors), len(neighbors))).todok()
-        return P,rows,cols
+                       shape=(len(neighbors), len(neighbors)))
+        return P
 
 
 class AbstractTsneProbs(AbstractAffMatTransformer):
@@ -448,7 +447,6 @@ class LouvainMembershipAverage(AbstractAffMatTransformer):
         self.seed=seed
     
     def __call__(self, affinity_mat):
-
         return ph.cluster.runlouvain_average_runs_given_graph(
                 graph=affinity_mat,
                 n_runs=self.n_runs, level_to_return=self.level_to_return,
