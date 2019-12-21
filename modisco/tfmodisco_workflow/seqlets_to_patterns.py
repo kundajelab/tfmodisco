@@ -536,14 +536,13 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print_memory_use()
                 sys.stdout.flush()
 
-            sparse_coarse_affmat, seqlet_neighbors =\
+            coarse_affmat_nn, seqlet_neighbors =\
                 self.coarse_affmat_computer(seqlets)
-            sparse_coarse_affmat = sparse_coarse_affmat.todok()
-
-
             gc.collect()
-            print_memory_use()
-            sys.stdout.flush()
+            if (self.verbose):
+                print("(Round "+str(round_num)+") Computed coarse affmat")
+                print_memory_use()
+                sys.stdout.flush()
 
             if (self.skip_fine_grained==False):
 
@@ -553,18 +552,47 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                           +" on nearest neighbors")
                     print_memory_use()
                     sys.stdout.flush()
-                sparse_nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
-                                            seqlet_neighbors=seqlet_neighbors,
-                                            seqlets=seqlets,
-                                            return_sparse=True) 
-                sparse_nn_affmat = sparse_nn_affmat.todok()
+                fine_affmat_nn = self.affmat_from_seqlets_with_nn_pairs(
+                                    seqlet_neighbors=seqlet_neighbors,
+                                    seqlets=seqlets,
+                                    return_sparse=True)
+                #get the fine_affmat_nn reorderings
+                reorderings = np.array(
+                    [[x[0] for x in
+                     sorted(enumerate(finesimsinrow), key=lambda x: -x[1])]
+                     for finesimsinrow in fine_affmat_nn])
 
-                #reoarder the seqlet neighbors in order of affinity
+                #reorder fine_affmat_nn, coarse_affmat_nn and seqlet_neighbors
+                # according to reorderings
+                fine_affmat_nn = np.array([finesimsinrow[rowreordering]
+                                      for (finesimsinrow, rowreordering)
+                                      in zip(fine_affmat_nn, reorderings)])
+                coarse_affmat_nn = np.array([coarsesimsinrow[rowreordering]
+                                      for (coarsesimsinrow, rowreordering)
+                                      in zip(coarse_affmat_nn, reorderings)])
+                seqlet_neighbors = np.array([nnrow[rowreordering]
+                                      for (nnrow, rowreordering)
+                                      in zip(seqlet_neighbors, reorderings)])
+                
+                #reorder coarse_affmat_nn in order of fine sim
+                coarse_affmat_nn = np.array(
+                    [[x[1] for x in
+                      sorted([(finesim,coarsesim) for finesim,coarsesim
+                              in zip(finesimsinrow,coarsesimsinrow)],
+                              key=lambda x: -x[0])]
+                    for (finesimsinrow,coarsesimsinrow) in 
+                         zip(fine_affmat_nn, coarse_affmat_nn)])
+                #reorder the seqlet neighbors in order of fine sim
                 seqlet_neighbors = np.array(
                     [[x[1] for x in
-                      sorted([(sparse_nn_affmat[i,nn],nn) for nn in row],
+                      sorted([(finesim,nn) for finesim,nn
+                              in zip(finesimsinrow,nnrow)],
                              key=lambda x: -x[0])]
-                    for (i,row) in enumerate(seqlet_neighbors)])
+                    for (finesimsinrow,nnrow) in
+                        zip(fine_affmat_nn, seqlet_neighbors)])
+
+                del reorderings
+
 
                 gc.collect()
                 
@@ -579,9 +607,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 if (round_idx == 0 or self.filter_beyond_first_round==True):
                     #TODO: restrict corr to only nn
                     filtered_rows_mask = self.filter_mask_from_correlation(
-                                            main_affmat=sparse_nn_affmat,
-                                            other_affmat=sparse_coarse_affmat,
-                                            seqlet_neighbors=seqlet_neighbors) 
+                                            main_affmat=fine_affmat_nn,
+                                            other_affmat=coarse_affmat_nn) 
                     if (self.verbose):
                         print("(Round "+str(round_num)+") Retained "
                               +str(np.sum(filtered_rows_mask))
@@ -596,47 +623,48 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                               +"rounds above first round")
                         print_memory_use()
                         sys.stdout.flush()
-                del sparse_coarse_affmat
+                del coarse_affmat_nn 
                 gc.collect()
 
                 filtered_seqlets = [x[0] for x in
-                           zip(seqlets, filtered_rows_mask) if x[1]]
-                #filtered_affmat should also be a sparse matrix
-                
+                                    zip(seqlets, filtered_rows_mask) if x[1]]
                 #figure out a mapping from pre-filtering to the
                 # post-filtering indices
                 new_idx_mapping = (
                     np.cumsum(1.0*(filtered_rows_mask)).astype("int")-1)
-                new_num_rows = sum(filtered_rows_mask)
                 retained_indices = set(np.arange(len(filtered_rows_mask))[
                                                   filtered_rows_mask])
-                new_coo_rows = []
-                new_coo_cols = []
-                new_coo_data = []
-                new_neighbors = []
-                for old_row_idx, old_neighbors in enumerate(seqlet_neighbors): 
+                del filtered_rows_mask
+                filtered_neighbors = []
+                filtered_affmat_nn = []
+                for old_row_idx, (old_neighbors,affmat_row) in enumerate(
+                                    zip(seqlet_neighbors, fine_affmat_nn)): 
                     if old_row_idx in retained_indices:
-                        new_row_idx = new_idx_mapping[old_row_idx] 
                         filtered_old_neighbors = [
                             neighbor for neighbor in old_neighbors if neighbor
                             in retained_indices]
-                        new_neighbors_row = [
+                        filtered_affmat_row = [
+                            affmatval for affmatval,neighbor
+                            in zip(affmat_row,old_neighbors)
+                            if neighbor in retained_indices]
+                        filtered_neighbors_row = [
                             new_idx_mapping[neighbor] for neighbor
                             in filtered_old_neighbors]
-                        new_neighbors.append(new_neighbors_row)
-                        new_coo_rows.extend([
-                            new_row_idx for x in new_neighbors_row])
-                        new_coo_cols.extend(new_neighbors_row)
-                        new_coo_data.extend([
-                            sparse_nn_affmat[old_row_idx,neighbor]
-                            for neighbor in filtered_old_neighbors])
-                filtered_affmat = coo_matrix(
-                    (new_coo_data, (new_coo_rows, new_coo_cols)),
-                    shape=(new_num_rows, new_num_rows)).todok()
+                        filtered_neighbors.append(filtered_neighbors_row)
+                        filtered_affmat_nn.append(filtered_affmat_row)
 
-                del sparse_nn_affmat
+                #pad the neighbors and the affmat
+                # so all rows are of equal length,
+                # overwrite seqlet_neighbors
+                filtered_affmat_nn = np.array([list(row)+[-np.inf for x in
+                                     range(seqlet_neighbors.shape[1]-len(row))]
+                                     for row in filtered_affmat_nn])
+                seqlet_neighbors = [list(row)+[np.nan for x in
+                                    range(seqlet_neighbors.shape[1]-len(row))]
+                                    for row in filtered_neighbors]
+                del (filtered_neighbors, retained_indices, new_idx_mapping)
             else:
-                filtered_affmat = coarse_affmat
+                filtered_affmat_nn = coarse_affmat_nn
                 filtered_seqlets = seqlets
 
             if (self.verbose):
@@ -645,27 +673,20 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print_memory_use()
                 sys.stdout.flush() 
 
-            #pad the new_neighbors so all rows are of equal length
-            padded_neighbors = [list(row)+[np.nan for x in
-                                    range(len(seqlet_neighbors) - len(row))]
-                                for row in new_neighbors]
-            assert len(set([len(row) for row in padded_neighbors]))==1
+            assert len(set([len(row) for row in seqlet_neighbors]))==1
             
-            
-            #TODO: Implement sparse density adaptation
-            sparse_density_adapted_affmat =\
+            coo_density_adapted_affmat =\
                 self.density_adapted_affmat_transformer(
-                    filtered_affmat, padded_neighbors)
-            del filtered_affmat
+                    filtered_affmat_nn, seqlet_neighbors)
+            del filtered_affmat_nn
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing clustering")
                 print_memory_use()
                 sys.stdout.flush() 
 
-            #TODO: Update clusterer to work with spare affmat
-            cluster_results = clusterer(sparse_density_adapted_affmat)
-            del sparse_density_adapted_affmat
+            cluster_results = clusterer(coo_density_adapted_affmat)
+            del coo_density_adapted_affmat
             num_clusters = max(cluster_results.cluster_indices+1)
             cluster_idx_counts = Counter(cluster_results.cluster_indices)
             if (self.verbose):

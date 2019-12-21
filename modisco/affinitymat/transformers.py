@@ -245,34 +245,23 @@ class AffToDistViaInvLogistic(AbstractAffToDistMat):
         return to_return
 
 
-class NNAffToDistMatWrapper(object):
-
-    def __init__(self, aff_to_dist_mat):
-        self.aff_to_dist_mat = aff_to_dist_mat
-
-    def __call__(self, affinity_mat, nearest_neighbors):
-        assert all([x[0]==i for i,x in enumerate(nearest_neighbors)])
-        #some of the entries in nearest_neighbors may be shorter than
-        # others; set the affinity of the extras to be negative infinity
-        affmat_nn = np.array([[
-           (affinity_mat[i,int(nn)] if np.isnan(nn)==False else -np.inf)
-            for nn in nn_row] for i,nn_row in enumerate(nearest_neighbors)])
-        distmat_nn = self.aff_to_dist_mat(affmat_nn)
-        return distmat_nn
-
-
 class AbstractNNTsneProbs(AbstractAffMatTransformer):
 
     def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
         self.perplexity = perplexity 
         self.verbose=verbose
-        self.nn_aff_to_dist_mat = NNAffToDistMatWrapper(
-                                   aff_to_dist_mat=aff_to_dist_mat)
+        self.aff_to_dist_mat = aff_to_dist_mat
 
     def __call__(self, affinity_mat, nearest_neighbors):
-        distmat_nn = self.nn_aff_to_dist_mat(
-                        affinity_mat=affinity_mat,
-                        nearest_neighbors=nearest_neighbors) 
+        #assert that affinity_mat as the same dims as nearest_neighbors
+        assert affinity_mat.shape==(len(nearest_neighbors),
+                                    len(nearest_neighbors[0]))
+        #assert all rows of nearest_neighbors have the same length (i.e.
+        # they have been padded)
+        assert len(set([len(x) for x in nearest_neighbors]))==1
+
+        distmat_nn = self.aff_to_dist_mat(
+                        affinity_mat=affinity_mat) 
         #assert that the distances are increasing to the right
         assert np.min(distmat_nn[:,1:] - distmat_nn[:,:-1]) >= 0.0
         #assert that the self-distances are 0
@@ -281,7 +270,6 @@ class AbstractNNTsneProbs(AbstractAffMatTransformer):
         #assert that each idx is its own nearest neighbor
         assert all([i==nearest_neighbors[i][0] for
                     i in range(len(nearest_neighbors))])
-
         # Compute the number of nearest neighbors to find.
         # LvdM uses 3 * perplexity as the number of neighbors.
         # In the event that we have very small # of points
@@ -291,7 +279,6 @@ class AbstractNNTsneProbs(AbstractAffMatTransformer):
         assert k < distmat_nn.shape[1],(
             "Not enough neighbors for perplexity calc! Need over"
             +" "+str(k)+" but have "+str(distmat_nn.shape[1]))
-
         P = self.tsne_probs_calc(distances_nn=distmat_nn[:,1:(k+1)],
                                  neighbors_nn=[row[1:(k+1)] for row in 
                                                nearest_neighbors])

@@ -333,20 +333,9 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
                  for i in range(len(fwd_vecs)) ))
 
         neighbors = np.array([x[0] for x in topk_cosine_sim_results])
+        sims = np.array([x[1] for x in topk_cosine_sim_results]) 
 
-        rows = []
-        cols = []
-        data = []
-        for (i, (js, vals)) in enumerate(topk_cosine_sim_results):
-            rows.extend([i for j in js]) 
-            cols.extend(js)
-            data.extend(vals) 
-       
-        del topk_cosine_sim_results 
-
-        coo_mat = coo_matrix((data, (rows, cols)), shape=(len(fwd_vecs),
-                                                          len(fwd_vecs)))
-        return coo_mat, neighbors 
+        return sims, neighbors 
 
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
@@ -656,43 +645,25 @@ class AffmatFromSeqletsWithNNpairs(object):
                                          for x in seqlets]) 
 
         #apply the cross metric
-        fwd_returnvals = self.sim_metric_on_nn_pairs(
+        affmat_fwd = self.sim_metric_on_nn_pairs(
                  neighbors_of_things_to_scan=seqlet_neighbors,
                  filters=filters_all_fwd_data,
                  things_to_scan=all_fwd_data,
                  min_overlap=self.pattern_comparison_settings.min_overlap,
                  return_sparse=return_sparse) 
-        if (return_sparse):
-            fwd_rows,fwd_cols,fwd_dat = fwd_returnvals
-        else:
-            affmat_fwd = fwd_returnvals
             
         if (filters_all_rev_data is not None):
-            rev_returnvals = self.sim_metric_on_nn_pairs(
+            affmat_rev = self.sim_metric_on_nn_pairs(
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_rev_data,
                      things_to_scan=all_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap,
                      return_sparse=return_sparse) 
-            if (return_sparse):
-                rev_rows,rev_cols,rev_dat = rev_returnvals
-            else:
-                affmat_rev = rev_returnvals
 
-        if (return_sparse):
-            if (filters_all_rev_data is not None):
-                assert np.max(np.abs(fwd_rows-rev_rows))==0.0
-                assert np.max(np.abs(fwd_cols-rev_cols))==0.0
-                dat = np.maximum(fwd_dat, rev_dat)
-            else:
-                dat = fwd_dat
-            return coo_matrix((dat, (fwd_rows, fwd_cols)),
-                               shape=(len(seqlets), len(filter_seqlets)))
-        else:
-            affmat = affmat_fwd
-            if (filters_all_rev_data is not None):
-                affmat = np.maximum(affmat, affmat_rev)
-            return affmat
+        affmat = affmat_fwd
+        if (filters_all_rev_data is not None):
+            affmat = np.maximum(affmat, affmat_rev)
+        return affmat
 
 
 class AbstractSimMetricOnNNpairs(object):
@@ -777,30 +748,21 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
             sys.stdout.flush()
 
         if (return_sparse==True):
-            rows = []
-            cols = []
-            data = []
-
-        for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
-             in enumerate(zip(results, neighbors_of_things_to_scan)):
-            #adjust the "position" to remove the effect of the padding
-            if (self.cross_metric_single_region.returns_pos==True):
-                result[1] -= padding_amount 
-                to_return[thing_to_scan_idx,
-                          thing_to_scan_neighbor_indices] =\
-                    np.transpose(result,(1,0))
-            else:
-                if (return_sparse==True):
-                    rows.extend([thing_to_scan_idx for
-                                 x in thing_to_scan_neighbor_indices])
-                    cols.extend(thing_to_scan_neighbor_indices)
-                    data.extend(result) 
+            #results has same dims as neighbors_of_things_to_scan
+            to_return = np.array(results)
+            assert to_return.shape==neighbors_of_things_to_scan.shape
+        else:
+            for (thing_to_scan_idx, (result, thing_to_scan_neighbor_indices))\
+                 in enumerate(zip(results, neighbors_of_things_to_scan)):
+                #adjust the "position" to remove the effect of the padding
+                if (self.cross_metric_single_region.returns_pos==True):
+                    result[1] -= padding_amount 
+                    to_return[thing_to_scan_idx,
+                              thing_to_scan_neighbor_indices] =\
+                        np.transpose(result,(1,0))
                 else:
                     to_return[thing_to_scan_idx,
                               thing_to_scan_neighbor_indices] = result
-        if (return_sparse==True):
-            to_return = (np.array(rows), np.array(cols), np.array(data))
-
         gc.collect()
 
         end = time.time()
@@ -1107,29 +1069,18 @@ class FilterMaskFromCorrelation(object):
         self.correlation_threshold = correlation_threshold
         self.verbose = verbose
 
-    def __call__(self, main_affmat, other_affmat, seqlet_neighbors=None):
+    def __call__(self, main_affmat, other_affmat):
         correlations = []
         neg_log_pvals = []
-        if (seqlet_neighbors is None):
-            for main_affmat_row, other_affmat_row\
-                in zip(main_affmat, other_affmat):
-                #compare correlation on the nonzero rows
-                to_compare_mask = np.abs(main_affmat_row) > 0
-                corr = scipy.stats.spearmanr(
-                        main_affmat_row[to_compare_mask],
-                        other_affmat_row[to_compare_mask])
-                correlations.append(corr.correlation)
-                neg_log_pvals.append(-np.log(corr.pvalue)) 
-        else:
-            for i,row in enumerate(seqlet_neighbors):
-                main_affmat_entries = np.array(
-                    [main_affmat[i,x] for x in row])
-                other_affmat_entries = np.array(
-                    [other_affmat[i,x] for x in row])
-                corr = scipy.stats.spearmanr(main_affmat_entries,
-                                             other_affmat_entries) 
-                correlations.append(corr.correlation)
-                neg_log_pvals.append(-np.log(corr.pvalue))
+        for main_affmat_row, other_affmat_row\
+            in zip(main_affmat, other_affmat):
+            #compare correlation on the nonzero rows
+            to_compare_mask = np.abs(main_affmat_row) > 0
+            corr = scipy.stats.spearmanr(
+                    main_affmat_row[to_compare_mask],
+                    other_affmat_row[to_compare_mask])
+            correlations.append(corr.correlation)
+            neg_log_pvals.append(-np.log(corr.pvalue)) 
         correlations = np.array(correlations)
         neg_log_pvals = np.array(neg_log_pvals)
         mask_to_return = (correlations > self.correlation_threshold)
