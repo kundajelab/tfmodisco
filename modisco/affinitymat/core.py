@@ -325,7 +325,7 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
                         copy=False)
 
         topk_cosine_sim_results = (
-            Parallel(self.nn_n_jobs)(
+            Parallel(self.nn_n_jobs, verbose=self.verbose)(
                  delayed(top_k_fwdandrev_dot_prod)(
                     fwd_vecs[i],
                     rev_vecs if rev_vecs is not None else None,
