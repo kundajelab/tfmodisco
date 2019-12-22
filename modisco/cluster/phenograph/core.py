@@ -425,13 +425,41 @@ def runlouvain_average_runs(filename, n_runs,
               +str(len(communities_list))+" louvain runs"
               +" worked, out of "+str(n_runs), file=sys.stderr)
         sys.stderr.flush()
-    coocc_count = np.zeros((len(communities_list[0]),
-                            len(communities_list[0])))
-    for communities in communities_list:
-        coocc_count += (communities[:,None] == communities[None,:])
+
     print("Louvain completed {} runs in {} seconds".format(
           n_runs, time.time() - tic))
     print_memory_use()
     sys.stdout.flush()
 
-    return coocc_count.astype("float32")/float(len(communities_list))
+    print("Preparing sparse coo_matrix")
+    #rewrite to be a sparse matrix
+    cooc_count = sp.coo_matrix((len(communities_list[0]),
+                                len(communities_list[0])),
+                               dtype="float32").tocsr()
+
+    for communities in communities_list:
+        cluster_to_indices = defaultdict(list)
+        #group indices by their cluster
+        for idx,cluster_val in enumerate(communities):
+            cluster_to_indices[cluster_val].append(idx) 
+        csr_rows = []
+        csr_cols = []
+        csr_data = []
+        for cluster_val in cluster_to_indices:
+            indices_in_cluster = cluster_to_indices[cluster_val]
+            for first_idx in indices_in_cluster:
+                for second_idx in indices_in_cluster:
+                    csr_rows.append(first_idx)
+                    csr_cols.append(second_idx)
+                    csr_data.append(1.0)
+        cooc_count = (cooc_count
+                      + sp.csr_matrix((csr_data, (csr_rows, csr_cols))))
+
+    cooc_count.multiply(1.0/len(communities_list))
+    cooc_count = cooc_count.tocoo()
+    
+    print("Prepared sparse coo_matrix")
+    print_memory_use()
+    sys.stdout.flush()
+
+    return cooc_count
