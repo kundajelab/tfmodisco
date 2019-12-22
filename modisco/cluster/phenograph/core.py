@@ -14,6 +14,7 @@ import os
 import sys
 from collections import defaultdict
 from joblib import Parallel, delayed
+import itertools
 
 
 def print_memory_use():
@@ -432,33 +433,56 @@ def runlouvain_average_runs(filename, n_runs,
     sys.stdout.flush()
 
     print("Preparing sparse coo_matrix")
+    sparse_coo_start = time.time()
     #rewrite to be a sparse matrix
     cooc_count = sp.coo_matrix((len(communities_list[0]),
                                 len(communities_list[0])),
                                dtype="float32").tocsr()
 
-    for communities in communities_list:
+    for communities_idx,communities in enumerate(communities_list):
+        print("On idx",communities_idx,"of",len(communities_list))
+        print_memory_use()
+        sys.stdout.flush()
+        print("Preparing cluster_to_indices")
+        print_memory_use()
+        sys.stdout.flush()
+        start = time.time()
         cluster_to_indices = defaultdict(list)
         #group indices by their cluster
         for idx,cluster_val in enumerate(communities):
             cluster_to_indices[cluster_val].append(idx) 
+        print("Cluster-to-indices took",time.time()-start)
+        print_memory_use()
+        sys.stdout.flush()
+        start = time.time()
         csr_rows = []
         csr_cols = []
         csr_data = []
         for cluster_val in cluster_to_indices:
             indices_in_cluster = cluster_to_indices[cluster_val]
-            for first_idx in indices_in_cluster:
-                for second_idx in indices_in_cluster:
-                    csr_rows.append(first_idx)
-                    csr_cols.append(second_idx)
-                    csr_data.append(1.0)
-        cooc_count = (cooc_count
-                      + sp.csr_matrix((csr_data, (csr_rows, csr_cols))))
+            for (first_idx, second_idx) in itertools.product(
+                                            indices_in_cluster, repeat=2):
+                csr_rows.append(first_idx)
+                csr_cols.append(second_idx)
+                csr_data.append(1.0)
+        print("Prepared csr_rows, csr_cols, csr_data in ",time.time()-start)
+        print_memory_use()
+        sys.stdout.flush()
+        start = time.time()
+        csr_to_add = sp.csr_matrix((csr_data, (csr_rows, csr_cols)))
+        print("Prepared csr_to_add in ",time.time()-start)
+        print_memory_use()
+        sys.stdout.flush()
+        start = time.time()
+        cooc_count = (cooc_count + csr_to_add)
+        print("Added to cooc_count in ",time.time()-start)
+        print_memory_use()
+        sys.stdout.flush()
 
     cooc_count.multiply(1.0/len(communities_list))
     cooc_count = cooc_count.tocoo()
     
-    print("Prepared sparse coo_matrix")
+    print("Prepared sparse coo_matrix in ",time.time()-sparse_coo_start,"s")
     print_memory_use()
     sys.stdout.flush()
 
