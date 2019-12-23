@@ -445,17 +445,12 @@ def runlouvain_average_runs(filename, n_runs,
         sys.stdout.flush()
         #get a binary co-occurrence matrix
         start = time.time()
-        cooc_mat = communities[:,None]==communities[None,:]
+        cooc_binary_mat = communities[:,None]==communities[None,:]
         print("Making binary cooc mat took",time.time()-start)
         print_memory_use()
         sys.stdout.flush()
         start = time.time()
-        csr_to_add = sp.csr_matrix(cooc_mat).astype("float32")
-        print("Prepared csr_to_add in ",time.time()-start)
-        print_memory_use()
-        sys.stdout.flush()
-        start = time.time()
-        cooc_count = (cooc_count + csr_to_add)
+        cooc_count = (cooc_count + cooc_binary_mat)
         print("Added to cooc_count in ",time.time()-start)
         print_memory_use()
         sys.stdout.flush()
