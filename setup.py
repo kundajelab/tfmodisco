@@ -15,7 +15,7 @@ if __name__== '__main__':
           setup_requires=[],
           install_requires=['numpy>=1.9', 'joblib>=0.11', 
                             'scikit-learn>=0.19',
-                            'h5py>=2.5'],
+                            'h5py>=2.5', 'tqdm>=4.41.0'],
           extras_require={
             'tensorflow': ['tensorflow>=1.7'],
             'tensorflow with gpu': ['tensorflow-gpu>=1.7']},

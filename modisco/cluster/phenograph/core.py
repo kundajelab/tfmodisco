@@ -15,6 +15,7 @@ import sys
 from collections import defaultdict, Counter
 from joblib import Parallel, delayed
 import itertools
+from tqdm import tqdm
 
 
 def print_memory_use():
@@ -171,6 +172,7 @@ def graph2binary(filename, graph):
     # Unpack values in graph
     i, j = graph.nonzero()
     s = graph.data
+    assert len(graph.data)==len(i)
     # place i and j in single array as edge list
     ij = np.hstack((i[:, np.newaxis], j[:, np.newaxis]))
     # add dummy self-edges for vertices at the END of the list with no neighbors
@@ -435,38 +437,25 @@ def runlouvain_average_runs(filename, n_runs,
     print("Preparing sparse coo_matrix")
     sparse_coo_start = time.time()
     #rewrite to be a sparse matrix
-    cooc_counts = Counter()
-    for communities_idx,communities in enumerate(communities_list):
-        print("On idx",communities_idx,"of",len(communities_list))
-        print_memory_use()
-        sys.stdout.flush()
-        #get a binary co-occurrence matrix
-        start = time.time()
-        cooc_binary_mat = communities[:,None]==communities[None,:]
-        print("Making binary cooc mat took",time.time()-start)
-        print_memory_use()
-        sys.stdout.flush()
-        start = time.time()
-        cooc_counts.update(zip(*np.nonzero(cooc_binary_mat)))
-        print("Updated cooc_counts in ",time.time()-start)
-        print_memory_use()
-        sys.stdout.flush()
+    cooc_count = sp.coo_matrix((len(communities_list[0]),
+                                len(communities_list[0])),
+                               dtype="float32").tocsr()
 
-    print("Creating matrix")
-    print_memory_use()
     sys.stdout.flush()
-    start = time.time()
-    rows = []
-    cols = []
-    data = []
-    for (row,col),dat in cooc_counts.items():
-        rows.append(row) 
-        cols.append(col)
-        data.append(float(dat)/len(communities_list))
-    sp_cooc_mat = sp.coo_matrix((data, (rows, cols)))
-    print("Created matrix in", time.time()-start)
+    sys.stderr.flush()
+    for communities_idx,communities in tqdm(enumerate(communities_list)):
+        cooc_mat = communities[:,None]==communities[None,:]
+        csr_to_add = sp.csr_matrix(cooc_mat)
+        cooc_count = (cooc_count + csr_to_add)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    cooc_count.multiply(1.0/len(communities_list))
+    cooc_count = cooc_count.tocoo()
+    
     print("Prepared sparse coo_matrix in ",time.time()-sparse_coo_start,"s")
     print_memory_use()
     sys.stdout.flush()
 
-    return sp_cooc_mat
+    return cooc_count
