@@ -11,4 +11,5 @@
 **/*.pkl
 **/*.gz
 **/*.json
+**/*.tree
 dist

@@ -20,9 +20,6 @@ modisco.egg-info/top_level.txt
 modisco/affinitymat/__init__.py
 modisco/affinitymat/core.py
 modisco/affinitymat/transformers.py
-modisco/backend/__init__.py
-modisco/backend/tensorflow_backend.py
-modisco/backend/theano_backend.py
 modisco/cluster/__init__.py
 modisco/cluster/core.py
 modisco/cluster/phenograph/__init__.py

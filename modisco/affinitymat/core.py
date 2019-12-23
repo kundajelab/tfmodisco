@@ -1,5 +1,4 @@
 from __future__ import division, print_function, absolute_import
-from .. import backend as B
 import numpy as np
 from .. import util as modiscoutil
 from .. import core as modiscocore
@@ -111,9 +110,23 @@ def local_rolling_window(a, window):
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
+
+@njit() 
+def core_gapped_kmer_embedding_func(filters, biases,
+                                    strided_onehot, strided_to_embed):
+    onehot_match = ((np.sum(np.sum(np.expand_dims(strided_onehot,0)
+                                     *np.expand_dims(filters,1),
+                              axis=2),axis=2) 
+                           + np.expand_dims(biases,1)) > 0.0)*1.0
+    toembed_scan = np.sum(np.sum(np.expand_dims(strided_to_embed,0)
+                            *np.expand_dims(filters,1),
+                            axis=2),axis=2)
+    return np.sum(toembed_scan*onehot_match,axis=1)
+
+
 #get an odd error when I set parallel=True, seems an issue w/ broadcast:
 # https://github.com/numba/numba/issues/3729
-@njit() 
+@njit(parallel=True) 
 def gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
 
     strided_onehottracks = local_rolling_window(
@@ -126,16 +139,13 @@ def gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
     for i in prange(len(onehottracks)):
         onehot_i = strided_onehottracks[i]
         toembed_i = strided_toembedtracks[i]
-        onehot_match_i = ((np.sum(np.sum(np.expand_dims(onehot_i,0)
-                                         *np.expand_dims(filters,1),
-                                  axis=2),axis=2) 
-                               + np.expand_dims(biases,1)) > 0.0)*1.0
-        toembed_scan_i = np.sum(np.sum(np.expand_dims(toembed_i,0)
-                                *np.expand_dims(filters,1),
-                                axis=2),axis=2)
-        to_return[i,:] = np.sum(toembed_scan_i*onehot_match_i,axis=1)
-
+        to_return[i,:] = core_gapped_kmer_embedding_func(
+                            filters=filters, biases=biases,
+                            strided_onehot=onehot_i,
+                            strided_to_embed=toembed_i)
     return to_return
+
+
 ##@njit(parallel=True)
 #def nostridetricks_gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
 #    to_return = np.zeros((len(onehottracks), len(filters))) 
@@ -321,26 +331,35 @@ class AbstractAffinityMatrixFromOneD(object):
 #take the dot product of fwd_vec with
 # fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
 # the top k
+@njit(parallel=True)
 def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
     fwd_dot = np.dot(fwd_vecs, fwd_vec) 
-    k = min(k, len(fwd_vecs))
     if (rev_vecs is not None):
         rev_dot = np.dot(rev_vecs, fwd_vec)
         dotprod = rev_dot
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
-
-    #get the top k indices
-    top_k_indices = np.argpartition(dotprod, -k)[-k:]
-    sims = dotprod[top_k_indices]
-    #sort by similarity
-    sorted_topk_sims, sorted_topk_indices =\
-        zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
-
-    sorted_topk_sims = np.array(sorted_topk_sims)
-    sorted_topk_indices = np.array(sorted_topk_indices)
+    #argpartition is not supported by numba, so we use argsort sort
+    sorted_indices = np.argsort(dotprod)[::-1]
+    sorted_topk_indices = sorted_indices[:k]
+    sorted_topk_sims = dotprod[sorted_topk_indices]
     return (sorted_topk_indices, sorted_topk_sims)
+
+
+@njit(parallel=True)
+def get_topk_matdotprod_results(fwd_vecs, rev_vecs, k):
+    k=min(k, len(fwd_vecs))
+    sims = np.zeros((len(fwd_vecs), k)) 
+    neighbors = np.zeros((len(fwd_vecs),k)).astype(np.int64)
+    for i in prange(len(fwd_vecs)):
+        sorted_topk_indices, sorted_topk_sims = top_k_fwdandrev_dot_prod(
+            fwd_vec=fwd_vecs[i],
+            rev_vecs=rev_vecs,
+            fwd_vecs=fwd_vecs, k=k) 
+        sims[i,:] = sorted_topk_sims
+        neighbors[i,:] = sorted_topk_indices
+    return (sims, neighbors)
 
 
 class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
@@ -357,29 +376,30 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         fwd_vecs = np.nan_to_num(
                         fwd_vecs/np.linalg.norm(fwd_vecs, axis=1)[:,None],
                         copy=False)
-        rev_vecs = np.nan_to_num(
+        rev_vecs = (np.nan_to_num(
                         rev_vecs/np.linalg.norm(rev_vecs, axis=1)[:,None],
-                        copy=False)
+                        copy=False) if rev_vecs is not None else None)
 
-        topk_cosine_sim_results = (
-            Parallel(self.nn_n_jobs, verbose=self.verbose)(
-                 delayed(top_k_fwdandrev_dot_prod)(
-                    fwd_vecs[i],
-                    rev_vecs if rev_vecs is not None else None,
-                    fwd_vecs, self.n_neighbors+1)
-                 for i in range(len(fwd_vecs)) ))
-
-        neighbors = np.array([x[0] for x in topk_cosine_sim_results])
-        sims = np.array([x[1] for x in topk_cosine_sim_results]) 
-
+        (sims, neighbors) = get_topk_matdotprod_results(
+                                fwd_vecs=fwd_vecs,
+                                rev_vecs=rev_vecs,
+                                k=self.n_neighbors+1)    
+        #topk_cosine_sim_results = (
+        #    Parallel(self.nn_n_jobs, verbose=self.verbose)(
+        #         delayed(top_k_fwdandrev_dot_prod)(
+        #            fwd_vecs[i],
+        #            rev_vecs if rev_vecs is not None else None,
+        #            fwd_vecs, self.n_neighbors+1)
+        #         for i in range(len(fwd_vecs)) ))
+        #neighbors = np.array([x[0] for x in topk_cosine_sim_results])
+        #sims = np.array([x[1] for x in topk_cosine_sim_results]) 
         return sims, neighbors 
 
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
-    def __init__(self, verbose, gpu_batch_size=None):
+    def __init__(self, verbose):
         self.verbose = verbose
-        self.gpu_batch_size = gpu_batch_size
 
     def __call__(self, vecs1, vecs2):
 
@@ -403,16 +423,12 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
                   round(time.time()-start_time,2),"s")
             print_memory_use()
             sys.stdout.flush()
-        if (self.gpu_batch_size is not None):
-            to_return = B.matrix_dot_product(normed_vecs1, normed_vecs2.T,
-                                             batch_size=self.gpu_batch_size)
-        else:
-            #do the multiplication on the CPU
-            to_return = np.dot(normed_vecs1,normed_vecs2.T)
-            if (self.verbose):
-                print("Computed dot product")
-                print_memory_use()
-                sys.stdout.flush()
+        #do the multiplication on the CPU
+        to_return = np.dot(normed_vecs1,normed_vecs2.T)
+        if (self.verbose):
+            print("Computed dot product")
+            print_memory_use()
+            sys.stdout.flush()
         end_time = time.time()
     
         if (self.verbose):
@@ -864,24 +880,6 @@ class AbstractCrossMetric(object):
         raise NotImplementedError()
 
 
-class CrossCorrMetricGPU(AbstractCrossMetric):
-
-    def __init__(self, batch_size=50, func_params_size=1000000,
-                       progress_update=1000):
-        self.batch_size = batch_size
-        self.func_params_size = func_params_size
-        self.progress_update = progress_update
-
-    def __call__(self, filters, things_to_scan, min_overlap):
-        return B.max_cross_corrs(
-                filters=filters,
-                things_to_scan=things_to_scan,
-                min_overlap=min_overlap,
-                batch_size=self.batch_size,
-                func_params_size=self.func_params_size,
-                progress_update=self.progress_update)
-
-
 class CrossContinJaccardOneCoreCPU(AbstractCrossMetric):
 
     def __init__(self, verbose=True):
@@ -1037,46 +1035,6 @@ class CrossContinJaccardMultiCoreCPU2(AbstractCrossMetric):
             print("Cross contin jaccard time taken:",round(end-start,2),"s")
 
         return np.max(full_crosscontinjaccards, axis=-1)
-
-
-class CrossContinJaccardGPU(AbstractCrossMetric):
-
-    def __init__(self, verbose=True, batch_size=100):
-        self.verbose = verbose
-        self.batch_size = batch_size
-
-    def __call__(self, filters, things_to_scan, min_overlap):
-        assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
-        assert len(things_to_scan.shape)==3
-        assert filters.shape[-1] == things_to_scan.shape[-1]
-        jaccard_sim_func = B.get_jaccard_sim_func(filters)
-
-        filter_length = filters.shape[1]
-        padding_amount = int((filter_length)*(1-min_overlap))
-        padded_input = np.array([np.pad(array=x,
-                              pad_width=((padding_amount, padding_amount),
-                                         (0,0)),
-                              mode="constant") for x in things_to_scan])
-
-        len_output = 1+padded_input.shape[1]-filters.shape[1]
-        full_crosscontinjaccard =\
-            np.zeros((filters.shape[0], padded_input.shape[0], len_output))
-
-        for idx in range(len_output):
-            if (self.verbose):
-                print("On offset",idx,"of",len_output-1)
-                sys.stdout.flush()
-            snapshot = padded_input[:,idx:idx+filters.shape[1],:]
-            batch_start = 0
-            while (batch_start < snapshot.shape[0]):
-                batch_end = min(batch_start+self.batch_size, snapshot.shape[0])
-                batch = snapshot[batch_start:batch_end]
-                sys.stdout.flush()
-                full_crosscontinjaccard[:,batch_start:batch_end,idx] =\
-                    jaccard_sim_func(batch) 
-                sys.stdout.flush()
-                batch_start += self.batch_size
-        return np.max(full_crosscontinjaccard, axis=-1) 
 
 
 class FilterSparseRows(object):
