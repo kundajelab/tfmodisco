@@ -11,6 +11,8 @@ import scipy.stats
 from scipy.sparse import coo_matrix
 from joblib import Parallel, delayed
 import gc
+import numba
+from numba import njit, jit, prange
 
 
 def print_memory_use():
@@ -100,6 +102,61 @@ class AbstractSeqletsToOnedEmbedder(object):
         raise NotImplementedError()
 
 
+#Need to define this locally for numba; is defined in modisco.util
+#rolling_window is from this blog post by Erik Rigtorp:
+# https://rigtorp.se/2011/01/01/rolling-statistics-numpy.html
+@njit
+def local_rolling_window(a, window):
+    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+    strides = a.strides + (a.strides[-1],)
+    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+#get an odd error when I set parallel=True, seems an issue w/ broadcast:
+# https://github.com/numba/numba/issues/3729
+@njit() 
+def gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
+
+    strided_onehottracks = local_rolling_window(
+                            a=onehottracks.transpose(0,2,1),
+                            window=filters.shape[1]).transpose(0,2,3,1)
+    strided_toembedtracks = local_rolling_window(
+                             a=toembedtracks.transpose(0,2,1),
+                             window=filters.shape[1]).transpose(0,2,3,1)
+    to_return = np.zeros((len(onehottracks), len(filters))) 
+    for i in prange(len(onehottracks)):
+        onehot_i = strided_onehottracks[i]
+        toembed_i = strided_toembedtracks[i]
+        onehot_match_i = ((np.sum(np.sum(np.expand_dims(onehot_i,0)
+                                         *np.expand_dims(filters,1),
+                                  axis=2),axis=2) 
+                               + np.expand_dims(biases,1)) > 0.0)*1.0
+        toembed_scan_i = np.sum(np.sum(np.expand_dims(toembed_i,0)
+                                *np.expand_dims(filters,1),
+                                axis=2),axis=2)
+        to_return[i,:] = np.sum(toembed_scan_i*onehot_match_i,axis=1)
+
+    return to_return
+##@njit(parallel=True)
+#def nostridetricks_gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
+#    to_return = np.zeros((len(onehottracks), len(filters))) 
+#    for i in prange(len(onehottracks)):
+#        onehot_i = onehottracks[i]
+#        toembed_i = toembedtracks[i]
+#        scanlength = len(onehot_i)-filters.shape[1]+1
+#        for pos in range(scanlength):
+#            onehot_match_i_pos = 1.0*((
+#                np.sum(onehot_i[pos:pos+filters.shape[1]]*
+#                       filters,
+#                       axis=(1,2))+biases) > 0.0) 
+#            toembed_scan_i_pos = np.sum(toembed_i[pos:pos+filters.shape[1]]*
+#                                        filters, axis=(1,2))
+#            prod = toembed_scan_i_pos*onehot_match_i_pos
+#            #print(numba.typeof(prod))
+#            #print(numba.typeof(to_return[i,:]))
+#            to_return[i,:] += prod
+#    return to_return
+
+
 class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
     
     def __init__(self, alphabet_size,
@@ -109,8 +166,8 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                        toscore_track_names_and_signs,
                        normalizer,
                        batch_size,
+                       onehot_track_name,
                        num_filters_to_retain=None,
-                       onehot_track_name=None,
                        progress_update=None):
         self.alphabet_size = alphabet_size
         self.kmer_len = kmer_len
@@ -125,14 +182,6 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         self.normalizer = normalizer
         self.batch_size = batch_size
         self.progress_update = progress_update
-        self.require_onehot_match = (True if self.onehot_track_name
-                                     is not None else False)
-        self.gapped_kmer_embedding_func =\
-            B.get_gapped_kmer_embedding_func(
-                    filters=self.filters,
-                    biases=self.biases,
-                    require_onehot_match=self.require_onehot_match)
-        print("kmer embedding func instantiated")
         print_memory_use()
         sys.stdout.flush()
 
@@ -177,12 +226,11 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         print("Computing embeddings")
         print_memory_use()
         sys.stdout.flush()
-        if (self.require_onehot_match):
-            onehot_track_fwd, onehot_track_rev =\
-                modiscocore.get_2d_data_from_patterns(
-                    patterns=seqlets,
-                    track_names=[self.onehot_track_name],
-                    track_transformer=None)
+        onehot_track_fwd, onehot_track_rev =\
+            modiscocore.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=[self.onehot_track_name],
+                track_transformer=None)
         print("After onehot_track_fwd and onehot_track_rev")
         print_memory_use()
         sys.stdout.flush()
@@ -218,31 +266,20 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         if (data_to_embed_rev is not None):
             data_to_embed_rev = np.array([self.normalizer(x) for x in
                                           data_to_embed_rev])
-        
-
         print("data_to_embed_fwd and data_to_embed_rev normalized")
         print_memory_use()
         sys.stdout.flush()
-        common_args = {'batch_size': self.batch_size,
-                       'progress_update': self.progress_update}
-        if (self.require_onehot_match):
-            embedding_fwd = self.gapped_kmer_embedding_func(
-                                  onehot=onehot_track_fwd,
-                                  to_embed=data_to_embed_fwd,
-                                  **common_args)
-            embedding_rev = (self.gapped_kmer_embedding_func(
-                                  onehot=onehot_track_rev,
-                                  to_embed=data_to_embed_rev,
-                                  **common_args)
-                             if (onehot_track_rev is not None) else None)
-        else:
-            embedding_fwd = self.gapped_kmer_embedding_func(
-                                  to_embed=data_to_embed_fwd,
-                                  **common_args)
-            embedding_rev = (self.gapped_kmer_embedding_func(
-                                  to_embed=data_to_embed_rev,
-                                  **common_args)
-                             if (onehot_track_rev is not None) else None)
+
+        embedding_fwd = gapped_kmer_embedding_func(
+                         filters=self.filters,
+                         biases=self.biases,
+                         onehottracks=onehot_track_fwd,
+                         toembedtracks=data_to_embed_fwd)
+        embedding_rev = gapped_kmer_embedding_func(
+                         filters=self.filters,
+                         biases=self.biases,
+                         onehottracks=onehot_track_rev,
+                         toembedtracks=data_to_embed_rev)
 
         print("embedding_fwd and embedding_rev prepared")
         print_memory_use()
