@@ -782,18 +782,27 @@ class CrossContinJaccardSingleRegionWithArgmax(object):
     def __call__(self, filters, thing_to_scan):
         assert len(thing_to_scan.shape)==2
         assert len(filters.shape)==3
-        len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
-        full_crossmetric = np.zeros((filters.shape[0],len_output))
-    
-        for idx in range(len_output):
-            snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
-            full_crossmetric[:,idx] =\
-                (np.sum(np.minimum(np.abs(snapshot[None,:,:]),
-                                   np.abs(filters[:,:,:]))*
-                        (np.sign(snapshot[None,:,:])
-                         *np.sign(filters[:,:,:])),axis=(1,2))/
-                 np.sum(np.maximum(np.abs(snapshot[None,:,:]),
-                                   np.abs(filters[:,:,:])),axis=(1,2)))
+        
+        strided_thing_to_scan = modiscoutil.rolling_window(
+            a=thing_to_scan.transpose(1,0),
+            window=filters.shape[1]) 
+
+        transp_filters = filters.transpose(0,2,1)
+        abs_filters = np.abs(transp_filters)
+        abs_stridedthingtoscan = np.abs(strided_thing_to_scan)
+
+        full_crossmetric = (np.sum(np.minimum(
+                                      abs_filters[:,:,None,:],
+                                      abs_stridedthingtoscan[None,:,:,:])*
+                                    (np.sign(transp_filters[:,:,None,:])
+                                     *np.sign(
+                                        strided_thing_to_scan[None,:,:,:])),
+                                   axis=(1,3))/
+                             np.sum(np.maximum(
+                                       abs_filters[:,:,None,:],
+                                       abs_stridedthingtoscan[None,:,:,:]),
+                                   axis=(1,3)))
+
         argmax_positions = np.argmax(full_crossmetric, axis=1)
         return np.array([full_crossmetric[np.arange(len(argmax_positions)),
                                           argmax_positions],

@@ -443,33 +443,14 @@ def runlouvain_average_runs(filename, n_runs,
         print("On idx",communities_idx,"of",len(communities_list))
         print_memory_use()
         sys.stdout.flush()
-        print("Preparing cluster_to_indices")
+        #get a binary co-occurrence matrix
+        start = time.time()
+        cooc_mat = communities[:,None]==communities[None,:]
+        print("Making binary cooc mat took",time.time()-start)
         print_memory_use()
         sys.stdout.flush()
         start = time.time()
-        cluster_to_indices = defaultdict(list)
-        #group indices by their cluster
-        for idx,cluster_val in enumerate(communities):
-            cluster_to_indices[cluster_val].append(idx) 
-        print("Cluster-to-indices took",time.time()-start)
-        print_memory_use()
-        sys.stdout.flush()
-        start = time.time()
-        csr_rows = []
-        csr_cols = []
-        csr_data = []
-        for cluster_val in cluster_to_indices:
-            indices_in_cluster = cluster_to_indices[cluster_val]
-            for (first_idx, second_idx) in itertools.product(
-                                            indices_in_cluster, repeat=2):
-                csr_rows.append(first_idx)
-                csr_cols.append(second_idx)
-                csr_data.append(1.0)
-        print("Prepared csr_rows, csr_cols, csr_data in ",time.time()-start)
-        print_memory_use()
-        sys.stdout.flush()
-        start = time.time()
-        csr_to_add = sp.csr_matrix((csr_data, (csr_rows, csr_cols)))
+        csr_to_add = sp.csr_matrix(cooc_mat).astype("float32")
         print("Prepared csr_to_add in ",time.time()-start)
         print_memory_use()
         sys.stdout.flush()

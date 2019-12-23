@@ -6,6 +6,7 @@ from . import util
 from collections import OrderedDict, defaultdict
 import itertools
 import sys
+import time
 
 
 class AbstractAggSeqletPostprocessor(object):
@@ -639,6 +640,7 @@ class DynamicThresholdSimilarPatternsCollapser(object):
 
             if (self.verbose):
                 print("Computing pattern to seqlet similarities")
+                patterntoseqletsimstart=time.time()
                 sys.stdout.flush()
             patterns_to_seqlets_sims = self.pattern_to_seqlet_sim_computer(
                                             seqlets=seqlets,
@@ -646,6 +648,8 @@ class DynamicThresholdSimilarPatternsCollapser(object):
             assert len(pattern_to_seqlets_sims)==len(seqlets)
             assert len(pattern_to_seqlets_sims[0])==len(patterns)
             if (self.verbose):
+                print("Computing pattern to seqlet sim took",
+                      time.time()-patterntoseqletsimstart,"s")
                 print("Computing pattern to pattern similarities")
                 sys.stdout.flush()
             patterns_to_patterns_aligner_sim =\
@@ -812,6 +816,7 @@ class DynamicDistanceSimilarPatternsCollapser(object):
 
             if (self.verbose):
                 print("Computing pattern to seqlet distances")
+                patterntoseqletsimstart=time.time()
                 sys.stdout.flush()
             patterns_to_seqlets_dist =\
                 self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
@@ -827,6 +832,8 @@ class DynamicDistanceSimilarPatternsCollapser(object):
                 in zip(desired_perplexities, patterns_to_seqlets_dist.T)])
 
             if (self.verbose):
+                print("Computing pattern to seqlet distances took",
+                      time.time()-patterntoseqletsimstart,"s")
                 print("Computing pattern to pattern distances")
                 sys.stdout.flush()
             patterns_to_patterns_dist =\
