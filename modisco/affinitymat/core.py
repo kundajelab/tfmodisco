@@ -544,8 +544,8 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
             print_memory_use()
             sys.stdout.flush()
 
-        #enforce symmetry
-        assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-6,\
+        #check for enforced symmetry
+        assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-3,\
                 np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))
 
         cp3_time = time.time()

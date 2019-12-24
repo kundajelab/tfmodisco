@@ -1,6 +1,10 @@
 Metadata-Version: 2.1
 Name: modisco
+<<<<<<< HEAD
 Version: 0.5.6.0
+=======
+Version: 0.5.5.4
+>>>>>>> master
 Summary: TF MOtif Discovery from Importance SCOres
 Home-page: https://github.com/kundajelab/tfmodisco
 License: UNKNOWN
