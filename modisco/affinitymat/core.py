@@ -10,6 +10,7 @@ import itertools
 import scipy.stats
 from scipy.sparse import coo_matrix
 from joblib import Parallel, delayed
+from tqdm import tqdm
 import gc
 
 
@@ -329,15 +330,18 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
 
         #assuming float64 for the affinity matrix, figure out the batch size
         # to use given the memory cap
-        batch_size = int(self.memory_cap_gb*(2^30)/(len(fwd_vecs)*8))
+        batch_size = int(self.memory_cap_gb*(2**30)/(len(fwd_vecs)*8))
         batch_size = min(max(1,batch_size),len(fwd_vecs))
+        if (self.verbose):
+            print("Batching in slices of size",batch_size)
+            sys.stdout.flush()
 
-        topk_cosine_sim_results = [top_k_fwdandrev_dot_prod(
-                                    fwd_vecs[i:i+batch_size],
-                                    rev_vecs,
-                                    fwd_vecs, self.n_neighbors+1)
-                                   for i in range(0,len(fwd_vecs),batch_size)]
-
+        topk_cosine_sim_results = []
+        for i in tqdm(range(0,len(fwd_vecs),batch_size)):
+            topk_cosine_sim_results.append(
+                top_k_fwdandrev_dot_prod(fwd_vecs[i:i+batch_size],
+                                         rev_vecs,
+                                         fwd_vecs, self.n_neighbors+1))
         neighbors = np.concatenate(
                      [x[0] for x in topk_cosine_sim_results], axis=0)
         sims = np.concatenate([x[1] for x in topk_cosine_sim_results], axis=0) 
