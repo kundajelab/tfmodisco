@@ -281,38 +281,40 @@ class AbstractAffinityMatrixFromOneD(object):
         raise NotImplementedError()
 
 
-#take the dot product of fwd_vec with
+#take the dot product of fwd_vecs with
 # fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
 # the top k
-def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
-    fwd_dot = np.dot(fwd_vecs, fwd_vec) 
+def top_k_fwdandrev_dot_prod(fwd_vecs_slice, rev_vecs, fwd_vecs, k):
     k = min(k, len(fwd_vecs))
+    fwd_dot = np.matmul(fwd_vecs_slice,fwd_vecs.T) 
     if (rev_vecs is not None):
-        rev_dot = np.dot(rev_vecs, fwd_vec)
-        dotprod = rev_dot
+        rev_dot = np.matmul(fwd_vecs_slice, rev_vecs.T)
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
 
     #get the top k indices
-    top_k_indices = np.argpartition(dotprod, -k)[-k:]
-    sims = dotprod[top_k_indices]
-    #sort by similarity
-    sorted_topk_sims, sorted_topk_indices =\
-        zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
+    top_k_indices = np.argpartition(dotprod, -k, axis=1)[:,-k:]
+    sims = np.take_along_axis(arr=dotprod, indices=top_k_indices, axis=1)
 
-    sorted_topk_sims = np.array(sorted_topk_sims)
-    sorted_topk_indices = np.array(sorted_topk_indices)
+    #sort by similarity
+    sims_argsort_result = np.argsort(sims, axis=-1)
+    sorted_topk_sims = np.take_along_axis(arr=sims,
+                                          indices=sims_argsort_result, axis=1)
+    sorted_topk_indices = np.take_along_axis(arr=top_k_indices,
+                                           indices=sims_argsort_result, axis=1)
     return (sorted_topk_indices, sorted_topk_sims)
 
 
 class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         AbstractSparseAffmatFromFwdAndRevOneDVecs):
 
-    def __init__(self, n_neighbors, verbose, nn_n_jobs):
+    def __init__(self, n_neighbors, verbose, nn_n_jobs,
+                       memory_cap_gb=2.0):
         self.n_neighbors = n_neighbors   
         self.nn_n_jobs = nn_n_jobs
         self.verbose = verbose
+        self.memory_cap_gb = memory_cap_gb
 
     def __call__(self, fwd_vecs, rev_vecs):
 
@@ -324,16 +326,21 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
                         rev_vecs/np.linalg.norm(rev_vecs, axis=1)[:,None],
                         copy=False)
 
-        topk_cosine_sim_results = (
-            Parallel(self.nn_n_jobs, verbose=self.verbose)(
-                 delayed(top_k_fwdandrev_dot_prod)(
-                    fwd_vecs[i],
-                    rev_vecs if rev_vecs is not None else None,
-                    fwd_vecs, self.n_neighbors+1)
-                 for i in range(len(fwd_vecs)) ))
 
-        neighbors = np.array([x[0] for x in topk_cosine_sim_results])
-        sims = np.array([x[1] for x in topk_cosine_sim_results]) 
+        #assuming float64 for the affinity matrix, figure out the batch size
+        # to use given the memory cap
+        batch_size = int(self.memory_cap_gb*(2^30)/(len(fwd_vecs)*8))
+        batch_size = min(max(1,batch_size),len(fwd_vecs))
+
+        topk_cosine_sim_results = [top_k_fwdandrev_dot_prod(
+                                    fwd_vecs[i:i+batch_size],
+                                    rev_vecs,
+                                    fwd_vecs, self.n_neighbors+1)
+                                   for i in range(0,len(fwd_vecs),batch_size)]
+
+        neighbors = np.concatenate(
+                     [x[0] for x in topk_cosine_sim_results], axis=0)
+        sims = np.concatenate([x[1] for x in topk_cosine_sim_results], axis=0) 
 
         return sims, neighbors 
 
