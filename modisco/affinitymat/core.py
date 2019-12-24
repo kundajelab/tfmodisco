@@ -104,30 +104,33 @@ class AbstractSeqletsToOnedEmbedder(object):
 #Need to define this locally for numba; is defined in modisco.util
 #rolling_window is from this blog post by Erik Rigtorp:
 # https://rigtorp.se/2011/01/01/rolling-statistics-numpy.html
-@njit
+#@njit
 def local_rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 
-@njit() 
+#@njit() 
 def core_gapped_kmer_embedding_func(filters, biases,
-                                    strided_onehot, strided_to_embed):
-    onehot_match = ((np.sum(np.sum(np.expand_dims(strided_onehot,0)
-                                     *np.expand_dims(filters,1),
-                              axis=2),axis=2) 
-                           + np.expand_dims(biases,1)) > 0.0)*1.0
-    toembed_scan = np.sum(np.sum(np.expand_dims(strided_to_embed,0)
-                            *np.expand_dims(filters,1),
-                            axis=2),axis=2)
-    return np.sum(toembed_scan*onehot_match,axis=1)
+                                    strided_onehots, strided_to_embeds):
+    onehot_match = ((np.sum(np.sum(
+                        np.expand_dims(strided_onehots,1)
+                        *np.expand_dims(np.expand_dims(filters,1),0),
+                        axis=3),axis=3) 
+                   + np.expand_dims(np.expand_dims(biases,1),0)) > 0.0)*1.0
+    toembed_scan = np.sum(np.sum(np.expand_dims(strided_to_embeds,1)
+                            *np.expand_dims(np.expand_dims(filters,1),0),
+                            axis=3),axis=3)
+    return np.sum(toembed_scan*onehot_match,axis=2)
 
 
+#njit does not seem to be faster
 #get an odd error when I set parallel=True, seems an issue w/ broadcast:
 # https://github.com/numba/numba/issues/3729
-@njit(parallel=True) 
-def gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
+#@njit(parallel=True) 
+def gapped_kmer_embedding_func(filters, biases,
+                               onehottracks, toembedtracks, batch_size):
 
     strided_onehottracks = local_rolling_window(
                             a=onehottracks.transpose(0,2,1),
@@ -136,13 +139,14 @@ def gapped_kmer_embedding_func(filters, biases, onehottracks, toembedtracks):
                              a=toembedtracks.transpose(0,2,1),
                              window=filters.shape[1]).transpose(0,2,3,1)
     to_return = np.zeros((len(onehottracks), len(filters))) 
-    for i in prange(len(onehottracks)):
-        onehot_i = strided_onehottracks[i]
-        toembed_i = strided_toembedtracks[i]
-        to_return[i,:] = core_gapped_kmer_embedding_func(
-                            filters=filters, biases=biases,
-                            strided_onehot=onehot_i,
-                            strided_to_embed=toembed_i)
+    #for i in prange(len(onehottracks)):
+    for i in range(0,len(onehottracks),batch_size):
+        onehots_i = strided_onehottracks[i:i+batch_size]
+        toembeds_i = strided_toembedtracks[i:i+batch_size]
+        to_return[i:i+batch_size] = core_gapped_kmer_embedding_func(
+                                        filters=filters, biases=biases,
+                                        strided_onehots=onehots_i,
+                                        strided_to_embeds=toembeds_i)
     return to_return
 
 
@@ -284,12 +288,14 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                          filters=self.filters,
                          biases=self.biases,
                          onehottracks=onehot_track_fwd,
-                         toembedtracks=data_to_embed_fwd)
+                         toembedtracks=data_to_embed_fwd,
+                         batch_size=self.batch_size)
         embedding_rev = gapped_kmer_embedding_func(
                          filters=self.filters,
                          biases=self.biases,
                          onehottracks=onehot_track_rev,
-                         toembedtracks=data_to_embed_rev)
+                         toembedtracks=data_to_embed_rev,
+                         batch_size=self.batch_size)
 
         print("embedding_fwd and embedding_rev prepared")
         print_memory_use()
@@ -328,22 +334,47 @@ class AbstractAffinityMatrixFromOneD(object):
         raise NotImplementedError()
 
 
+##take the dot product of fwd_vec with
+## fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
+## the top k
+#@njit(parallel=True)
+#def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
+#    fwd_dot = np.dot(fwd_vecs, fwd_vec) 
+#    if (rev_vecs is not None):
+#        rev_dot = np.dot(rev_vecs, fwd_vec)
+#        dotprod = rev_dot
+#        dotprod = np.maximum(fwd_dot, rev_dot)
+#    else:
+#        dotprod = fwd_dot
+#    #argpartition is not supported by numba, so we use argsort sort
+#    sorted_indices = np.argsort(dotprod)[::-1]
+#    sorted_topk_indices = sorted_indices[:k]
+#    sorted_topk_sims = dotprod[sorted_topk_indices]
+#    return (sorted_topk_indices, sorted_topk_sims)
+
+
 #take the dot product of fwd_vec with
 # fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
 # the top k
-@njit(parallel=True)
 def top_k_fwdandrev_dot_prod(fwd_vec, rev_vecs, fwd_vecs, k):
     fwd_dot = np.dot(fwd_vecs, fwd_vec) 
+    k = min(k, len(fwd_vecs))
     if (rev_vecs is not None):
         rev_dot = np.dot(rev_vecs, fwd_vec)
         dotprod = rev_dot
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
-    #argpartition is not supported by numba, so we use argsort sort
-    sorted_indices = np.argsort(dotprod)[::-1]
-    sorted_topk_indices = sorted_indices[:k]
-    sorted_topk_sims = dotprod[sorted_topk_indices]
+
+    #get the top k indices
+    top_k_indices = np.argpartition(dotprod, -k)[-k:]
+    sims = dotprod[top_k_indices]
+    #sort by similarity
+    sorted_topk_sims, sorted_topk_indices =\
+        zip(*sorted(zip(sims, top_k_indices), key=lambda x: -x[0]))
+
+    sorted_topk_sims = np.array(sorted_topk_sims)
+    sorted_topk_indices = np.array(sorted_topk_indices)
     return (sorted_topk_indices, sorted_topk_sims)
 
 
@@ -380,19 +411,15 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
                         rev_vecs/np.linalg.norm(rev_vecs, axis=1)[:,None],
                         copy=False) if rev_vecs is not None else None)
 
-        (sims, neighbors) = get_topk_matdotprod_results(
-                                fwd_vecs=fwd_vecs,
-                                rev_vecs=rev_vecs,
-                                k=self.n_neighbors+1)    
-        #topk_cosine_sim_results = (
-        #    Parallel(self.nn_n_jobs, verbose=self.verbose)(
-        #         delayed(top_k_fwdandrev_dot_prod)(
-        #            fwd_vecs[i],
-        #            rev_vecs if rev_vecs is not None else None,
-        #            fwd_vecs, self.n_neighbors+1)
-        #         for i in range(len(fwd_vecs)) ))
-        #neighbors = np.array([x[0] for x in topk_cosine_sim_results])
-        #sims = np.array([x[1] for x in topk_cosine_sim_results]) 
+        topk_cosine_sim_results = (
+            Parallel(self.nn_n_jobs, verbose=self.verbose)(
+                 delayed(top_k_fwdandrev_dot_prod)(
+                    fwd_vecs[i],
+                    rev_vecs,
+                    fwd_vecs, self.n_neighbors+1)
+                 for i in range(len(fwd_vecs)) ))
+        neighbors = np.array([x[0] for x in topk_cosine_sim_results])
+        sims = np.array([x[1] for x in topk_cosine_sim_results]) 
         return sims, neighbors 
 
 
