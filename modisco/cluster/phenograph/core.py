@@ -16,13 +16,7 @@ from collections import defaultdict, Counter
 from joblib import Parallel, delayed
 import itertools
 from tqdm import tqdm
-
-
-def print_memory_use():
-    import os
-    import psutil
-    process = psutil.Process(os.getpid())
-    print("MEMORY",process.memory_info().rss/1000000000)
+from ...util import print_memory_use
 
 
 def find_neighbors(data, k=30, metric='minkowski', p=2, method='brute', n_jobs=-1):

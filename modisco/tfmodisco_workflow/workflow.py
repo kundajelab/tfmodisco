@@ -12,13 +12,7 @@ from .. import coordproducers
 from .. import metaclusterers
 from .. import util
 from .. import value_provider
-
-
-def print_memory_use():
-    import os
-    import psutil
-    process = psutil.Process(os.getpid())
-    print("MEMORY",process.memory_info().rss/1000000000)
+from ..util import print_memory_use
 
 
 class TfModiscoResults(object):

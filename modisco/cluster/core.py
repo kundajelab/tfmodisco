@@ -5,13 +5,7 @@ import numpy as np
 import time
 import sys
 from scipy import sparse as sp
-
-
-def print_memory_use():
-    import os
-    import psutil
-    process = psutil.Process(os.getpid())
-    print("MEMORY",process.memory_info().rss/1000000000)
+from ..util import print_memory_use
 
 
 class ClusterResults(object):

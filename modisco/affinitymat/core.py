@@ -2,6 +2,7 @@ from __future__ import division, print_function, absolute_import
 from .. import backend as B
 import numpy as np
 from .. import util as modiscoutil
+from ..util import print_memory_use
 from .. import core as modiscocore
 from . import transformers
 import sys
@@ -12,13 +13,6 @@ from scipy.sparse import coo_matrix
 from joblib import Parallel, delayed
 from tqdm import tqdm
 import gc
-
-
-def print_memory_use():
-    import os
-    import psutil
-    process = psutil.Process(os.getpid())
-    print("MEMORY",process.memory_info().rss/1000000000)
 
 
 class AbstractTrackTransformer(object):
@@ -311,7 +305,7 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         AbstractSparseAffmatFromFwdAndRevOneDVecs):
 
     def __init__(self, n_neighbors, verbose, nn_n_jobs,
-                       memory_cap_gb=2.0):
+                       memory_cap_gb=1.0):
         self.n_neighbors = n_neighbors   
         self.nn_n_jobs = nn_n_jobs
         self.verbose = verbose
@@ -330,7 +324,9 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
 
         #assuming float64 for the affinity matrix, figure out the batch size
         # to use given the memory cap
-        batch_size = int(self.memory_cap_gb*(2**30)/(len(fwd_vecs)*8))
+        memory_cap_gb = (self.memory_cap_gb if rev_vecs
+                         is None else self.memory_cap_gb/2.0)
+        batch_size = int(memory_cap_gb*(2**30)/(len(fwd_vecs)*8))
         batch_size = min(max(1,batch_size),len(fwd_vecs))
         if (self.verbose):
             print("Batching in slices of size",batch_size)

@@ -6,6 +6,15 @@ import numpy as np
 import h5py
 import traceback
 from sklearn.neighbors.kde import KernelDensity
+from datetime import datetime
+
+
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    now = datetime.now()
+    print("MEMORY",process.memory_info().rss/(2**30),now)
 
 
 def load_patterns(grp, track_set):
