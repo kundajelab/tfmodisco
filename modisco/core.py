@@ -15,6 +15,9 @@ class Coordinate(object):
         self.end = end
         self.is_revcomp = is_revcomp
 
+    def __len__(self):
+        return self.end-self.start
+
     def get_revcomp(self):
         return SeqletCoordinates(
                 example_idx=self.example_idx,
@@ -99,6 +102,9 @@ class Seqlet(object):
     def __init__(self, coor):
         self.coor = coor
         self.trackname_to_seqletdata = OrderedDict()
+
+    def __len__(self):
+        return len(self.coor)
 
     def set_seqlet_data(self, data_track, left_flank, right_flank):
         self[data_track.name] = data_track.get_seqlet_data(
