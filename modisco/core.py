@@ -36,6 +36,10 @@ class SeqletData(object):
         self._fwd = fwd
         self._rev = rev
 
+    @property
+    def hasrev(self):
+        return self._rev is not None
+
     @property 
     def corefwd(self):
         return self.get_core_with_flank(left=0, right=0, is_revcomp=False)
@@ -88,9 +92,10 @@ class DataTrack(object):
             right_flank=right_flank,
             fwd=self.fwd_tracks[coor.example_idx][coor.start-left_flank:
                                                   coor.end+right_flank],
-            rev=self.rev_tracks[coor.example_idx][
+            rev=(self.rev_tracks[coor.example_idx][
              (len(self.rev_tracks[coor.example_idx])-(coor.end+right_flank)):
-             (len(self.rev_tracks[coor.example_idx])-(coor.start-left_flank))])
+             (len(self.rev_tracks[coor.example_idx])-(coor.start-left_flank))]
+                 if self.rev_tracks is not None else None))
 
         if coor.is_revcomp:
             seqlet_data = seqlet_data.get_revcomp()
