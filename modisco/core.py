@@ -59,13 +59,34 @@ class SeqletData(object):
             return self._fwd[(self.left_flank-left):
                              (self.left_flank+self.corelength+right)] 
         else:
-            return self._rev[(self.right_flank-right):
-                             (self.right_flank+self.corelength+left)] 
+            return self._rev[(self.right_flank-left):
+                             (self.right_flank+self.corelength+right)] 
 
     def get_revcomp(self):
         return SeqletTrack(left_flank=self.right_flank,
                            right_flank=self.left_flank,
                            fwd=self._rev, rev=self._fwd)
+
+
+class DataTrackSet(object):
+
+    def __init__(self, data_tracks):
+        self.data_tracks = data_tracks
+
+    def create_seqlets(self, coords, flanks):
+        seqlets = []
+        if (hasattr(flanks, '__iter__')==False):
+            flanks = [flanks for x in coords]
+        for coord,flank in zip(coords, flanks):
+            seqlets.append(self.create_seqlet(coord=coord, flank=flank))
+        return seqlets
+
+    def create_seqlet(self, coord, flank):
+        seqlet = Seqlet(coor=coord) 
+        for data_track in self.data_tracks:
+            seqlet.set_seqlet_data(data_track=data_track,
+                                   left_flank=flank, right_flank=flank)
+        return seqlet
 
 
 class DataTrack(object):

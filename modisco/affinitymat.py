@@ -1,10 +1,12 @@
 from __future__ import division, print_function
 from collections import namedtuple
+import numpy as np
+from joblib import Parallel, delayed
 
 
 #Seqlet data for imputation
 _SeqlDatForImput = namedtuple("_SeqlDatForImput",
-                              [corelen, flanklen, onehot, hyp])
+                              ["corelen", "flanklen", "onehot", "hyp"])
 
 
 #fake constructor for tuple
@@ -16,128 +18,159 @@ def SeqlDatForImput(corelen, onehot, hyp):
                             onehot=onehot, hyp=hyp)
 
 
+def compute_sim_on_pairs(oneseql_corelen, oneseql_onehot, oneseql_hyp,
+                         seqlset_corelen, seqlset_onehot, seqlset_hyp,
+                         min_overlap_frac, pair_sim_metric):
+
+    assert oneseql_onehot.shape==oneseql_hyp.shape
+    assert len(oneseql_onehot.shape)==2
+    assert seqlset_onehot.shape==seqlset_hyp.shape
+    assert len(seqlset_onehot.shape)==3
+
+    assert (oneseql_onehot.shape[0]-oneseql_corelen)%2==0
+    assert (seqlset_onehot.shape[1]-seqlset_corelen)%2==0
+    oneseql_flanklen = int((oneseql_onehot.shape[0]-oneseql_corelen)/2)
+    seqlset_flanklen = int((seqlset_onehot.shape[1]-oneseql_corelen)/2)
+
+    min_overlap = int(np.ceil(min(oneseql_corelen, seqlset_corelen)
+                              *min_overlap_frac))
+
+    oneseql_actual = oneseql_onehot*oneseql_hyp
+    seqlset_actual = seqlset_onehot*seqlset_hyp
+    
+    #iterate over all possible offsets of oneseql relative to seqlset
+    startoffset = -(oneseql_corelen-min_overlap)
+    endoffset = (seqlset_corelen-min_overlap)
+    possible_offsets = np.array(range(startoffset, endoffset+1))
+    #init the array that will store the similarity results
+    sim_results = np.zeros((seqlset_onehot.shape[0], len(possible_offsets)))
+    for offsetidx,offset in enumerate(possible_offsets):
+        #compute the padding needed for the offset seqlets to be comparable
+        oneseql_leftpad = max(offset, 0)  
+        oneseql_rightpad = max(seqlset_corelen-(oneseql_corelen+offset),0) 
+        #based on the padding, figure out how we would need to slice into
+        # the available numpy arrays
+        oneseql_slicestart = oneseql_flanklen-oneseql_leftpad
+        oneseql_sliceend = oneseql_flanklen+oneseql_corelen+oneseql_rightpad
+
+        #do the same for seqlset
+        seqlset_leftpad = max(-offset, 0) 
+        seqlset_rightpad = max((oneseql_corelen+offset)-seqlset_corelen, 0)
+        seqlset_slicestart = seqlset_flanklen-seqlset_leftpad
+        seqlset_slicesend = seqlset_flanklen+seqlset_corelen+seqlset_rightpad
+
+        #slice to get the underlying data
+        oneseqlactual_slice = (oneseql_actual[oneseql_slicestart:
+                                              oneseql_sliceend])[None,:,:]
+        oneseqlonehot_slice = oneseql_onehot[oneseql_slicestart:
+                                             oneseql_sliceend] 
+        oneseqlhyp_slice = oneseql_hyp[oneseql_slicestart:oneseql_sliceend]
+
+        seqlsetactual_slice = seqlset_actual[:,seqlset_slicestart:
+                                               seqlset_slicesend]
+        seqlsetonehot_slice = seqlset_onehot[:,seqlset_slicestart:
+                                               seqlset_slicesend]
+        seqlsethyp_slice = seqlset_hyp[:,seqlset_slicestart:seqlset_slicesend]
+
+        oneseql_imputed = oneseqlhyp_slice[None,:,:]*seqlsetonehot_slice
+        seqlset_imputed = seqlsethyp_slice*oneseqlonehot_slice[None,:,:]
+       
+        sim_results[:,offsetidx] = (
+            0.5*pair_sim_metric(oneseqlactual_slice, seqlset_imputed)
+          + 0.5*pair_sim_metric(oneseql_imputed, seqlsetactual_slice)) 
+    argmax = np.argmax(sim_results, axis=-1)
+    print(sim_results.shape)
+    print(argmax.shape)
+    print(sim_results[np.arange(len(argmax)),argmax].shape)
+    print(np.take_along_axis(sim_results, argmax, axis=1).shape)
+    assert False
+    return np.take_along_axis(sim_results, argmax, axis=1), possible_offsets[argmax]
+
+
 class SequenceAffmatComputer_Impute(object):
 
-    def __init__(self, min_overlap_frac=0.67, metric):
+    def __init__(self, metric, n_jobs, min_overlap_frac):
         self.min_overlap_frac = min_overlap_frac 
-        self.imputed_simcomputer = imputed_simcomputer
+        self.pair_sim_metric = metric
+        self.n_jobs = n_jobs
 
     def __call__(self, seqlets, onehot_trackname, hyp_trackname):
 
         hasrev = seqlets[0][onehot_trackname].hasrev
 
+        seqlet_corelengths = [len(x) for x in seqlets]
+        #for now, will just deal with case where all seqlets are of equal len
+        assert len(set(seqlet_corelengths))==1; the_corelen=seqlet_corelengths[0]
+
         #max_seqlet_len will return the length of the longest seqlet core
-        max_seqlet_len = max(len(x) for x in seqlets)
- 
+        max_seqlet_len = max(seqlet_corelengths)
         #for each seqlet, figure out the maximum size of the flank needed
         # on each size. This is determined by the length of the longest
         # seqlet that each seqlet could be compared against
-        flank_sizes = [max_seqlet_len-
-                       (len(seqlet)-int(len(seqlet)*self.min_overlap_frac))
-                       for seqlet in seqlets] 
+        flank_sizes = [max_seqlet_len-int(corelen*self.min_overlap_frac)
+                       for corelen in seqlet_corelengths] 
 
-        allfwd_onehot_seqletdata = np.array(
+        allfwd_onehot = (np.array( #I do the >0 at end to binarize
                             [seqlet[onehot_trackname].get_core_with_flank(
                              left=flank, right=flank, is_revcomp=False)
-                             for seqlet,flank in zip(seqlets,flank_sizes)]) 
-        allfwd_hyp_seqletdata = np.array(
+                             for seqlet,flank in zip(seqlets,flank_sizes)])>0) 
+        allfwd_hyp = np.array(
                             [seqlet[hyp_trackname].get_core_with_flank(
                              left=flank, right=flank, is_revcomp=False)
                              for seqlet,flank in zip(seqlets,flank_sizes)]) 
         if (hasrev):
-            allrev_onehot_seqletdata = allfwd_onehot_seqletdata[:,::-1,::-1]
-            allrev_hyp_seqletdata = allfwd_hyp_seqletdata[:,::-1,::-1]
+            allrev_onehot = allfwd_onehot[:,::-1,::-1]
+            allrev_hyp = allfwd_hyp[:,::-1,::-1]
 
-        assert allfwd_onehot_seqletdata.shape==allfwd_hyp_seqletdata.shape
-        assert all([len(single_onehot_seqletdata)==(len(seqlet)+2*flanksize)
-                    for (seqlet, single_onehot_seqletdata, flanksize) in
-                    zip(seqlets, allfwd_onehot_seqletdata, flank_sizes)])
+        assert allfwd_onehot.shape==allfwd_hyp.shape
+        assert all([len(single_onehot)==(len(seqlet)+2*flanksize)
+                    for (seqlet, single_onehot, flanksize) in
+                    zip(seqlets, allfwd_onehot, flank_sizes)])
 
-        affmat = np.zeros(len(seqlets), len(seqlets))
-        for i in range(len(seqlets)):
-            for j in range(len(seqlets)):
-                if (j >= i):
-                    fwdseqldat1 = _SeqlDatForImput( 
-                        coreseqletlen=len(seqlet[i]),
-                        onehot=allfwd_onehot_seqletdata[i],
-                        hyp=allfwd_hyp_seqletdata[i])
-                    fwdseqldat2 = _SeqlDatForImput( 
-                        coreseqletlen=len(seqlet[j]),
-                        onehot=allfwd_onehot_seqletdata[j],
-                        hyp=allfwd_hyp_seqletdata[j])
-                    fwdsim = self.compute_sim_on_pair(
-                            seqldat1=fwdseqldat1, seqldat2=fwdseqldat2)
-                    if (hasrev):
-                        revseqldat1 = _SeqlDatForImput( 
-                            coreseqletlen=len(seqlet[i]),
-                            onehot=allrev_onehot_seqletdata[i],
-                            hyp=allrev_hyp_seqletdata[i])
-                        revsim = self.compute_sim_on_pair(
-                                  seqldat1=revseqldat1, seqldat2=fwdseqldat2)
-                        sim = max(fwdsim, revsim)
-                    else:
-                        sim = fwdsim
-                    affmat[i,j] = sim
-                    affmat[j,i] = sim
+        indices = [(i,j) for i in range(len(seqlets))
+                         for j in range(len(seqlets))]
+        fwdresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
+                                delayed(compute_sim_on_pairs)(
+                                    oneseql_corelen=the_corelen,
+                                    oneseql_onehot=allfwd_onehot[i],
+                                    oneseql_hyp=allfwd_hyp[i],
+                                    seqlset_corelen=the_corelen,
+                                    seqlset_onehot=allfwd_onehot,
+                                    seqlset_hyp=allfwd_hyp,
+                                    min_overlap_frac=self.min_overlap_frac,
+                                    pair_sim_metric=self.pair_sim_metric)
+                                for i in range(len(seqlets)))
+        affmat = np.array([x[0] for x in fwdresults])
+        print(fwdresults[0][0].shape)
+        print(affmat.shape)
+        assert False
+        assert np.max(np.abs(affmat.T-affmat)==0)
+        offsets = np.array([x[1] for x in fwdresults])
+        del fwdresults
+        import gc
+        gc.collect()
 
-        return affmat 
+        if (hasrev):
+            revresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
+                                delayed(compute_sim_on_pairs)(
+                                    oneseql_corelen=the_corelen,
+                                    oneseql_onehot=allfwd_onehot[i],
+                                    oneseql_hyp=allfwd_hyp[i],
+                                    seqlset_corelen=the_corelen,
+                                    seqlset_onehot=allrev_onehot,
+                                    seqlset_hyp=allrev_hyp,
+                                    min_overlap_frac=self.min_overlap_frac,
+                                    pair_sim_metric=self.pair_sim_metric)
+                                for i in range(len(seqlets)))
+            revaffmat = np.array([x[0] for x in revresults])
+            revoffsets = np.array([x[1] for x in revresults])
+            assert np.max(np.abs(revaffmat.T-revaffmat)==0)
+            isfwdmat = affmat > revaffmat
+            affmat = isfwdmat*affmat + (isfwdmat==False)*revaffmat
+            offsets = isfwdmat*offsets + (isfwdmat==False)*revoffsets
+            del revresults
+            import gc
+            gc.collect()
 
-    def compute_sim_on_pair(self, seqldat1, seqldat2):
+        return affmat, offsets, isfwdmat
 
-        if (seqldat1.coreseqletlen <= seqldat2.coreseqletlen):
-            shortr_seqldat = seqldat1 
-            longer_seqldat = seqldat2
-        else:
-            shortr_seqldat = seqldat2 
-            longer_seqldat = seqldat1
-        assert (shortr_seqldat.coreseqletlen <= longer_seqldat.coreseqletlen)
-
-        shortrcorelen = shortr_seqldat.coreseqletlen 
-        longercorelen = longer_seqldat.coreseqletlen
-        shortrflanklen = shortr_seqldat.flanklen
-        longerflanklen = longer_seqldat.flanklen
-        shortronehot, shortrhyp = shortr_seqldat.onehot, shortr_seqldat.hyp
-        longeronehot, longerhyp = longer_seqldat.onehot, longer_seqldat.hyp
-
-        shortractual = shortronehot*shortrhyp
-        longeractual = longeronehot*longerhyp
-
-        shortrcorelen = len(shortronehot)-2*shortrflanklen 
-        longercorelen = len(longeronehot)-2*longerflanklen
-        min_overlap = int(shortrcorelen*self.min_overlap_frac)
-
-        #iterate over all possible offsets of
-        # shortr's core relative to longerdata
-        leftoffset = -(shortrcorelen-min_overlap) 
-        rightoffset = longercorelen-min_overlap
-
-        possible_offsets = list(range(leftoffset, rightoffset+1))
-        sim_results = []
-        for offset in possible_offsets:
-            shortr_leftflank = max(offset,0) 
-            shortr_rightflank = max(longercorelen-(offset+shortrcorelen),0)
-
-            shortr_slicestart = shortrflanklen-shortr_leftflank
-            shortr_sliceend = shortr_slicestart+shortrcorelen+shortr_rightflank
-
-            longer_leftflank = max(-offset,0)
-            longer_rightflank = max((offset+shortrcorelen)-longercorelen,0)
-            longer_slicestart = longerflanklen-longer_leftflank
-            longer_sliceend = longer_slicestart+longercorelen+longer_rightflank
-
-            shortractual_slice = shortractual[shortr_slicestart:shortr_sliceend] 
-            shortronehot_slice = shortronehot[shortr_slicestart:shortr_sliceend] 
-            shortrhyp_slice = shortrhyp[shortr_slicestart:shortr_sliceend] 
-            
-            longeractual_slice = longeractual[longer_slicestart:longer_sliceend] 
-            longeronehot_slice = longeronehot[longer_slicestart:longer_sliceend] 
-            longerhyp_slice = longerhyp[longer_slicestart:longer_sliceend] 
-
-            shortr_imputed = shortrhyp_slice*longeronehot_slice
-            longer_imputed = longerhyp_slice*shortronehot_slice
-
-            sim_results.append(
-                 0.5*self.sim_metric(shortractual_slice, longer_imputed),
-               + 0.5*self.sim_metric(shortr_imputed, longeractual_slice))
-
-        return max(sim_results)

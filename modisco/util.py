@@ -336,11 +336,13 @@ def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_p
 
 
 def l1norm_contin_jaccard_sim(arr1, arr2):
+    assert len(arr1.shape)==3, arr1.shape
+    assert arr1.shape[1:]==arr2.shape[1:], (arr1.shape, arr2.shape)
+    absarr1 = np.abs(arr1) 
+    absarr1 = absarr1/np.sum(absarr1, axis=(1,2))[:,None,None] #l1 norm
+    absarr2 = np.abs(arr2)
+    absarr2 = absarr2/np.sum(absarr2, axis=(1,2))[:,None,None] #l1 norm
     signarr1 = np.sign(arr1)
     signarr2 = np.sign(arr2)
-    absarr1 = np.abs(arr1) 
-    absarr1 = absarr1/np.sum(absarr1) #l1 norm
-    absarr2 = np.abs(arr2)
-    absarr2 = absarr2/np.sum(absarr2) #l1 norm
-    return (np.sum(np.minimum(absarr1,absarr2)*signarr1*signarr2)/
-            np.sum(np.maximum(absarr1, absarr2)))
+    return (np.sum(np.minimum(absarr1,absarr2)*signarr1*signarr2, axis=(1,2))/
+            np.sum(np.maximum(absarr1, absarr2), axis=(1,2)))
