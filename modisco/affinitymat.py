@@ -79,12 +79,7 @@ def compute_sim_on_pairs(oneseql_corelen, oneseql_onehot, oneseql_hyp,
             0.5*pair_sim_metric(oneseqlactual_slice, seqlset_imputed)
           + 0.5*pair_sim_metric(oneseql_imputed, seqlsetactual_slice)) 
     argmax = np.argmax(sim_results, axis=-1)
-    print(sim_results.shape)
-    print(argmax.shape)
-    print(sim_results[np.arange(len(argmax)),argmax].shape)
-    print(np.take_along_axis(sim_results, argmax, axis=1).shape)
-    assert False
-    return np.take_along_axis(sim_results, argmax, axis=1), possible_offsets[argmax]
+    return sim_results[np.arange(len(argmax)),argmax], possible_offsets[argmax]
 
 
 class SequenceAffmatComputer_Impute(object):
@@ -141,9 +136,6 @@ class SequenceAffmatComputer_Impute(object):
                                     pair_sim_metric=self.pair_sim_metric)
                                 for i in range(len(seqlets)))
         affmat = np.array([x[0] for x in fwdresults])
-        print(fwdresults[0][0].shape)
-        print(affmat.shape)
-        assert False
         assert np.max(np.abs(affmat.T-affmat)==0)
         offsets = np.array([x[1] for x in fwdresults])
         del fwdresults
