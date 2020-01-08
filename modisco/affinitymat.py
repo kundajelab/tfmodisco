@@ -146,11 +146,11 @@ class SequenceAffmatComputer_Impute(object):
             revresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
                                 delayed(compute_sim_on_pairs)(
                                     oneseql_corelen=the_corelen,
-                                    oneseql_onehot=allfwd_onehot[i],
-                                    oneseql_hyp=allfwd_hyp[i],
+                                    oneseql_onehot=allrev_onehot[i],
+                                    oneseql_hyp=allrev_hyp[i],
                                     seqlset_corelen=the_corelen,
-                                    seqlset_onehot=allrev_onehot,
-                                    seqlset_hyp=allrev_hyp,
+                                    seqlset_onehot=allfwd_onehot,
+                                    seqlset_hyp=allfwd_hyp,
                                     min_overlap_frac=self.min_overlap_frac,
                                     pair_sim_metric=self.pair_sim_metric)
                                 for i in range(len(seqlets)))

@@ -346,3 +346,17 @@ def l1norm_contin_jaccard_sim(arr1, arr2):
     signarr2 = np.sign(arr2)
     return (np.sum(np.minimum(absarr1,absarr2)*signarr1*signarr2, axis=(1,2))/
             np.sum(np.maximum(absarr1, absarr2), axis=(1,2)))
+
+
+def facility_locator(distmat):
+    exemplars = [] 
+    current_bestrep = np.inf*np.ones(distmat.shape[0])
+    for i in range(len(distmat)):
+        candidate_newbestrep = np.minimum(distmat, current_bestrep[None,:])  
+        candidate_objective = np.sum(candidate_newbestrep, axis=-1) 
+        next_best_exemplar = np.argmin(candidate_objective) 
+        exemplars.append(next_best_exemplar)
+        current_bestrep = candidate_newbestrep[next_best_exemplar]
+    assert np.sum(current_bestrep)==0 #sanity check when all exemplars in
+    return exemplars
+
