@@ -170,7 +170,7 @@ class AggregatedSeqlet(object):
 
         for seqlet,offset in zip(seqlets, offsets):
             position_counts[left_span+offset:
-                            left_span+offset+len(seqlet)] = 1.0 
+                            left_span+offset+len(seqlet)] += 1.0 
             for trackname in track_names:
                 trackname_to_tracksumfwd[trackname][left_span+offset:
                     left_span+offset+len(seqlet)] += seqlet[trackname].corefwd

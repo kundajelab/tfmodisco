@@ -2,6 +2,15 @@ from __future__ import division, print_function
 from collections import namedtuple
 import numpy as np
 from joblib import Parallel, delayed
+import sklearn
+from sklearn.neighbors import NearestNeighbors
+import time
+import scipy
+from scipy.sparse import csr_matrix
+import leidenalg
+from . import util as modiscoutil
+from tqdm.notebook import trange, tqdm
+import sys
 
 
 #Seqlet data for imputation
@@ -166,3 +175,116 @@ class SequenceAffmatComputer_Impute(object):
 
         return affmat, offsets, isfwdmat
 
+
+def tsne_density_adaptation(dist_mat, perplexity, max_neighbors, verbose=True):
+    n_samples = dist_mat.shape[0]
+    #copied from https://github.com/scikit-learn/scikit-learn/blob/45dc891c96eebdb3b81bf14c2737d8f6540fabfe/sklearn/manifold/t_sne.py
+
+    # Compute the number of nearest neighbors to find.
+    # LvdM uses 3 * perplexity as the number of neighbors.
+    #But i will have it be custom
+    k = min(n_samples - 1, max_neighbors+1)
+    # In the event that we have very small # of points
+    # set the neighbors to n - 1.
+    #k = min(n_samples - 1, int(3. * perplexity + 1))
+
+    if verbose:
+        print("[t-SNE] Computing {} nearest neighbors...".format(k))
+
+    # Find the nearest neighbors for every point
+    knn = NearestNeighbors(algorithm='brute', n_neighbors=k,
+                           metric='precomputed')
+    t0 = time.time()
+    knn.fit(dist_mat)
+    duration = time.time() - t0
+    if verbose:
+        print("[t-SNE] Indexed {} samples in {:.3f}s...".format(
+            n_samples, duration))
+
+    t0 = time.time()
+    distances_nn, neighbors_nn = knn.kneighbors(
+        None, n_neighbors=k)
+    duration = time.time() - t0
+    if verbose:
+        print("[t-SNE] Computed neighbors for {} samples in {:.3f}s..."
+              .format(n_samples, duration))
+
+    # Free the memory
+    del knn
+
+    t0 = time.time()
+    # Compute conditional probabilities such that they approximately match
+    # the desired perplexity
+    n_samples, k = neighbors_nn.shape
+    distances = distances_nn.astype(np.float32, copy=False)
+    neighbors = neighbors_nn.astype(np.int64, copy=False)
+    conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+        distances, neighbors, perplexity, verbose)
+    #for some reason, likely a sklearn bug, a few of
+    #the rows don't sum to 1...for now, fix by making them sum to 1
+    #print(np.sum(np.sum(conditional_P, axis=1) > 1.1))
+    #print(np.sum(np.sum(conditional_P, axis=1) < 0.9))
+    assert np.all(np.isfinite(conditional_P)), \
+        "All probabilities should be finite"
+
+    P = csr_matrix((conditional_P.ravel(), neighbors.ravel(),
+                    range(0, n_samples * k + 1, k)),
+                   shape=(n_samples, n_samples))
+    P = np.array(P.todense())
+    P = P/np.sum(P,axis=1)[:,None]
+
+    #Symmetrize by multiplication with transpose
+    P = P*P.T
+    return P
+
+
+class LeidenClustering(object):
+    def __init__(self, partitiontype, n_iterations):
+        self.partitiontype = partitiontype
+        self.n_iterations = n_iterations
+
+    def __call__(self, the_graph, seed):
+        return leidenalg.find_partition(the_graph, self.partitiontype,
+                                        n_iterations=self.n_iterations,
+                                        seed=seed)
+
+
+def average_over_different_seeds(
+        affmat, clustering_procedure, nseeds, top_frac_to_keep=1.0):
+    the_graph = modiscoutil.get_igraph_from_adjacency(adjacency=affmat)
+    clusterings = []
+    qualities = [] 
+    for seed in tqdm(range(nseeds)):
+        partition = clustering_procedure(the_graph=the_graph, seed=seed*100)
+        clusterings.append(np.array(partition.membership))
+        qualities.append(partition.quality())
+    if (top_frac_to_keep < 1.0):
+        from matplotlib import pyplot as plt
+        plt.hist(qualities, bins=20)
+        plt.show()
+        top_frac_quality = sorted(qualities, reverse=True)[
+                            int(len(qualities)*top_frac_to_keep)-1]
+        clusterings = [clustering for clustering,quality
+                       in zip(clusterings, qualities) if quality>=top_frac_quality]
+    assert len(clusterings)==int(nseeds*top_frac_to_keep), len(clusterings)
+    averaged_affmat = np.zeros((len(clusterings[0]), len(clusterings[0])))
+    for clustering in clusterings:
+        averaged_affmat += clustering[:,None]==clustering[None,:]
+    averaged_affmat = averaged_affmat/len(clusterings)
+    return averaged_affmat
+
+    
+def take_best_over_different_seeds(affmat, clustering_procedure, nseeds):
+    the_graph = modiscoutil.get_igraph_from_adjacency(adjacency=affmat)
+    best_clustering = None
+    best_quality = None
+    for seed in tqdm(range(nseeds)):
+        partition = clustering_procedure(
+                            the_graph=the_graph, seed=seed*100)
+        quality = partition.quality()
+        if ((best_quality is None) or (quality > best_quality)):
+            best_quality = quality
+            best_clustering = np.array(partition.membership)
+            print("Quality:",best_quality)
+            sys.stdout.flush()
+    return best_clustering

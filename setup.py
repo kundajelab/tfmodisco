@@ -21,3 +21,5 @@ if __name__== '__main__':
             'tensorflow with gpu': ['tensorflow-gpu>=1.7']},
           scripts=[],
           name='modisco')
+
+#pip install git+git://github.com/scikit-learn-contrib/scikit-learn-extra.git@fa8d1fe

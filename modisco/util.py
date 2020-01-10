@@ -348,15 +348,36 @@ def l1norm_contin_jaccard_sim(arr1, arr2):
             np.sum(np.maximum(absarr1, absarr2), axis=(1,2)))
 
 
-def facility_locator(distmat):
+def facility_locator(distmat, num_exemplars):
     exemplars = [] 
     current_bestrep = np.inf*np.ones(distmat.shape[0])
-    for i in range(len(distmat)):
+    for i in range(min(num_exemplars, len(distmat))):
         candidate_newbestrep = np.minimum(distmat, current_bestrep[None,:])  
         candidate_objective = np.sum(candidate_newbestrep, axis=-1) 
         next_best_exemplar = np.argmin(candidate_objective) 
         exemplars.append(next_best_exemplar)
         current_bestrep = candidate_newbestrep[next_best_exemplar]
-    assert np.sum(current_bestrep)==0 #sanity check when all exemplars in
     return exemplars
 
+
+#From: https://github.com/theislab/scanpy/blob/8131b05b7a8729eae3d3a5e146292f377dd736f7/scanpy/_utils.py#L159
+def get_igraph_from_adjacency(adjacency, directed=None):
+    """Get igraph graph from adjacency matrix."""
+    import igraph as ig
+    sources, targets = adjacency.nonzero()
+    weights = adjacency[sources, targets]
+    if isinstance(weights, np.matrix):
+        weights = weights.A1
+    g = ig.Graph(directed=directed)
+    g.add_vertices(adjacency.shape[0])  # this adds adjacency.shap[0] vertices
+    g.add_edges(list(zip(sources, targets)))
+    try:
+        g.es['weight'] = weights
+    except:
+        pass
+    if g.vcount() != adjacency.shape[0]:
+        logg.warning(
+            f'The constructed graph has only {g.vcount()} nodes. '
+            'Your adjacency matrix contained redundant nodes.'
+        )
+    return g
