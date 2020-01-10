@@ -176,7 +176,8 @@ class SequenceAffmatComputer_Impute(object):
         return affmat, offsets, isfwdmat
 
 
-def tsne_density_adaptation(dist_mat, perplexity, max_neighbors, verbose=True):
+def tsne_density_adaptation(dist_mat, perplexity,
+                            max_neighbors=np.inf, min_prob=1e-4, verbose=True):
     n_samples = dist_mat.shape[0]
     #copied from https://github.com/scikit-learn/scikit-learn/blob/45dc891c96eebdb3b81bf14c2737d8f6540fabfe/sklearn/manifold/t_sne.py
 
@@ -232,6 +233,8 @@ def tsne_density_adaptation(dist_mat, perplexity, max_neighbors, verbose=True):
                    shape=(n_samples, n_samples))
     P = np.array(P.todense())
     P = P/np.sum(P,axis=1)[:,None]
+    P = P*(P > min_prob) #getting rid of small probs for speed
+    P = P/np.sum(P,axis=1)[:,None]
 
     #Symmetrize by multiplication with transpose
     P = P*P.T
@@ -244,9 +247,11 @@ class LeidenClustering(object):
         self.n_iterations = n_iterations
 
     def __call__(self, the_graph, seed):
-        return leidenalg.find_partition(the_graph, self.partitiontype,
-                                        n_iterations=self.n_iterations,
-                                        seed=seed)
+        return leidenalg.find_partition(
+                the_graph, self.partitiontype,
+                weights=np.array(the_graph.es['weight']).astype(np.float64),
+                n_iterations=self.n_iterations,
+                seed=seed)
 
 
 def average_over_different_seeds(
