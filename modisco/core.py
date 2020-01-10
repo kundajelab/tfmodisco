@@ -183,10 +183,12 @@ class AggregatedSeqlet(object):
 
         trackname_to_genericseqdata = OrderedDict() 
         for trackname in track_names:
-            fwdnorm = (trackname_to_tracksumfwd[trackname]/
-                       position_counts[:,None])
-            revnorm = (trackname_to_tracksumrev[trackname]/
-                       position_counts[::-1,None])
+            #fwdnorm = (trackname_to_tracksumfwd[trackname]/
+            #           position_counts[:,None])
+            fwdnorm = trackname_to_tracksumfwd[trackname]/len(seqlets)
+            #revnorm = (trackname_to_tracksumrev[trackname]/
+            #           position_counts[::-1,None])
+            revnorm = trackname_to_tracksumrev[trackname]/len(seqlets)
             trackname_to_genericseqdata[trackname] = GenericSeqData(
                                                       fwd=fwdnorm, rev=revnorm)
         self.seqlets = seqlets
