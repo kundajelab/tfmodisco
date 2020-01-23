@@ -17,6 +17,14 @@ def print_memory_use():
     print("MEMORY",process.memory_info().rss/(2**30),now)
 
 
+def percentile_transform(vals):
+    ordering = np.argsort(vals)
+    percentiles = np.arange(len(vals))/len(vals)
+    to_return = np.zeros(len(vals))
+    to_return[ordering] = percentiles
+    return to_return
+
+
 def load_patterns(grp, track_set):
     from modisco.core import AggregatedSeqlet
     all_pattern_names = load_string_list(dset_name="all_pattern_names",
@@ -199,7 +207,7 @@ def compute_per_position_ic(ppm, background, pseudocount):
     assert len(ppm.shape)==2
     assert ppm.shape[1]==len(background),\
             "Make sure the letter axis is the second axis"
-    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) <= 2e-3),(
              "Probabilities don't sum to 1 along axis 1 in "
              +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
     alphabet_len = len(background)
@@ -243,7 +251,7 @@ def get_logodds_pwm(ppm, background, pseudocount):
     assert len(ppm.shape)==2
     assert ppm.shape[1]==len(background),\
             "Make sure the letter axis is the second axis"
-    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) <= 2e-3),(
              "Probabilities don't sum to 1 along axis 1 in "
              +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
     alphabet_len = len(background)

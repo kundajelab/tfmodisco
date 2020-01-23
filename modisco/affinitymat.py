@@ -219,8 +219,14 @@ def tsne_density_adaptation(dist_mat, perplexity,
     n_samples, k = neighbors_nn.shape
     distances = distances_nn.astype(np.float32, copy=False)
     neighbors = neighbors_nn.astype(np.int64, copy=False)
-    conditional_P = sklearn.manifold._utils._binary_search_perplexity(
-                distances, perplexity, verbose)
+    try:
+        conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+                    distances, perplexity, verbose)
+    except:
+        #API change
+        conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+                    distances, np.ones_like(distances).astype("int64"),
+                    perplexity, verbose)
     #for some reason, likely a sklearn bug, a few of
     #the rows don't sum to 1...for now, fix by making them sum to 1
     #print(np.sum(np.sum(conditional_P, axis=1) > 1.1))
