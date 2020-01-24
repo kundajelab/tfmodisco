@@ -11,11 +11,66 @@ import leidenalg
 from . import util as modiscoutil
 from tqdm.notebook import trange, tqdm
 import sys
+import time
 
 
 #Seqlet data for imputation
 _SeqlDatForImput = namedtuple("_SeqlDatForImput",
                               ["corelen", "flanklen", "onehot", "hyp"])
+
+
+def average_diffusion_distances(affmat, ts, k=None):
+    return np.mean([get_diffusion_distances(affmat=affmat, ts=[t], k=k)
+                    for t in ts], axis=1)    
+
+
+def get_diffusion_distances(affmat,ts,k=None):
+    dmap = get_concat_dmap_coords(affmat=affmat, ts=ts, k=k)
+    print(dmap.shape)
+    start = time.time()
+    print("Computing dists",flush=True)
+    dists = scipy.spatial.distance.squareform(
+                scipy.spatial.distance.pdist(dmap, metric='euclidean'))
+    print("Computed dists",time.time()-start,flush=True)
+    return dists
+
+
+def get_concat_dmap_coords(affmat, ts, k):
+    return np.concatenate([get_dmap_coords(affmat=affmat,t=t,k=k)
+                           for t in ts], axis=1) 
+
+
+def get_dmap_coords(affmat,t,k):
+    if (k==None):
+        k=len(affmat)
+    assert np.abs(np.max(np.sum(affmat, axis=-1))-1.0) < 1e-7,\
+                np.max(np.sum(affmat, axis=-1))
+    assert np.abs(np.min(np.sum(affmat, axis=-1))-1.0) < 1e-7,\
+                np.min(np.sum(affmat, axis=-1))
+    affmat = np.linalg.matrix_power(affmat,t)
+    start = time.time()
+    print("Doing eigendecomposition",flush=True)
+    evals, evecs = np.linalg.eig(affmat)
+    print("Did eigendecomposition in",time.time()-start,flush=True)
+    #based on https://github.com/DiffusionMapsAcademics/pyDiffMap/blob/d36e632089d564a4fc169d29f81c4783ddd39fd3/src/pydiffmap/diffusion_map.py#L154
+    #discard the "all equal" eigenvector
+    ix = np.argsort(evals)[::-1][1:1+k]
+    evals = evals[ix]
+    evecs = evecs[:,ix]
+    dmap = np.dot(evecs, np.diag(np.power(evals,t)))
+    return dmap
+
+
+def nearest_neighb_affmat(affmat, n_neighbs):
+    #argsort each row, take n_neighb, set prob accordingly
+    argsortrows = np.argsort(affmat,axis=-1)
+    new_affmat = np.zeros_like(affmat)
+    for idx,row in enumerate(argsortrows):
+        for n_neighb in n_neighbs:
+            nearest_neighbs = row[::-1][:n_neighb]
+            new_affmat[idx,nearest_neighbs] += 1.0
+    new_affmat = new_affmat/np.sum(new_affmat, axis=-1)[:,None]
+    return new_affmat
 
 
 #fake constructor for tuple
