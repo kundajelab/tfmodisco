@@ -25,6 +25,21 @@ def percentile_transform(vals):
     return to_return
 
 
+def viz_seqlets_with_offsets(seqlets, offsets, trackname, num_to_plot):
+    from .visualization import viz_sequence #this import statement needs to be
+                                            # here to avoid circularity
+    left_span = -min(offsets)
+    right_span = max(offset+len(seqlet) for (seqlet,offset)
+                     in zip(seqlets,offsets))
+    for the_seqlet, the_offset in list(zip(seqlets, offsets)
+                                       )[::int(len(seqlets)/num_to_plot)]:
+        viz_sequence.plot_weights(
+            np.concatenate([
+             np.zeros((left_span+the_offset,4)),
+             the_seqlet[trackname].corefwd,
+             np.zeros((right_span-(len(the_seqlet)+the_offset),4))], axis=0)) 
+
+
 def load_patterns(grp, track_set):
     from modisco.core import AggregatedSeqlet
     all_pattern_names = load_string_list(dset_name="all_pattern_names",

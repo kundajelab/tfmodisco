@@ -20,8 +20,10 @@ _SeqlDatForImput = namedtuple("_SeqlDatForImput",
 
 
 def average_diffusion_distances(affmat, ts, k=None):
-    return np.mean([get_diffusion_distances(affmat=affmat, ts=[t], k=k)
-                    for t in ts], axis=1)    
+    evals, evecs = get_dmap_evecs_evals(affmat=affmat, k=k) 
+    return np.mean([get_dists_given_dmap(
+                     dmap=get_dmap_for_t(evecs=evecs, evals=evals, t=t))
+                    for t in ts], axis=0) 
 
 
 def get_diffusion_distances(affmat,ts,k=None):
@@ -29,25 +31,33 @@ def get_diffusion_distances(affmat,ts,k=None):
     print(dmap.shape)
     start = time.time()
     print("Computing dists",flush=True)
-    dists = scipy.spatial.distance.squareform(
-                scipy.spatial.distance.pdist(dmap, metric='euclidean'))
+    dists = get_dists_given_dmap(dmap=dmap)
     print("Computed dists",time.time()-start,flush=True)
     return dists
 
 
+def get_dists_given_dmap(dmap): 
+    return scipy.spatial.distance.squareform(
+                scipy.spatial.distance.pdist(dmap, metric='euclidean'))
+
+
 def get_concat_dmap_coords(affmat, ts, k):
-    return np.concatenate([get_dmap_coords(affmat=affmat,t=t,k=k)
+    evecs, evals = get_dmap_evecs_evals(affmat=affmat, k=k) 
+    return np.concatenate([get_dmap_for_t(evecs=evecs, evals=evals, t=t)
                            for t in ts], axis=1) 
 
 
-def get_dmap_coords(affmat,t,k):
+def get_dmap_for_t(evecs, evals, t):
+    return evecs@np.diag(np.power(evals,t)) 
+
+
+def get_dmap_evecs_evals(affmat, k):
     if (k==None):
         k=len(affmat)
     assert np.abs(np.max(np.sum(affmat, axis=-1))-1.0) < 1e-7,\
                 np.max(np.sum(affmat, axis=-1))
     assert np.abs(np.min(np.sum(affmat, axis=-1))-1.0) < 1e-7,\
                 np.min(np.sum(affmat, axis=-1))
-    affmat = np.linalg.matrix_power(affmat,t)
     start = time.time()
     print("Doing eigendecomposition",flush=True)
     evals, evecs = np.linalg.eig(affmat)
@@ -57,9 +67,19 @@ def get_dmap_coords(affmat,t,k):
     ix = np.argsort(evals)[::-1][1:1+k]
     evals = evals[ix]
     evecs = evecs[:,ix]
-    dmap = np.dot(evecs, np.diag(np.power(evals,t)))
-    return dmap
+    return evecs, evals
 
+
+def nearest_neighb_affmat_expo_decay(affmat, n_neighb, beta):
+    #argsort each row, take n_neighb, set prob accordingly
+    argsortrows = np.argsort(affmat,axis=-1)
+    new_affmat = np.zeros_like(affmat)
+    for idx,row in enumerate(argsortrows):
+        new_affmat[idx, row[::-1][:n_neighb]] = np.exp(
+                                                 -beta*np.arange(n_neighb))
+    new_affmat = new_affmat/np.sum(new_affmat, axis=-1)[:,None]
+    return new_affmat
+    
 
 def nearest_neighb_affmat(affmat, n_neighbs):
     #argsort each row, take n_neighb, set prob accordingly
@@ -232,7 +252,7 @@ class SequenceAffmatComputer_Impute(object):
 
 
 def tsne_density_adaptation(dist_mat, perplexity,
-                            max_neighbors=np.inf, min_prob=1e-4, verbose=True):
+                            max_neighbors=np.inf, verbose=True):
     n_samples = dist_mat.shape[0]
     #copied from https://github.com/scikit-learn/scikit-learn/blob/45dc891c96eebdb3b81bf14c2737d8f6540fabfe/sklearn/manifold/t_sne.py
 
@@ -294,11 +314,6 @@ def tsne_density_adaptation(dist_mat, perplexity,
                    shape=(n_samples, n_samples))
     P = np.array(P.todense())
     P = P/np.sum(P,axis=1)[:,None]
-    P = P*(P > min_prob) #getting rid of small probs for speed
-    P = P/np.sum(P,axis=1)[:,None]
-
-    #Symmetrize by multiplication with transpose
-    P = P*P.T
     return P
 
 
