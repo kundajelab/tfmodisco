@@ -192,7 +192,7 @@ class AggregatedSeqlet(object):
             trackname_to_genericseqdata[trackname] = GenericSeqData(
                                                       fwd=fwdnorm, rev=revnorm)
         self.seqlets = seqlets
-        self.offsets = offsets
+        self.offsets = np.array(offsets)+left_span
         self.position_counts = position_counts
         self.trackname_to_tracksumfwd = trackname_to_tracksumfwd
         self.trackname_to_tracksumrev = trackname_to_tracksumrev
