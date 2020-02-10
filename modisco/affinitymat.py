@@ -166,21 +166,35 @@ class SequenceAffmatComputer_Impute(object):
         self.pair_sim_metric = metric
         self.n_jobs = n_jobs
 
-    def __call__(self, seqlets, onehot_trackname, hyp_trackname):
+    #if other_seqlets is None, will compute similarity of seqlets to other
+    # seqlets.
+    def __call__(self, seqlets, onehot_trackname, hyp_trackname,
+                       other_seqlets=None):
 
         hasrev = seqlets[0][onehot_trackname].hasrev
 
         seqlet_corelengths = [len(x) for x in seqlets]
+        other_seqlet_corelengths = (
+            seqlet_corelengths if other_seqlets is None else 
+            [len(x) for x in other_seqlets])
+
         #for now, will just deal with case where all seqlets are of equal len
-        assert len(set(seqlet_corelengths))==1; the_corelen=seqlet_corelengths[0]
+        assert len(set(seqlet_corelengths))==1;
+        the_corelen=seqlet_corelengths[0]
+        assert len(set(other_seqlet_corelengths))==1;
+        other_corelen=other_seqlet_corelengths[0]
 
         #max_seqlet_len will return the length of the longest seqlet core
         max_seqlet_len = max(seqlet_corelengths)
+        max_other_seqlet_len = max(other_seqlet_corelengths)
+
         #for each seqlet, figure out the maximum size of the flank needed
         # on each size. This is determined by the length of the longest
         # seqlet that each seqlet could be compared against
-        flank_sizes = [max_seqlet_len-int(corelen*self.min_overlap_frac)
+        flank_sizes = [max_other_seqlet_len-int(corelen*self.min_overlap_frac)
                        for corelen in seqlet_corelengths] 
+        other_flank_sizes = [max_seqlet_len-int(corelen*self.min_overlap_frac)
+                             for corelen in other_seqlet_corelengths]
 
         allfwd_onehot = (np.array( #I do the >0 at end to binarize
                             [seqlet[onehot_trackname].get_core_with_flank(
@@ -194,32 +208,59 @@ class SequenceAffmatComputer_Impute(object):
             allrev_onehot = allfwd_onehot[:,::-1,::-1]
             allrev_hyp = allfwd_hyp[:,::-1,::-1]
 
+        if (other_seqlets is None):
+            other_allfwd_onehot = allfwd_onehot
+            other_allfwd_hyp = allfwd_hyp
+            other_allrev_onehot = allrev_onehot
+            other_allrev_hyp = allrev_hyp
+        else:
+            other_allfwd_onehot = (np.array( #I do the >0 at end to binarize
+                [seqlet[onehot_trackname].get_core_with_flank(
+                 left=flank, right=flank, is_revcomp=False)
+                 for seqlet,flank in zip(other_seqlets,other_flank_sizes)])>0) 
+            other_allfwd_hyp = np.array(
+                    [seqlet[hyp_trackname].get_core_with_flank(
+                     left=flank, right=flank, is_revcomp=False)
+                     for seqlet,flank in zip(other_seqlets,other_flank_sizes)]) 
+            if (hasrev):
+                other_allrev_onehot = other_allfwd_onehot[:,::-1,::-1]
+                other_allrev_hyp = other_allfwd_hyp[:,::-1,::-1]
+            
         assert allfwd_onehot.shape==allfwd_hyp.shape
+        assert other_allfwd_onehot.shape==other_allfwd_hyp.shape
         assert all([len(single_onehot)==(len(seqlet)+2*flanksize)
                     for (seqlet, single_onehot, flanksize) in
                     zip(seqlets, allfwd_onehot, flank_sizes)])
+        if (other_seqlets is not None):
+            assert all([len(single_onehot)==(len(seqlet)+2*flanksize)
+                for (seqlet, single_onehot, flanksize) in
+                zip(other_seqlets, other_allfwd_onehot, other_flank_sizes)])
 
         indices = [(i,j) for i in range(len(seqlets))
                          for j in range(len(seqlets))]
         asym_fwdresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
                                 delayed(asymmetric_compute_sim_on_pairs)(
                                     oneseql_corelen=the_corelen,
-                                    #oneseql_onehot=allfwd_onehot[i],
                                     oneseql_hyp=allfwd_hyp[i],
-                                    seqlset_corelen=the_corelen,
-                                    seqlset_onehot=allfwd_onehot,
-                                    seqlset_hyp=allfwd_hyp,
+                                    seqlset_corelen=other_corelen,
+                                    seqlset_onehot=other_allfwd_onehot,
+                                    seqlset_hyp=other_allfwd_hyp,
                                     min_overlap_frac=self.min_overlap_frac,
                                     pair_sim_metric=self.pair_sim_metric)
                                 for i in range(len(seqlets)))
-        affmat = np.zeros((len(asym_fwdresults),len(asym_fwdresults))) 
-        offsets = np.zeros((len(asym_fwdresults),len(asym_fwdresults))) 
-        for i in range(len(asym_fwdresults)):
-            for j in range(len(asym_fwdresults)):
-                reoriented_complementary_sims = asym_fwdresults[j][0][i][::-1]
-                #sanity check for when i==j
-                combined_asym_fwdresults = 0.5*(
-                    asym_fwdresults[i][0][j] + reoriented_complementary_sims)
+        affmat = np.zeros((len(allfwd_onehot),len(other_allfwd_onehot))) 
+        offsets = np.zeros((len(allfwd_onehot),len(other_allfwd_onehot))) 
+        for i in range(affmat.shape[0]):
+            for j in range(affmat.shape[1]):
+                #if other_seqlets is None, execute procedures for symmetrizing
+                # the affmat
+                if (other_seqlets is None):
+                    reoriented_complementary_sims =\
+                        asym_fwdresults[j][0][i][::-1]
+                    combined_asym_fwdresults = 0.5*(
+                        asym_fwdresults[i][0][j] + reoriented_complementary_sims)
+                else:
+                    combined_asym_fwdresults = asym_fwdresults[i][0][j]
                 argmax_pos = np.argmax(combined_asym_fwdresults) 
                 affmat[i][j] = combined_asym_fwdresults[argmax_pos]
                 offsets[i][j] = asym_fwdresults[i][1][argmax_pos] 
@@ -234,23 +275,29 @@ class SequenceAffmatComputer_Impute(object):
             asym_revresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
                                 delayed(asymmetric_compute_sim_on_pairs)(
                                     oneseql_corelen=the_corelen,
-                                    #oneseql_onehot=allrev_onehot[i],
                                     oneseql_hyp=allrev_hyp[i],
-                                    seqlset_corelen=the_corelen,
-                                    seqlset_onehot=allfwd_onehot,
-                                    seqlset_hyp=allfwd_hyp,
+                                    seqlset_corelen=other_corelen,
+                                    seqlset_onehot=other_allfwd_onehot,
+                                    seqlset_hyp=other_allfwd_hyp,
                                     min_overlap_frac=self.min_overlap_frac,
                                     pair_sim_metric=self.pair_sim_metric)
                                 for i in range(len(seqlets)))
-            revaffmat = np.zeros((len(asym_revresults),len(asym_revresults))) 
-            revoffsets = np.zeros((len(asym_revresults),len(asym_revresults))) 
-            for i in range(len(asym_revresults)):
-                for j in range(len(asym_revresults)):
-                    #no changing of coordinates needed, unlike in the fwd case
-                    reoriented_complementary_sims = (asym_revresults[j][0][i])
-                    combined_asym_revresults = 0.5*(
-                        asym_revresults[i][0][j]
-                        + reoriented_complementary_sims)
+            revaffmat = np.zeros((len(allrev_onehot),len(other_allrev_onehot))) 
+            revoffsets = np.zeros(
+                          (len(allrev_onehot),len(other_allrev_onehot))) 
+            for i in range(revaffmat.shape[0]):
+                for j in range(revaffmat.shape[1]):
+                    #only do the symmetrization if other_seqlets was None
+                    if (other_seqlets is None):
+                        #no changing of coordinates needed, unlike in the
+                        # fwd case
+                        reoriented_complementary_sims = (
+                            asym_revresults[j][0][i])
+                        combined_asym_revresults = 0.5*(
+                            asym_revresults[i][0][j]
+                            + reoriented_complementary_sims)
+                    else:
+                        combined_asym_revresults = asym_revresults[i][0][j]
                     argmax_pos = np.argmax(combined_asym_revresults) 
                     revaffmat[i][j] = combined_asym_revresults[argmax_pos]
                     revoffsets[i][j] = asym_revresults[i][1][argmax_pos] 
