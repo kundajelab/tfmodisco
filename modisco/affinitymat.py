@@ -3,6 +3,7 @@ from collections import namedtuple
 import numpy as np
 from joblib import Parallel, delayed
 import sklearn
+import sklearn.manifold
 from sklearn.neighbors import NearestNeighbors
 import time
 import scipy
@@ -231,7 +232,7 @@ class SequenceAffmatComputer_Impute(object):
     #if other_seqlets is None, will compute similarity of seqlets to other
     # seqlets.
     def __call__(self, seqlets, onehot_trackname, hyp_trackname,
-                       other_seqlets=None):
+                       other_seqlets=None, verbose=True):
 
         hasrev = seqlets[0][onehot_trackname].hasrev
 
@@ -258,10 +259,10 @@ class SequenceAffmatComputer_Impute(object):
         other_flank_sizes = [max_seqlet_len-int(corelen*self.min_overlap_frac)
                              for corelen in other_seqlet_corelengths]
 
-        allfwd_onehot = (np.array( #I do the >0 at end to binarize
+        allfwd_onehot = np.array(
                             [seqlet[onehot_trackname].get_core_with_flank(
                              left=flank, right=flank, is_revcomp=False)
-                             for seqlet,flank in zip(seqlets,flank_sizes)])>0) 
+                             for seqlet,flank in zip(seqlets,flank_sizes)])
         allfwd_hyp = np.array(
                             [seqlet[hyp_trackname].get_core_with_flank(
                              left=flank, right=flank, is_revcomp=False)
@@ -300,7 +301,7 @@ class SequenceAffmatComputer_Impute(object):
 
         indices = [(i,j) for i in range(len(seqlets))
                          for j in range(len(seqlets))]
-        asym_fwdresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
+        asym_fwdresults = Parallel(n_jobs=self.n_jobs, verbose=verbose)(
                                 delayed(asymmetric_compute_sim_on_pairs2)(
                                     oneseql_corelen=the_corelen,
                                     oneseql_hyp=allfwd_hyp[i],
@@ -321,20 +322,20 @@ class SequenceAffmatComputer_Impute(object):
                         asym_fwdresults[j][0][i][::-1]
                     combined_asym_fwdresults = 0.5*(
                         asym_fwdresults[i][0][j] + reoriented_complementary_sims)
+                    del reoriented_complementary_sims #defensive programming
                 else:
                     combined_asym_fwdresults = asym_fwdresults[i][0][j]
                 argmax_pos = np.argmax(combined_asym_fwdresults) 
                 affmat[i][j] = combined_asym_fwdresults[argmax_pos]
                 offsets[i][j] = asym_fwdresults[i][1][argmax_pos] 
         del asym_fwdresults
-        del (argmax_pos, combined_asym_fwdresults,
-             reoriented_complementary_sims) #deleting for defensive programming
+        del (argmax_pos, combined_asym_fwdresults) #deleting for defensive programming
 
         import gc
         gc.collect()
 
         if (hasrev):
-            asym_revresults = Parallel(n_jobs=self.n_jobs, verbose=True)(
+            asym_revresults = Parallel(n_jobs=self.n_jobs, verbose=verbose)(
                                 delayed(asymmetric_compute_sim_on_pairs2)(
                                     oneseql_corelen=the_corelen,
                                     oneseql_hyp=allfwd_hyp[i],
@@ -358,13 +359,13 @@ class SequenceAffmatComputer_Impute(object):
                         combined_asym_revresults = 0.5*(
                             asym_revresults[i][0][j]
                             + reoriented_complementary_sims)
+                        del reoriented_complementary_sims #defensive programming
                     else:
                         combined_asym_revresults = asym_revresults[i][0][j]
                     argmax_pos = np.argmax(combined_asym_revresults) 
                     revaffmat[i][j] = combined_asym_revresults[argmax_pos]
                     revoffsets[i][j] = asym_revresults[i][1][argmax_pos] 
-            del (argmax_pos, combined_asym_revresults,
-                 reoriented_complementary_sims) #defensive programming
+            del (argmax_pos, combined_asym_revresults)
 
             isfwdmat = affmat > revaffmat
             affmat = isfwdmat*affmat + (isfwdmat==False)*revaffmat
