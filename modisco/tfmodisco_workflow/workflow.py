@@ -249,7 +249,7 @@ class TfModiscoWorkflow(object):
                  abs(x.tnt_results.transformed_neg_threshold))
                  for x in (multitask_seqlet_creation_results.
                            task_name_to_coord_producer_results.values())]) -
-            0.0000001) #subtract 1e-7 to avoid weird numerical issues
+            0.0001) #subtract 1e-4 to avoid weird numerical issues
         print("Across all tasks, the weakest transformed threshold used"
               +" was: "+str(weakest_transformed_thresh))
         print_memory_use()
