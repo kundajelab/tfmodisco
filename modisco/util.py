@@ -458,7 +458,7 @@ def compute_per_position_ic(ppm, background, pseudocount):
     assert len(ppm.shape)==2
     assert ppm.shape[1]==len(background),\
             "Make sure the letter axis is the second axis"
-    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-5),(
              "Probabilities don't sum to 1 along axis 1 in "
              +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
     alphabet_len = len(background)
