@@ -319,8 +319,15 @@ class TsneConditionalProbs(AbstractTsneProbs):
         n_samples, k = neighbors_nn.shape
         distances = distances_nn.astype(np.float32, copy=False)
         neighbors = neighbors_nn.astype(np.int64, copy=False)
-        conditional_P = sklearn.manifold._utils._binary_search_perplexity(
-            distances, neighbors, self.perplexity, self.verbose)
+        try:
+            conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+                distances, np.array(neighbors).astype("int"),
+                self.perplexity, self.verbose)
+        except:
+            #API changed in v0.22 to not require the redundant neighbors
+            # argument
+            conditional_P = sklearn.manifold._utils._binary_search_perplexity(
+                distances, self.perplexity, self.verbose)
         #for some reason, likely a sklearn bug, a few of
         #the rows don't sum to 1...for now, fix by making them sum to 1
         #print(np.sum(np.sum(conditional_P, axis=1) > 1.1))
