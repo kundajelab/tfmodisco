@@ -321,8 +321,7 @@ class TsneConditionalProbs(AbstractTsneProbs):
         neighbors = neighbors_nn.astype(np.int64, copy=False)
         try:
             conditional_P = sklearn.manifold._utils._binary_search_perplexity(
-                distances, np.array(neighbors).astype("int"),
-                self.perplexity, self.verbose)
+                distances, neighbors, self.perplexity, self.verbose)
         except:
             #API changed in v0.22 to not require the redundant neighbors
             # argument
