@@ -1,6 +1,6 @@
 numpy>=1.9
 joblib>=0.11
-scikit-learn<0.22,>=0.19
+scikit-learn>=0.19
 h5py>=2.5
 
 [tensorflow]
