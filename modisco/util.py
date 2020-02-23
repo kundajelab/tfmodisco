@@ -284,6 +284,16 @@ def compute_pwm_scan(onehot_seq, weightmat):
     return pwm_scan
 
 
+def get_max_pwm_score_in_sequences(onehot_seq, weightmat):
+    assert len(onehot_seq.shape)==3
+    return np.maximum(np.max(compute_pwm_scan(
+                              onehot_seq=onehot_seq,
+                              weightmat=weightmat),axis=-1),
+                      np.max(compute_pwm_scan(
+                              onehot_seq=onehot_seq,
+                              weightmat=weightmat[::-1,::-1]), axis=-1))
+
+
 def compute_sum_scores(imp_scores, window_size):
     strided_impscores = rolling_window(
         imp_scores.transpose((0,2,1)),
