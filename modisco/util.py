@@ -262,6 +262,25 @@ def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat):
     return cosine_sim
 
 
+def get_hCWM_scores(imp_scores, onehot_seq, weightmat):
+    fwd_masked_cosine_sim = compute_masked_cosine_sim(
+                     imp_scores=imp_scores,
+                     onehot_seq=onehot_seq,
+                     weightmat=weightmat)
+    rev_masked_cosine_sim = compute_masked_cosine_sim(
+                     imp_scores=imp_scores,
+                     onehot_seq=onehot_seq,
+                     weightmat=weightmat) 
+    is_fwd_masked_cosine_sim = fwd_masked_cosine_sim > rev_masked_cosine_sim
+    masked_cosine_sim = (
+        fwd_masked_cosine_sim*is_fwd_masked_cosine_sim
+        + rev_masked_cosine_sim*(is_fwd_masked_cosine_sim==False))
+    sum_scores = compute_sum_scores(
+            imp_scores=imp_scores,
+            window_size=len(weightmat))
+    return masked_cosine_sim, sum_scores
+
+
 def get_logodds_pwm(ppm, background, pseudocount):
     assert len(ppm.shape)==2
     assert ppm.shape[1]==len(background),\
