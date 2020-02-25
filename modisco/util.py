@@ -270,7 +270,7 @@ def get_hCWM_scores(imp_scores, onehot_seq, weightmat):
     rev_masked_cosine_sim = compute_masked_cosine_sim(
                      imp_scores=imp_scores,
                      onehot_seq=onehot_seq,
-                     weightmat=weightmat) 
+                     weightmat=weightmat[::-1,::-1]) 
     is_fwd_masked_cosine_sim = fwd_masked_cosine_sim > rev_masked_cosine_sim
     masked_cosine_sim = (
         fwd_masked_cosine_sim*is_fwd_masked_cosine_sim
