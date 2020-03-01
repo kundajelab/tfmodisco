@@ -103,7 +103,23 @@ def SeqlDatForImput(corelen, onehot, hyp):
                             onehot=onehot, hyp=hyp)
 
 
-def asymmetric_compute_sim_on_pairs2(
+#will return the offset w.r.t. seql1
+def asymmetric_compute_sim_on_pair(seql1_corelen, seql1_hyp, seql1_onehot,
+                                   seql2_corelen, seql2_hyp,
+                                   min_overlap_frac, pair_sim_metric):
+    sim_results, possible_offsets = asymmetric_compute_sim_on_pairs(
+                                        oneseql_corelen=seql1_corelen,
+                                        oneseql_hyp=seql1_hyp,
+                                        oneseql_onehot=seql1_onehot, 
+                                        seqlset_corelen=seql2_corelen,
+                                        seqlset_hyp=np.array([seql2_hyp]),
+                                        min_overlap_frac=min_overlap_frac,
+                                        pair_sim_metric=pair_sim_metric)
+    return sim_results[0], possible_offsets
+
+
+#offsets returned will be w.r.t. oneseql_corelen
+def asymmetric_compute_sim_on_pairs(
             oneseql_corelen, oneseql_hyp, oneseql_onehot,
             seqlset_corelen, seqlset_hyp,
             min_overlap_frac, pair_sim_metric):
@@ -161,63 +177,6 @@ def asymmetric_compute_sim_on_pairs2(
         #from modisco.visualization import viz_sequence
         #viz_sequence.plot_weights(oneseqlX_imputed) 
         #viz_sequence.plot_weights(seqlsetXactual_slice) 
-        #print(sim)
-    return sim_results, possible_offsets
-
-
-def asymmetric_compute_sim_on_pairs(
-            oneseql_corelen, oneseql_hyp,
-            seqlset_corelen, seqlset_onehot, seqlset_hyp,
-            min_overlap_frac, pair_sim_metric):
-
-    assert seqlset_onehot.shape==seqlset_hyp.shape
-    assert len(oneseql_hyp.shape)==2
-    assert len(seqlset_hyp.shape)==3
-
-    assert (oneseql_hyp.shape[0]-oneseql_corelen)%2==0
-    assert (seqlset_hyp.shape[1]-seqlset_corelen)%2==0
-    oneseql_flanklen = int((oneseql_hyp.shape[0]-oneseql_corelen)/2)
-    seqlset_flanklen = int((seqlset_hyp.shape[1]-oneseql_corelen)/2)
-
-    min_overlap = int(np.ceil(min(oneseql_corelen, seqlset_corelen)
-                              *min_overlap_frac))
-
-    seqlset_actual = seqlset_onehot*seqlset_hyp
-
-    #iterate over all possible offsets of oneseql relative to seqlset
-    startoffset = -(oneseql_corelen-min_overlap)
-    endoffset = (seqlset_corelen-min_overlap)
-    possible_offsets = np.array(range(startoffset, endoffset+1))
-    #init the array that will store the similarity results
-    sim_results = np.zeros((seqlset_onehot.shape[0], len(possible_offsets)))
-    for offsetidx,offset in enumerate(possible_offsets):
-        #compute the padding needed for the offset seqlets to be comparable
-        oneseql_leftpad = max(offset, 0)  
-        oneseql_rightpad = max(seqlset_corelen-(oneseql_corelen+offset),0) 
-        #based on the padding, figure out how we would need to slice into
-        # the available numpy arrays
-        oneseql_slicestart = oneseql_flanklen-oneseql_leftpad
-        oneseql_sliceend = oneseql_flanklen+oneseql_corelen+oneseql_rightpad
-
-        #do the same for seqlset
-        seqlset_leftpad = max(-offset, 0) 
-        seqlset_rightpad = max((oneseql_corelen+offset)-seqlset_corelen, 0)
-        seqlset_slicestart = seqlset_flanklen-seqlset_leftpad
-        seqlset_slicesend = seqlset_flanklen+seqlset_corelen+seqlset_rightpad
-
-        #slice to get the underlying data
-        oneseqlhyp_slice = oneseql_hyp[oneseql_slicestart:oneseql_sliceend]
-        seqlsetactual_slice = seqlset_actual[:,seqlset_slicestart:
-                                               seqlset_slicesend]
-        seqlsetonehot_slice = seqlset_onehot[:,seqlset_slicestart:
-                                               seqlset_slicesend]
-        oneseql_imputed = oneseqlhyp_slice[None,:,:]*seqlsetonehot_slice
-        sim = pair_sim_metric(oneseql_imputed, seqlsetactual_slice)
-        sim_results[:,offsetidx] = sim
-        #print(offset)
-        #from modisco.visualization import viz_sequence
-        #viz_sequence.plot_weights(oneseql_imputed) 
-        #viz_sequence.plot_weights(seqlsetactual_slice) 
         #print(sim)
     return sim_results, possible_offsets
 
@@ -302,7 +261,7 @@ class SequenceAffmatComputer_Impute(object):
         indices = [(i,j) for i in range(len(seqlets))
                          for j in range(len(seqlets))]
         asym_fwdresults = Parallel(n_jobs=self.n_jobs, verbose=verbose)(
-                                delayed(asymmetric_compute_sim_on_pairs2)(
+                                delayed(asymmetric_compute_sim_on_pairs)(
                                     oneseql_corelen=the_corelen,
                                     oneseql_hyp=allfwd_hyp[i],
                                     oneseql_onehot=allfwd_onehot[i],
@@ -336,7 +295,7 @@ class SequenceAffmatComputer_Impute(object):
 
         if (hasrev):
             asym_revresults = Parallel(n_jobs=self.n_jobs, verbose=verbose)(
-                                delayed(asymmetric_compute_sim_on_pairs2)(
+                                delayed(asymmetric_compute_sim_on_pairs)(
                                     oneseql_corelen=the_corelen,
                                     oneseql_hyp=allfwd_hyp[i],
                                     oneseql_onehot=allfwd_onehot[i],
