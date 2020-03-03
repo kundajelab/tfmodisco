@@ -183,9 +183,9 @@ def asymmetric_compute_sim_on_pairs(
 
 class SequenceAffmatComputer_Impute(object):
 
-    def __init__(self, metric, n_jobs, min_overlap_frac):
+    def __init__(self, pair_sim_metric, n_jobs, min_overlap_frac):
         self.min_overlap_frac = min_overlap_frac 
-        self.pair_sim_metric = metric
+        self.pair_sim_metric = pair_sim_metric
         self.n_jobs = n_jobs
 
     #if other_seqlets is None, will compute similarity of seqlets to other

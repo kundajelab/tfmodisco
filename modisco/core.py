@@ -148,7 +148,8 @@ def get_best_alignment_for_pair(seql1_corelen, seql1_hyp, seql1_onehot,
                                 min_overlap_frac, pair_sim_metric):
     from . import affinitymat
     #compute for fwd
-    fwd_sim_results, possible_fwd_offsets = asymmetric_compute_sim_on_pair(
+    fwd_sim_results, possible_fwd_offsets =\
+     affinitymat.asymmetric_compute_sim_on_pair(
         seql1_corelen=seql1_corelen,
         seql1_hyp=seql1_hyp,
         seql1_onehot=seql1_onehot,
@@ -157,7 +158,8 @@ def get_best_alignment_for_pair(seql1_corelen, seql1_hyp, seql1_onehot,
         min_overlap_frac=min_overlap_frac,
         pair_sim_metric=pair_sim_metric) 
     #compute for rev
-    rev_sim_results, possible_rev_offsets = asymmetric_compute_sim_on_pair(
+    rev_sim_results, possible_rev_offsets =\
+     affinitymat.asymmetric_compute_sim_on_pair(
         seql1_corelen=seql1_corelen,
         seql1_hyp=seql1_hyp,
         seql1_onehot=seql1_onehot,
@@ -184,27 +186,29 @@ def create_aggregated_seqlet(
     #fix core length to that of the first seqlet
     corelen = len(sorted_seqlets[0]) 
     #initialize agg tracks to be core + flank of first seqlet
-    aggfwd_onehot = sorted_seqlets[0][onehot_trackname].get_core_with_flank(
-                        left_flank=flanklen, right_flank=flanklen,
-                        is_revcomp=False) 
-    aggfwd_hyp = seqlets[0][hyp_trackname].get_core_with_flank(
-                        left_flank=flanklen, right_flank=flanklen,
-                        is_revcomp=False)  
+    aggfwd_onehot = np.array(
+                     sorted_seqlets[0][onehot_trackname].get_core_with_flank(
+                        left=flanklen, right=flanklen,
+                        is_revcomp=False))
+    aggfwd_hyp = np.array(
+                  sorted_seqlets[0][hyp_trackname].get_core_with_flank(
+                        left=flanklen, right=flanklen,
+                        is_revcomp=False))  
     #initialize perposcount to be ones
     perposcount = np.ones(len(aggfwd_onehot))
     #iterate through the seqlets after the first seqlet:
-    for unoriented_seqlet in seqlets[1:]
+    for unoriented_seqlet in sorted_seqlets[1:]:
         seql2_hyp_fwd = unoriented_seqlet[hyp_trackname].get_core_with_flank(
-                                                left_flank=flanklen,
-                                                right_flank=flanklen,
+                                                left=flanklen,
+                                                right=flanklen,
                                                 is_revcomp=False)
         seql2_hyp_rev = unoriented_seqlet[hyp_trackname].get_core_with_flank(
-                                                left_flank=flanklen,
-                                                right_flank=flanklen,
+                                                left=flanklen,
+                                                right=flanklen,
                                                 is_revcomp=True)
         #set normalized to be agg/perposcount 
         normfwd_onehot = aggfwd_onehot/perposcount[:,None]
-        assert np.max(np.abs(np.sum(normfwd_onehot, axis=-1)-1.0))==0.0
+        assert np.max(np.abs(np.sum(normfwd_onehot, axis=-1)-1.0)) < 1e-5
         normfwd_hyp = aggfwd_hyp/perposcount[:,None]
         #compute offset of current seqlet relative to normalized agg.
         offset,isfwd = get_best_alignment_for_pair(
@@ -221,13 +225,13 @@ def create_aggregated_seqlet(
         else:
             reoriented_seqlet = unoriented_seqlet.get_revcomp() 
         reoriented_hyp = reoriented_seqlet[hyp_trackname].get_core_with_flank(
-                                                left_flank=flanklen,
-                                                right_flank=flanklen,
+                                                left=flanklen,
+                                                right=flanklen,
                                                 is_revcomp=False)
         reoriented_onehot = (reoriented_seqlet[onehot_trackname]
                                                .get_core_with_flank(
-                                                left_flank=flanklen,
-                                                right_flank=flanklen,
+                                                left=flanklen,
+                                                right=flanklen,
                                                 is_revcomp=False))
         assert len(reoriented_hyp)==(2*flanklen + corelen)
         assert reoriented_onehot.shape==reoriented_hyp.shape
@@ -245,7 +249,7 @@ def create_aggregated_seqlet(
         perposcount[startidx_in_updateslice:endidx_in_updateslice] += 1
 
     normfwd_onehot = aggfwd_onehot/perposcount[:,None]
-    assert np.max(np.abs(np.sum(normfwd_onehot, axis=-1)-1.0))==0.0
+    assert np.max(np.abs(np.sum(normfwd_onehot, axis=-1)-1.0)) < 1e-5
     normfwd_hyp = aggfwd_hyp/perposcount[:,None]
     #Once the aggregrate is found...
     #iterate through seqlets to find offsets/orientation
@@ -254,12 +258,12 @@ def create_aggregated_seqlet(
     for unoriented_seqlet in sorted_seqlets:
         #Recalculate offsets
         seql2_hyp_fwd = unoriented_seqlet[hyp_trackname].get_core_with_flank(
-                                                left_flank=flanklen,
-                                                right_flank=flanklen,
+                                                left=flanklen,
+                                                right=flanklen,
                                                 is_revcomp=False)
         seql2_hyp_rev = unoriented_seqlet[hyp_trackname].get_core_with_flank(
-                                                left_flank=flanklen,
-                                                right_flank=flanklen,
+                                                left=flanklen,
+                                                right=flanklen,
                                                 is_revcomp=True)
         #get alignment
         offset,isfwd = get_best_alignment_for_pair(
@@ -272,9 +276,9 @@ def create_aggregated_seqlet(
                     pair_sim_metric=pair_sim_metric) 
         #orient the seqlet
         if (isfwd):
-            reoriented_seqlet = seqlet
+            reoriented_seqlet = unoriented_seqlet
         else:
-            reoriented_seqlet = seqlet.get_revcomp() 
+            reoriented_seqlet = unoriented_seqlet.get_revcomp() 
         #append to offsets and oriented_seqlets
         oriented_seqlets.append(reoriented_seqlet)
         offsets.append(offset)
