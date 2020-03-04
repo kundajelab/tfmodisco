@@ -25,6 +25,21 @@ def percentile_transform(vals):
     return to_return
 
 
+def get_precision_threshold(y_true, y_pred, precision_threshold):
+    #sort the y_pred
+    argsort_ypred = np.argsort(y_pred)
+    #sort y_true correspondingly 
+    corresp_ytrue = y_true[argsort_ypred]
+    totpos = np.sum(y_true)
+    totneg = len(y_true)-totpos
+    pos_above = totpos - np.array([0]+list(np.cumsum(corresp_ytrue)[:-1]))
+    neg_above = totneg - np.array([0]+list(np.cumsum(1-corresp_ytrue)[:-1]))
+    prec = pos_above/(pos_above + neg_above) 
+    prec_thresh_idx = ([x[0] for x in enumerate(prec)
+                        if x[1] > precision_threshold])[0]
+    return y_pred[argsort_ypred][prec_thresh_idx] 
+
+
 def viz_seqlets_with_offsets(seqlets, offsets, trackname, num_to_plot):
     from .visualization import viz_sequence #this import statement needs to be
                                             # here to avoid circularity
@@ -275,10 +290,10 @@ def get_hCWM_scores(imp_scores, onehot_seq, weightmat):
     masked_cosine_sim = (
         fwd_masked_cosine_sim*is_fwd_masked_cosine_sim
         + rev_masked_cosine_sim*(is_fwd_masked_cosine_sim==False))
-    sum_scores = compute_sum_scores(
-            imp_scores=imp_scores,
-            window_size=len(weightmat))
-    return masked_cosine_sim, sum_scores
+    scorestrength = compute_sum_scores(
+                        imp_scores=imp_scores,
+                        window_size=len(weightmat))
+    return masked_cosine_sim, scorestrength
 
 
 def get_logodds_pwm(ppm, background, pseudocount):
@@ -319,6 +334,26 @@ def compute_sum_scores(imp_scores, window_size):
         window=window_size).transpose((0,2,3,1))
     sum_scores = np.sum(strided_impscores, axis=(2,3))
     return sum_scores
+
+
+def compute_magnitude_scores(imp_scores, window_size):
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=window_size).transpose((0,2,3,1))
+    return np.linalg.norm(strided_impscores, axis=(2,3))
+
+
+def get_best_fixedsize_window(track, window_size):
+    assert len(track.shape)==1
+    cumsum = np.array([0]+list(np.cumsum(track)))
+    start_idx = np.argmax(cumsum[window_size:] - cumsum[:-window_size])
+    return start_idx 
+
+
+#trim from ends until you encounter something > minval
+def trim_from_ends(track, minval):
+    passing_positions = [x[0] for x in enumerate(track) if x[1] > minval]
+    return passing_positions[0], passing_positions[-1]
 
 
 def trim_ppm(ppm, t=0.45):
