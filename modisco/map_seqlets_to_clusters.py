@@ -22,10 +22,14 @@ class MapSeqletsToClusters(object):
 
 class ExemplarBasedSeqletToClusterMapper(object):
 
-    def __init__(self, cluster_to_exemplars, cluster_to_minthresh):
+    def __init__(self, cluster_to_exemplars,
+                       cluster_to_minthresh,
+                       cluster_to_sortedscoresforranking):
         self.num_clusters = max(cluster_to_exemplars.keys())+1
         self.cluster_to_exemplars = cluster_to_exemplars
         self.cluster_to_minthresh = cluster_to_minthresh
+        self.cluster_to_sortedscoresforranking =\
+            cluster_to_sortedscoresforranking
 
     @classmethod
     def build(cls, cluster_to_exemplars,
@@ -34,6 +38,7 @@ class ExemplarBasedSeqletToClusterMapper(object):
               fprthresh, tprthresh, precthresh,
               clustersizefoldincreasethresh):
         cluster_to_minthresh = {}
+        cluster_to_sortedscoresforranking = {}
         for idx in cluster_to_exemplars:
             within_cluster_mask = orig_cluster_membership==idx
             exemplar_sims, _, _ = cluster_to_exemplar_sims[idx]
@@ -65,8 +70,12 @@ class ExemplarBasedSeqletToClusterMapper(object):
                                   scores_precthresh),
                               scores_clustersizefoldincreasethresh)
             cluster_to_minthresh[idx] = finalthresh
+            cluster_to_sortedscoresforranking[idx] =\
+                sorted(sorted(scores[within_cluster_mask]))
         return cls(cluster_to_exemplars=cluster_to_exemplars,
-                            cluster_to_minthresh=cluster_to_minthresh) 
+                   cluster_to_minthresh=cluster_to_minthresh,
+                   cluster_to_sortedscoresforranking=
+                    cluster_to_sortedscoresforranking) 
 
     def map_exemplar_sims_to_cluster(self, cluster_to_exemplar_sims):
         num_seqlets = cluster_to_exemplar_sims[
@@ -77,6 +86,8 @@ class ExemplarBasedSeqletToClusterMapper(object):
             scores = np.median(exemplar_sims, axis=0)
             minthresh = self.cluster_to_minthresh[idx]
             passing_thresh = scores > minthresh
-            seqlet_to_cluster_score[passing_thresh, idx] =\
-                scores[passing_thresh] 
+            seqlet_to_cluster_score[passing_thresh, idx] = ( #get percentile
+                np.searchsorted(a=self.cluster_to_sortedscoresforranking[idx],
+                                v=scores[passing_thresh])/
+                len(self.cluster_to_sortedscoresforranking[idx])) 
         return seqlet_to_cluster_score
