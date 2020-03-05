@@ -179,8 +179,8 @@ def get_best_alignment_for_pair(seql1_corelen, seql1_hyp, seql1_onehot,
 def create_aggregated_seqlet(
         sorted_seqlets, onehot_trackname, hyp_trackname, flanklen,
         min_overlap_frac, pair_sim_metric):
-    #assert that there are > 1 seqlets 
-    assert len(sorted_seqlets) > 1
+    #assert that there are > 0 seqlets 
+    assert len(sorted_seqlets) > 0
     #assert that the seqlets are of equal length
     assert len(set([len(x) for x in sorted_seqlets]))==1
     #fix core length to that of the first seqlet
