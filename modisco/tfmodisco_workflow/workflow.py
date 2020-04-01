@@ -207,7 +207,8 @@ class TfModiscoWorkflow(object):
                        per_position_contrib_scores=None,
                        revcomp=True,
                        other_tracks=[],
-                       just_return_seqlets=False):
+                       just_return_seqlets=False,
+                       plot_save_dir="figures"):
 
         print_memory_use()
 
@@ -221,7 +222,8 @@ class TfModiscoWorkflow(object):
             max_passing_windows_frac=self.max_passing_windows_frac,
             separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
             max_seqlets_total=None,
-            verbose=self.verbose) 
+            verbose=self.verbose,
+            plot_save_dir=plot_save_dir) 
 
         track_set = prep_track_set(
                         task_names=task_names,
