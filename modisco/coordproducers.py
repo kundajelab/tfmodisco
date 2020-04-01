@@ -313,7 +313,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        max_seqlets_total=None,
                        progress_update=5000,
                        verbose=True,
-                       ):
+                       plot_save_dir="figures"):
         self.sliding = sliding
         self.flank = flank
         self.suppress = suppress
@@ -325,6 +325,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.max_seqlets_total = None
         self.progress_update = progress_update
         self.verbose = verbose
+        self.plot_save_dir = plot_save_dir
 
     @classmethod
     def from_hdf5(cls, grp):
@@ -522,11 +523,11 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             else:
                 import os, errno
                 try:
-                    os.makedirs("figures")
+                    os.makedirs(self.plot_save_dir)
                 except OSError as e:
                     if e.errno != errno.EEXIST:
                         raise
-                fname = ("figures/scoredist_" +
+                fname = (self.plot_save_dir+"/scoredist_" +
                          str(FixedWindowAroundChunks.count) + ".png")
                 plt.savefig(fname)
                 print("saving plot to " + fname)
