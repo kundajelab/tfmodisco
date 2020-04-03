@@ -37,10 +37,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        skip_fine_grained=False,
 
                        tsne_perplexity = 10,
-                       louvain_num_runs_and_levels_r1=[(200,-1)],
-                       louvain_num_runs_and_levels_r2=[(200,-1)],
-                       louvain_contin_runs_r1 = 50,
-                       louvain_contin_runs_r2 = 50,
+                       n_leiden_iterations_r1=-1,
+                       n_leiden_iterations_r2=-1,
+                       contin_runs_r1 = 50,
+                       contin_runs_r2 = 50,
                        final_louvain_level_to_return=1,
 
                        frac_support_to_trim_to=0.2,
@@ -85,10 +85,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.tsne_perplexity = tsne_perplexity
 
         #clustering settings
-        self.louvain_num_runs_and_levels_r1 = louvain_num_runs_and_levels_r1
-        self.louvain_num_runs_and_levels_r2 = louvain_num_runs_and_levels_r2
-        self.louvain_contin_runs_r1 = louvain_contin_runs_r1
-        self.louvain_contin_runs_r2 = louvain_contin_runs_r2
+        self.n_leiden_iterations_r1 = n_leiden_iterations_r1
+        self.n_leiden_iterations_r2 = n_leiden_iterations_r2
+        self.contin_runs_r1 = contin_runs_r1
+        self.contin_runs_r2 = contin_runs_r2
         self.final_louvain_level_to_return = final_louvain_level_to_return
 
         #postprocessor1 settings
@@ -140,10 +140,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                  self.louvain_num_runs_and_levels_r2),
                 ('final_louvain_level_to_return',
                  self.final_louvain_level_to_return),
-                ('louvain_contin_runs_r1',
-                 self.louvain_contin_runs_r1),
-                ('louvain_contin_runs_r2',
-                 self.louvain_contin_runs_r2),
+                ('contin_runs_r1',
+                 self.contin_runs_r1),
+                ('contin_runs_r2',
+                 self.contin_runs_r2),
                 ('frac_support_to_trim_to', self.frac_support_to_trim_to),
                 ('min_num_to_trim_to', self.min_num_to_trim_to),
                 ('trim_to_window_size', self.trim_to_window_size),
@@ -236,31 +236,39 @@ class TfModiscoSeqletsToPatternsFactory(object):
         affmat_transformer_r1 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
         print("TfModiscoSeqletsToPatternsFactory: seed=%d" % self.seed)
-        for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
-            affmat_transformer_r1 = affmat_transformer_r1.chain(
-                affinitymat.transformers.LouvainMembershipAverage(
-                    n_runs=n_runs,
-                    level_to_return=level_to_return,
-                    parallel_threads=self.n_cores, seed=self.seed))
-        clusterer_r1 = cluster.core.LouvainCluster(
-            level_to_return=self.final_louvain_level_to_return,
-            affmat_transformer=affmat_transformer_r1,
-            contin_runs=self.louvain_contin_runs_r1,
-            verbose=self.verbose, seed=self.seed)
+        #for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
+        #    affmat_transformer_r1 = affmat_transformer_r1.chain(
+        #        affinitymat.transformers.LouvainMembershipAverage(
+        #            n_runs=n_runs,
+        #            level_to_return=level_to_return,
+        #            parallel_threads=self.n_cores, seed=self.seed))
+        #clusterer_r1 = cluster.core.LouvainCluster(
+        #    level_to_return=self.final_louvain_level_to_return,
+        #    affmat_transformer=affmat_transformer_r1,
+        #    contin_runs=self.louvain_contin_runs_r1,
+        #    verbose=self.verbose, seed=self.seed)
+        clusterer_r1 = cluster.core.LeidenCluster(
+            contin_runs=self.contin_runs_r1,
+            n_leiden_iterations=self.n_leiden_iterations_r1,
+            verbose=self.verbose)
 
         affmat_transformer_r2 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
-        for n_runs, level_to_return in self.louvain_num_runs_and_levels_r2:
-            affmat_transformer_r2 = affmat_transformer_r2.chain(
-                affinitymat.transformers.LouvainMembershipAverage(
-                    n_runs=n_runs,
-                    level_to_return=level_to_return,
-                    parallel_threads=self.n_cores, seed=self.seed))
-        clusterer_r2 = cluster.core.LouvainCluster(
-            level_to_return=self.final_louvain_level_to_return,
-            affmat_transformer=affmat_transformer_r2,
-            contin_runs=self.louvain_contin_runs_r2,
-            verbose=self.verbose, seed=self.seed)
+        #for n_runs, level_to_return in self.louvain_num_runs_and_levels_r2:
+        #    affmat_transformer_r2 = affmat_transformer_r2.chain(
+        #        affinitymat.transformers.LouvainMembershipAverage(
+        #            n_runs=n_runs,
+        #            level_to_return=level_to_return,
+        #            parallel_threads=self.n_cores, seed=self.seed))
+        #clusterer_r2 = cluster.core.LouvainCluster(
+        #    level_to_return=self.final_louvain_level_to_return,
+        #    affmat_transformer=affmat_transformer_r2,
+        #    contin_runs=self.louvain_contin_runs_r2,
+        #    verbose=self.verbose, seed=self.seed)
+        clusterer_r2 = cluster.core.LeidenCluster(
+            contin_runs=self.contin_runs_r2,
+            n_leiden_iterations=self.n_leiden_iterations_r2,
+            verbose=self.verbose)
         
         clusterer_per_round = [clusterer_r1, clusterer_r2]
 

@@ -4,6 +4,8 @@ from . import phenograph as ph
 import numpy as np
 import time
 import sys
+import leidenalg
+from tqdm import tqdm
 
 
 class ClusterResults(object):
@@ -69,8 +71,82 @@ class PhenographCluster(AbstractAffinityMatClusterer):
         return LouvainClusterResults(
                 cluster_indices=communities,
                 Q=Q)
-        
 
+
+class LeidenCluster(AbstractAffinityMatClusterer):
+
+    def __init__(self, contin_runs=10, n_leiden_iterations=-1,
+                 partitiontype=leidenalg.ModularityVertexPartition,
+                 affmat_transformer=None, verbose=True): 
+        self.contin_runs = contin_runs
+        self.n_leiden_iterations = n_leiden_iterations
+        self.partitiontype = partitiontype
+        self.affmat_transformer = affmat_transformer
+        self.verbose = verbose
+
+    def __call__(self, orig_affinity_mat):
+        #replace nan values with zeros
+        orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
+        assert np.min(orig_affinity_mat) >= 0, np.min(orig_affinity_mat)
+
+        if (self.verbose):
+            print("Beginning preprocessing + Leiden")
+            sys.stdout.flush()
+        all_start = time.time()
+        if (self.affmat_transformer is not None):
+            affinity_mat = self.affmat_transformer(orig_affinity_mat)
+        else:
+            affinity_mat = orig_affinity_mat
+
+        the_graph = get_igraph_from_adjacency(adjacency=affinity_mat)
+        best_clustering = None
+        best_quality = None
+
+        if (self.verbose):
+            toiterover = tqdm(range(self.contin_runs))
+        else:
+            toiterover = range(self.contin_runs)
+
+        for seed in toiterover:
+            partition = leidenalg.find_partition(
+                the_graph, self.partitiontype,
+                weights=np.array(the_graph.es['weight']).astype(np.float64),
+                n_iterations=self.n_leiden_iterations,
+                seed=seed*100)
+            quality = partition.quality()
+            if ((best_quality is None) or (quality > best_quality)):
+                best_quality = quality
+                best_clustering = np.array(partition.membership)
+                if (self.verbose):
+                    print("Quality:",best_quality)
+                    sys.stdout.flush()
+        return ClusterResults(cluster_indices=best_clustering,
+                              quality=best_quality)
+
+
+#From: https://github.com/theislab/scanpy/blob/8131b05b7a8729eae3d3a5e146292f377dd736f7/scanpy/_utils.py#L159
+def get_igraph_from_adjacency(adjacency, directed=None):
+    """Get igraph graph from adjacency matrix."""
+    import igraph as ig
+    sources, targets = adjacency.nonzero()
+    weights = adjacency[sources, targets]
+    if isinstance(weights, np.matrix):
+        weights = weights.A1
+    g = ig.Graph(directed=directed)
+    g.add_vertices(adjacency.shape[0])  # this adds adjacency.shap[0] vertices
+    g.add_edges(list(zip(sources, targets)))
+    try:
+        g.es['weight'] = weights
+    except:
+        pass
+    if g.vcount() != adjacency.shape[0]:
+        logg.warning(
+            f'The constructed graph has only {g.vcount()} nodes. '
+            'Your adjacency matrix contained redundant nodes.'
+        )
+    return g
+     
+ 
 class LouvainCluster(AbstractAffinityMatClusterer):
 
     def __init__(self, level_to_return=-1,
