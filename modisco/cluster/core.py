@@ -84,7 +84,7 @@ class LeidenCluster(AbstractAffinityMatClusterer):
         self.affmat_transformer = affmat_transformer
         self.verbose = verbose
 
-    def __call__(self, orig_affinity_mat):
+    def __call__(self, orig_affinity_mat, initclusters):
         #replace nan values with zeros
         orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
         assert np.min(orig_affinity_mat) >= 0, np.min(orig_affinity_mat)
@@ -112,6 +112,7 @@ class LeidenCluster(AbstractAffinityMatClusterer):
                 the_graph, self.partitiontype,
                 weights=np.array(the_graph.es['weight']).astype(np.float64),
                 n_iterations=self.n_leiden_iterations,
+                initial_membership=initclusters,
                 seed=seed*100)
             quality = partition.quality()
             if ((best_quality is None) or (quality > best_quality)):

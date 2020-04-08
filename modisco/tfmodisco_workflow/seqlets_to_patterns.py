@@ -19,6 +19,29 @@ def print_memory_use():
     print("MEMORY",process.memory_info().rss/1000000000)
 
 
+def get_seqlet_neighbors_with_initcluster(
+        nearest_neighbors_to_compute,
+        coarse_affmat, initclusters): 
+    if (initclusters is not None):
+        assert len(initclusters)==len(coarse_affmat)
+    #get the argsort for coarse_affmat
+    coarse_affmat_argsort = np.argsort(coarse_affmat, axis=-1)
+    nearest_neighbors = []
+    for row_idx,argsort_row in enumerate(coarse_affmat_argsort):
+        combined_neighbor_row = []
+        neighbor_row_topnn = argsort_row[:nearest_neighbors_to_compute+1]
+        neighbor_set_topnn = set(neighbor_row_topnn)
+        combined_neighbor_row.extend(neighbor_row_topnn)
+        if (initclusters is not None):
+            combined_neighbor_row.extend([
+                y for y in [x for x in argsort_row
+                            if initclusters[x]==initclusters[row_idx]][
+                            :nearest_neighbors_to_compute+1]
+                if y not in neighbor_set_topnn])
+        nearest_neighbors.append(combined_neighbor_row) 
+    return nearest_neighbors
+
+
 class TfModiscoSeqletsToPatternsFactory(object):
 
     def __init__(self, n_cores=4,
@@ -172,9 +195,16 @@ class TfModiscoSeqletsToPatternsFactory(object):
         seqlets_sorter = (lambda arr:
                           sorted(arr,
                                  key=lambda x:
-                                      -np.sum([np.sum(np.abs(x[track_name].fwd))
-                                         for track_name
-                                         in contrib_scores_track_names])))
+                                  -np.sum([np.sum(np.abs(x[track_name].fwd))
+                                     for track_name
+                                     in contrib_scores_track_names])))
+
+        #TODO: instantiate a seqlets->clusterer object that accepts seqlets as
+        # input and returns a function that can map seqlets->cluster
+        # important to return a seqlets->cluster func so that in subsequent
+        # iterations, when the set of seqlets changes, can call the
+        # seqlets->cluster to get the new clusters
+        initclusterer_factory = None #TODO 
 
         pattern_comparison_settings =\
             affinitymat.core.PatternComparisonSettings(
@@ -207,13 +237,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                         verbose=self.verbose,
                         gpu_batch_size=None),
                 verbose=self.verbose)
-
-        nearest_neighbors_computer = nearest_neighbors.ScikitNearestNeighbors(
-            n_neighbors=self.nearest_neighbors_to_compute,
-            nn_n_jobs=self.nn_n_jobs)  
-
-        #TODO: add in nearest neighbors selected as potentially part of the same
-        # cluster via initialization
 
         affmat_from_seqlets_with_nn_pairs =\
             affinitymat.core.AffmatFromSeqletsWithNNpairs(
@@ -251,7 +274,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
         #    contin_runs=self.louvain_contin_runs_r1,
         #    verbose=self.verbose, seed=self.seed)
 
-        #TODO: include initialization
         clusterer_r1 = cluster.core.LeidenCluster(
             contin_runs=self.contin_runs_r1,
             n_leiden_iterations=self.n_leiden_iterations_r1,
@@ -271,7 +293,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
         #    contin_runs=self.louvain_contin_runs_r2,
         #    verbose=self.verbose, seed=self.seed)
 
-        #TODO: include initialization
         clusterer_r2 = cluster.core.LeidenCluster(
             contin_runs=self.contin_runs_r2,
             n_leiden_iterations=self.n_leiden_iterations_r2,
@@ -411,8 +432,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         return TfModiscoSeqletsToPatterns(
                 seqlets_sorter=seqlets_sorter,
+                initclusterer_factory=initclusterer_factory,
                 coarse_affmat_computer=coarse_affmat_computer,
-                nearest_neighbors_computer=nearest_neighbors_computer,
+                nearest_neighbors_to_compute=self.nearest_neighbors_to_compute,
                 affmat_from_seqlets_with_nn_pairs=
                     affmat_from_seqlets_with_nn_pairs, 
                 filter_mask_from_correlation=filter_mask_from_correlation,
@@ -476,8 +498,9 @@ class AbstractSeqletsToPatterns(object):
 class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
     def __init__(self, seqlets_sorter, 
+                       initclusterer_factory,
                        coarse_affmat_computer,
-                       nearest_neighbors_computer,
+                       nearest_neighbors_to_compute,
                        affmat_from_seqlets_with_nn_pairs, 
                        filter_mask_from_correlation,
                        filter_beyond_first_round,
@@ -493,8 +516,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        verbose=True):
 
         self.seqlets_sorter = seqlets_sorter
+        self.initclusterer_factory = initclusterer_factory
         self.coarse_affmat_computer = coarse_affmat_computer
-        self.nearest_neighbors_computer = nearest_neighbors_computer
+        self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
         self.affmat_from_seqlets_with_nn_pairs =\
             affmat_from_seqlets_with_nn_pairs
         self.filter_mask_from_correlation = filter_mask_from_correlation
@@ -517,6 +541,10 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
     def __call__(self, seqlets):
 
         seqlets = self.seqlets_sorter(seqlets)
+        if (initclusterer_factory is not None):
+            initclusterer = initclusterer_factory(seqlets=seqlets) 
+        else:
+            initclusterer = None
 
         start = time.time()
 
@@ -536,7 +564,10 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
             round_num = round_idx+1
 
-            #seqlets_sets.append(seqlets)
+            if (initclusterer is not None): 
+                initclusters = initclusterer(seqlets=seqlets)
+            else:
+                initclusters = None
             
             if (len(seqlets)==0):
                 if (self.verbose):
@@ -566,7 +597,11 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     print_memory_use()
                     sys.stdout.flush()
 
-                seqlet_neighbors = self.nearest_neighbors_computer(coarse_affmat)
+                seqlet_neighbors = get_seqlet_neighbors_with_initcluster(
+                    nearest_neighbors_to_compute=
+                     self.nearest_neighbors_to_compute,
+                    coarse_affmat=coarse_affmat,
+                    initclusters=initclusters)
 
                 if (self.verbose):
                     print("Computed nearest neighbors in",
@@ -581,8 +616,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     print_memory_use()
                     sys.stdout.flush()
                 nn_affmat = self.affmat_from_seqlets_with_nn_pairs(
-                                            seqlet_neighbors=seqlet_neighbors,
-                                            seqlets=seqlets) 
+                                    seqlet_neighbors=seqlet_neighbors,
+                                    seqlets=seqlets) 
                 #nn_affmats.append(nn_affmat)
                 
                 if (self.verbose):
@@ -594,6 +629,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
                 #filter by correlation
                 if (round_idx == 0 or self.filter_beyond_first_round==True):
+                    #the filter_mask_from_correlation function only operates
+                    # on columns in which np.abs(main_affmat) > 0
                     filtered_rows_mask = self.filter_mask_from_correlation(
                                             main_affmat=nn_affmat,
                                             other_affmat=coarse_affmat) 
@@ -613,7 +650,11 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                         sys.stdout.flush()
 
                 filtered_seqlets = [x[0] for x in
-                           zip(seqlets, filtered_rows_mask) if (x[1])]
+                    zip(seqlets, filtered_rows_mask) if (x[1])]
+                if (initclusters is not None):
+                    filtered_initclusters = initclusters[filtered_rows_mask] 
+                else:
+                    filtered_initclusters = None
                 #filtered_seqlets_sets.append(filtered_seqlets)
 
                 filtered_affmat =\
@@ -623,6 +664,10 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             else:
                 filtered_affmat = coarse_affmat
                 filtered_seqlets = seqlets
+                if (initclusters is not None):
+                    filtered_initclusters = initclusters
+                else:
+                    filtered_initclusters = None
 
             if (self.verbose):
                 print("(Round "+str(round_num)+") Computing density "
@@ -640,7 +685,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 print_memory_use()
                 sys.stdout.flush() 
 
-            cluster_results = clusterer(density_adapted_affmat)
+            cluster_results = clusterer(density_adapted_affmat,
+                                        initclusters=filtered_initclusters)
             del density_adapted_affmat
             #cluster_results_sets.append(cluster_results)
             num_clusters = max(cluster_results.cluster_indices+1)
