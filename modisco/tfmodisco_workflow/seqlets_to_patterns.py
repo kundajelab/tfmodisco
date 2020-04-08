@@ -212,6 +212,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
             n_neighbors=self.nearest_neighbors_to_compute,
             nn_n_jobs=self.nn_n_jobs)  
 
+        #TODO: add in nearest neighbors selected as potentially part of the same
+        # cluster via initialization
+
         affmat_from_seqlets_with_nn_pairs =\
             affinitymat.core.AffmatFromSeqletsWithNNpairs(
                 pattern_comparison_settings=pattern_comparison_settings,
@@ -247,6 +250,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
         #    affmat_transformer=affmat_transformer_r1,
         #    contin_runs=self.louvain_contin_runs_r1,
         #    verbose=self.verbose, seed=self.seed)
+
+        #TODO: include initialization
         clusterer_r1 = cluster.core.LeidenCluster(
             contin_runs=self.contin_runs_r1,
             n_leiden_iterations=self.n_leiden_iterations_r1,
@@ -265,6 +270,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
         #    affmat_transformer=affmat_transformer_r2,
         #    contin_runs=self.louvain_contin_runs_r2,
         #    verbose=self.verbose, seed=self.seed)
+
+        #TODO: include initialization
         clusterer_r2 = cluster.core.LeidenCluster(
             contin_runs=self.contin_runs_r2,
             n_leiden_iterations=self.n_leiden_iterations_r2,
