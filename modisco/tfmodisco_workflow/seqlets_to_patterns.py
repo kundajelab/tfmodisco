@@ -47,6 +47,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
     def __init__(self, n_cores=4,
                        min_overlap_while_sliding=0.7,
 
+                       #init clusterer factory
+                       initclusterer_factory=None,                       
+
                        #gapped kmer embedding arguments
                        alphabet_size=4,
                        kmer_len=8, num_gaps=3, num_mismatches=2,
@@ -85,6 +88,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
                        final_flank_to_add=10,
                        verbose=True, seed=1234):
+
+        self.initclusterer_factory = initclusterer_factory
 
         #affinity_mat calculation
         self.n_cores = n_cores
@@ -145,6 +150,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
         to_return =  OrderedDict([
                 ('class_name', type(self).__name__),
                 ('n_cores', self.n_cores),
+                ('initclusterer_factory',
+                 self.initclusterer_factory.get_jsonable_config())
                 ('min_overlap_while_sliding', self.min_overlap_while_sliding),
                 ('alphabet_size', self.alphabet_size),
                 ('kmer_len', self.kmer_len),
@@ -199,12 +206,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                      for track_name
                                      in contrib_scores_track_names])))
 
-        #TODO: instantiate a seqlets->clusterer object that accepts seqlets as
-        # input and returns a function that can map seqlets->cluster
-        # important to return a seqlets->cluster func so that in subsequent
-        # iterations, when the set of seqlets changes, can call the
-        # seqlets->cluster to get the new clusters
-        initclusterer_factory = None #TODO 
+        if (self.initclusterer_factory is not None):
+            self.initclusterer_factory.set_onehot_track_name(onehot_track_name)
+        initclusterer_factory = self.initclusterer_factory
 
         pattern_comparison_settings =\
             affinitymat.core.PatternComparisonSettings(
@@ -541,8 +545,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
     def __call__(self, seqlets):
 
         seqlets = self.seqlets_sorter(seqlets)
-        if (initclusterer_factory is not None):
-            initclusterer = initclusterer_factory(seqlets=seqlets) 
+        if (self.initclusterer_factory is not None):
+            initclusterer = self.initclusterer_factory(seqlets=seqlets) 
         else:
             initclusterer = None
 
