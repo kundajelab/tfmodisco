@@ -121,12 +121,9 @@ class PwmClusterer(object):
             np.take_along_axis(max_pwm_scores_perseq,
                                np.expand_dims(argmax_pwm, axis=0),
                                axis=0))
-        print(max_pwm_scores_perseq.shape)
-        print(argmax_pwm.shape)
         #seqlet_assigned is a boolean vector indicating whether the seqlet
         # was actually successfully assigned to a cluster
         seqlet_assigned = argmax_pwm_score > self.min_logodds
-        print(seqlet_assigned.shape)
         
         #not all pwms may wind up with seqlets assigned to them; if this is
         # the case, then we would want to remap the cluster indices such
@@ -136,10 +133,10 @@ class PwmClusterer(object):
         if (self.verbose):
             print("Of "+str(len(seqlets))+" seqlets, cluster assignments are:",
                   seqlets_per_pwm)
-        pwm_cluster_remapping = dict([(x[1],x[0]) for x in
-            enumerate(sorted(seqlets_per_pwm.keys(),
-                             key=lambda x: -seqlets_per_pwm[x]))
-            if seqlets_per_pwm[x[1]] > 0 and x[0] >= 0])
+        pwm_cluster_remapping = dict([ (x[1],x[0]) for x in
+            enumerate([y for y in sorted(seqlets_per_pwm.keys(),
+                                         key=lambda x: -seqlets_per_pwm[x])
+                       if seqlets_per_pwm[y] > 0 and y >= 0]) ])
 
         final_seqlet_clusters = np.zeros(len(seqlets))
         #assign the remapped clusters for the seqlets that received assignment
@@ -151,5 +148,6 @@ class PwmClusterer(object):
                   len(pwm_cluster_remapping)+sum(seqlet_assigned==False))) 
 
         final_seqlet_clusters = final_seqlet_clusters.astype("int")
+        print(Counter(final_seqlet_clusters))
 
         return final_seqlet_clusters

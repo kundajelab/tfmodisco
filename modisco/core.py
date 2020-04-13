@@ -694,6 +694,7 @@ class AggregatedSeqlet(Pattern):
 
     def trim_to_start_and_end_idx(self, start_idx, end_idx):
         new_seqlets_and_alnmnts = [] 
+        skipped = 0
         for seqlet_and_alnmt in self._seqlets_and_alnmts:
             if (seqlet_and_alnmt.alnmt < end_idx and
                 ((seqlet_and_alnmt.alnmt + len(seqlet_and_alnmt.seqlet))
@@ -772,11 +773,16 @@ class AggregatedSeqlet(Pattern):
         self._initialize_track_name_to_aggregation(
               sample_seqlet=seqlets_and_alnmts_arr[0].seqlet)
         self.per_position_counts = np.zeros((self.length,))
+        duplicates = 0
         for seqlet_and_alnmt in seqlets_and_alnmts_arr:
             if (seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts): 
                 self._add_pattern_with_valid_alnmt(
                         pattern=seqlet_and_alnmt.seqlet,
                         alnmt=seqlet_and_alnmt.alnmt)
+            else:
+               duplicates += 1 
+        if (duplicates > 0):
+            print("Removed",duplicates,"duplicate seqlets") 
 
     def _initialize_track_name_to_aggregation(self, sample_seqlet): 
         self._track_name_to_agg = OrderedDict() 
