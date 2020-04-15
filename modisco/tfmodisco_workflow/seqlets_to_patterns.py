@@ -475,17 +475,63 @@ class SeqletsToPatternsResults(object):
         self.total_time_taken = total_time_taken
         self.__dict__.update(**kwargs)
 
+    def save_each_round_initcluster_motifs(self, grp):
+        all_round_names = []
+        for (round_idx,initcluster_motifs)\
+            in enumerate(self.each_round_initcluster_motifs):
+            round_name = "round_"+str(round_idx)
+            round_grp = grp.create_group(round_name)
+            util.save_patterns(patterns=initcluster_motifs,
+                               grp=grp.create_group(round_name)) 
+        util.save_string_list(
+            patterns=all_round_names,
+            dset_name="all_round_names",          
+            grp=grp)
+
+
+#def load_patterns(grp, track_set):
+#    from modisco.core import AggregatedSeqlet
+#    all_pattern_names = load_string_list(dset_name="all_pattern_names",
+#                                         grp=grp)
+#    patterns = []
+#    for pattern_name in all_pattern_names:
+#        pattern_grp = grp[pattern_name] 
+#        patterns.append(AggregatedSeqlet.from_hdf5(grp=pattern_grp,
+#                                                   track_set=track_set))
+#    return patterns
+    @classmethod
+    def load_each_round_initcluster_motifs(cls, grp, track_set):
+        all_round_names = load_string_list(dset_name="all_round_names",
+                                           grp=grp) 
+        each_round_initcluster_motifs = [] 
+        for round_name in all_round_names:
+            round_grp = grp[round_name]
+            initcluster_motifs = load_patterns(grp=round_grp,
+                                               track_set=track_set)
+            each_round_initcluster_motifs.append(initcluster_motifs)
+        return each_round_initcluster_motifs
+             
+
     @classmethod
     def from_hdf5(cls, grp, track_set):
         success = grp.attrs.get("success", False)
         if (success):
+            if ("each_round_initcluster_motifs" not in grp):
+                each_round_initcluster_motifs = None 
+            else:
+                each_round_initcluster_motifs =\
+                    cls.load_each_round_initcluster_motifs(
+                        grp=grp["each_round_initcluster_motifs"],
+                        track_set=track_set)
             patterns = util.load_patterns(grp=grp["patterns"],
                                           track_set=track_set) 
             cluster_results = None
             total_time_taken = None
-            return cls(patterns=patterns,
-                       cluster_results=cluster_results,
-                       total_time_taken=total_time_taken)
+            return cls(
+                each_round_initcluster_motifs=each_round_initcluster_motifs,
+                patterns=patterns,
+                cluster_results=cluster_results,
+                total_time_taken=total_time_taken)
         else:
             return cls(success=False, patterns=None, cluster_results=None,
                        total_time_taken=None)
@@ -493,9 +539,10 @@ class SeqletsToPatternsResults(object):
     def save_hdf5(self, grp):
         grp.attrs["success"] = self.success
         if (self.success):
+            self.save_each_round_initcluster_motifs(grp)
             if (self.each_round_initcluster_motifs is not None):
-                util.save_patterns(self.each_round_initcluster_motifs,
-                    grp.create_group("each_round_initcluster_motifs"))
+                self.save_each_round_initcluster_motifs(
+                    grp=grp.create_group("each_round_initcluster_motifs"))
             util.save_patterns(self.patterns,
                                grp.create_group("patterns"))
             self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   

@@ -23,12 +23,14 @@ class InitClustererFactory(object):
 class MemeInitClustererFactory(InitClustererFactory):
 
     def __init__(self, meme_command, base_outdir, num_seqlets_to_use,
-                       nmotifs, **pwm_clusterer_kwargs):
+                       nmotifs, e_value_threshold=0.05,
+                       **pwm_clusterer_kwargs):
         self.meme_command = meme_command
         self.base_outdir = base_outdir
         self.num_seqlets_to_use = num_seqlets_to_use 
         self.nmotifs = nmotifs
         self.call_count = 0 #to avoid overwriting for each metacluster
+        self.e_value_threshold = e_value_threshold
         self.pwm_clusterer_kwargs = pwm_clusterer_kwargs
 
     def __call__(self, seqlets):
@@ -63,26 +65,46 @@ class MemeInitClustererFactory(InitClustererFactory):
                  input_file=seqlet_fa_to_write,
                  outdir=outdir, nmotifs=self.nmotifs) 
 
-        motifs = parse_meme(outdir+"/meme.xml")
+        motifs = parse_meme(meme_xml=outdir+"/meme.xml",
+                            e_value_threshold=self.e_value_threshold)
         return PwmClusterer(
                 pwms=motifs, onehot_track_name=self.onehot_track_name,
                 **self.pwm_clusterer_kwargs)
-        
+
+
+class Pwm(object):
+
+    def __init__(self, matrix, threshold):
+        self.matrix = matrix
+        self.threshold = threshold
         
 
-def parse_meme(meme_xml):
+def parse_meme(meme_xml, e_value_threshold):
     import xml.etree.ElementTree as ET 
     tree = ET.parse(meme_xml)
-    motifs_xml = tree.getroot().find("motifs").getchildren()
+    motifs_xml = list(tree.getroot().find("motifs"))
     motifs = []
+    motif_pvals = []
+    motif_bayesthresholds = []
+
     for motif_xml in motifs_xml:
-        motif = []
-        alphabet_matrix_xml = (motif_xml.find("scores").find("alphabet_matrix")
-                               .getchildren())
-        for matrix_row_xml in alphabet_matrix_xml:
-            matrix_row = [float(x.text) for x in matrix_row_xml.getchildren()] 
-            motif.append(matrix_row) 
-        motifs.append(np.array(motif))
+        pwm = []
+        motif_name = motif_xml.get("name")
+        p_value = float(motif_xml.get("p_value"))
+        e_value = float(motif_xml.get("e_value"))
+        bayes_threshold = float(motif_xml.get("bayes_threshold"))
+        alphabet_matrix_xml = list(motif_xml.find("scores")
+                                            .find("alphabet_matrix"))
+        for pwm_row_xml in alphabet_matrix_xml:
+            pwm_row = [float(x.text) for x in list(pwm_row_xml)] 
+            pwm.append(pwm_row) 
+
+        if (e_value < e_value_threshold):
+            motifs.append(Pwm(matrix=np.array(pwm),
+                              threshold=bayes_threshold))
+        else:
+            print("Skipping motif "+motif_name+" as e-value "+str(e_value)
+                  +" does not meet threshold of "+str(e_value_threshold))
     return motifs
 
 
@@ -97,10 +119,9 @@ def get_max_across_sequences(onehot_seq, weightmat):
 
 class PwmClusterer(object):
 
-    def __init__(self, pwms, min_logodds, n_jobs,
+    def __init__(self, pwms, n_jobs,
                  onehot_track_name, verbose=True):
         self.pwms = pwms
-        self.min_logodds = min_logodds
         self.n_jobs = n_jobs
         self.verbose = verbose
         self.onehot_track_name = onehot_track_name
@@ -113,17 +134,20 @@ class PwmClusterer(object):
         #do a motif scan on onehot_seqlets
         max_pwm_scores_perseq = np.array(Parallel(n_jobs=self.n_jobs)(
                                     delayed(get_max_across_sequences)(
-                                     onehot_seqlets, pwm)
+                                     onehot_seqlets, pwm.matrix)
                                     for pwm in self.pwms))
-        #map seqlets to best match motif if min > self.min_logodds 
+        #map seqlets to best match motif if min > motif threshold 
         argmax_pwm = np.argmax(max_pwm_scores_perseq, axis=0)
         argmax_pwm_score = np.squeeze(
             np.take_along_axis(max_pwm_scores_perseq,
                                np.expand_dims(argmax_pwm, axis=0),
                                axis=0))
+
         #seqlet_assigned is a boolean vector indicating whether the seqlet
         # was actually successfully assigned to a cluster
-        seqlet_assigned = argmax_pwm_score > self.min_logodds
+        seqlet_assigned = np.array([True if score > self.pwms[argmax].threshold
+                                    else False for argmax,score
+                                    in zip(argmax_pwm, argmax_pwm_score)])
         
         #not all pwms may wind up with seqlets assigned to them; if this is
         # the case, then we would want to remap the cluster indices such
@@ -148,6 +172,5 @@ class PwmClusterer(object):
                   len(pwm_cluster_remapping)+sum(seqlet_assigned==False))) 
 
         final_seqlet_clusters = final_seqlet_clusters.astype("int")
-        print(Counter(final_seqlet_clusters))
 
         return final_seqlet_clusters
