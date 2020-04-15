@@ -480,29 +480,17 @@ class SeqletsToPatternsResults(object):
         for (round_idx,initcluster_motifs)\
             in enumerate(self.each_round_initcluster_motifs):
             round_name = "round_"+str(round_idx)
-            round_grp = grp.create_group(round_name)
             util.save_patterns(patterns=initcluster_motifs,
                                grp=grp.create_group(round_name)) 
         util.save_string_list(
-            patterns=all_round_names,
+            string_list=all_round_names,
             dset_name="all_round_names",          
             grp=grp)
 
-
-#def load_patterns(grp, track_set):
-#    from modisco.core import AggregatedSeqlet
-#    all_pattern_names = load_string_list(dset_name="all_pattern_names",
-#                                         grp=grp)
-#    patterns = []
-#    for pattern_name in all_pattern_names:
-#        pattern_grp = grp[pattern_name] 
-#        patterns.append(AggregatedSeqlet.from_hdf5(grp=pattern_grp,
-#                                                   track_set=track_set))
-#    return patterns
     @classmethod
     def load_each_round_initcluster_motifs(cls, grp, track_set):
-        all_round_names = load_string_list(dset_name="all_round_names",
-                                           grp=grp) 
+        all_round_names = util.load_string_list(dset_name="all_round_names",
+                                                grp=grp) 
         each_round_initcluster_motifs = [] 
         for round_name in all_round_names:
             round_grp = grp[round_name]
@@ -511,7 +499,6 @@ class SeqletsToPatternsResults(object):
             each_round_initcluster_motifs.append(initcluster_motifs)
         return each_round_initcluster_motifs
              
-
     @classmethod
     def from_hdf5(cls, grp, track_set):
         success = grp.attrs.get("success", False)
@@ -539,7 +526,6 @@ class SeqletsToPatternsResults(object):
     def save_hdf5(self, grp):
         grp.attrs["success"] = self.success
         if (self.success):
-            self.save_each_round_initcluster_motifs(grp)
             if (self.each_round_initcluster_motifs is not None):
                 self.save_each_round_initcluster_motifs(
                     grp=grp.create_group("each_round_initcluster_motifs"))
