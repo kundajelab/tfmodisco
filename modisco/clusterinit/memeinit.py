@@ -6,10 +6,12 @@ from joblib import Parallel, delayed
 from collections import Counter
 import os
 from subprocess import Popen, PIPE
+import time
 
 
 def run_meme(meme_command, input_file, outdir, nmotifs):
 
+    start = time.time()
     #p = Popen([meme_command,input_file,"-dna","-mod","anr",
     #           "-nmotifs",str(nmotifs),
     #           "-minw","6","-maxw","50","-oc",outdir]),
@@ -26,6 +28,7 @@ def run_meme(meme_command, input_file, outdir, nmotifs):
                +str(nmotifs)+" -minw 6 -maxw 50 -oc "+outdir)
     print("Command:",command)
     os.system(command)
+    print("Duration of MEME:",time.time()-start,"seconds")
 
 
 class InitClustererFactory(object):
