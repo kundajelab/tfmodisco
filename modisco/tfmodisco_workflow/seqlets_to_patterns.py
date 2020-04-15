@@ -466,9 +466,7 @@ class SeqletsToPatternsResults(object):
                  each_round_initcluster_motifs, 
                  patterns, cluster_results,
                  total_time_taken, success=True, **kwargs):
-        self.each_round_initcluster_motifs = [
-            [y for y in motifs if len(y.seqlets) > 1]
-            for motifs in each_round_initcluster_motifs]
+        self.each_round_initcluster_motifs = each_round_initcluster_motifs
         self.success = success
         self.patterns = patterns
         self.cluster_results = cluster_results
