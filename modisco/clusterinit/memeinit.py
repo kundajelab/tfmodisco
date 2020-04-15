@@ -5,11 +5,27 @@ from .. import util
 from joblib import Parallel, delayed
 from collections import Counter
 import os
+from subprocess import Popen, PIPE
 
 
 def run_meme(meme_command, input_file, outdir, nmotifs):
-    os.system(meme_command+" "+input_file+" -dna -mod anr -nmotifs "
-              +str(nmotifs)+"  -minw 6 -maxw 50 -oc "+outdir)
+
+    #p = Popen([meme_command,input_file,"-dna","-mod","anr",
+    #           "-nmotifs",str(nmotifs),
+    #           "-minw","6","-maxw","50","-oc",outdir]),
+    #          stdout=PIPE, stderr=PIPE, stdin=PIPE)
+    #while True:
+    #    print("hi")
+    #    output = p.stdout.read()
+    #    print("ho")
+    #    if output == '' and process.poll() is not None:
+    #        break
+    #    sys.stdout.write(output)
+    print("Running MEME")
+    command = (meme_command+" "+input_file+" -dna -mod anr -nmotifs "            
+               +str(nmotifs)+" -minw 6 -maxw 50 -oc "+outdir)
+    print("Command:",command)
+    os.system(command)
 
 
 class InitClustererFactory(object):

@@ -585,7 +585,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
 
     def get_cluster_to_aggregate_motif(self, seqlets, cluster_indices,
-                                       sign_consistency_check):
+                                       sign_consistency_check,
+                                       min_seqlets_in_motif):
         num_clusters = max(cluster_indices+1)
         cluster_to_seqlets = defaultdict(list) 
         assert len(seqlets)==len(cluster_indices)
@@ -595,25 +596,26 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         cluster_to_motif = OrderedDict()
         cluster_to_eliminated_motif = OrderedDict()
         for i in range(num_clusters):
-            if (self.verbose):
-                print("Aggregating for cluster "+str(i)+" with "
-                      +str(len(cluster_to_seqlets[i]))+" seqlets")
-                print_memory_use()
-                sys.stdout.flush()
-            motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
-            assert len(motifs)<=1
-            if (len(motifs) > 0):
-                motif = motifs[0]
-                if (sign_consistency_check==False or
-                    self.sign_consistency_func(motif)):
-                    cluster_to_motif[i] = motif
-                else:
-                    if (self.verbose):
-                        print("Dropping cluster "+str(i)+
-                              " with "+str(motif.num_seqlets)
-                              +" seqlets due to sign disagreement")
-                    cluster_to_eliminated_motif[i] = motif
-            cluster_to_motif[i] = motif
+            if (len(cluster_to_seqlets[i]) >= min_seqlets_in_motif):
+                if (self.verbose):
+                    print("Aggregating for cluster "+str(i)+" with "
+                          +str(len(cluster_to_seqlets[i]))+" seqlets")
+                    print_memory_use()
+                    sys.stdout.flush()
+                motifs = self.seqlet_aggregator(cluster_to_seqlets[i])
+                assert len(motifs)<=1
+                if (len(motifs) > 0):
+                    motif = motifs[0]
+                    if (sign_consistency_check==False or
+                        self.sign_consistency_func(motif)):
+                        cluster_to_motif[i] = motif
+                    else:
+                        if (self.verbose):
+                            print("Dropping cluster "+str(i)+
+                                  " with "+str(motif.num_seqlets)
+                                  +" seqlets due to sign disagreement")
+                        cluster_to_eliminated_motif[i] = motif
+                cluster_to_motif[i] = motif
         return cluster_to_motif, cluster_to_eliminated_motif
 
 
@@ -654,7 +656,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     list(self.get_cluster_to_aggregate_motif(
                             seqlets=seqlets,
                             cluster_indices=initclusters,
-                            sign_consistency_check=False)[0].values())
+                            sign_consistency_check=False,
+                            min_seqlets_in_motif=2)[0].values())
                 each_round_initcluster_motifs.append(initcluster_motifs)
             else:
                 initclusters = None
@@ -800,7 +803,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 self.get_cluster_to_aggregate_motif(
                     seqlets=filtered_seqlets,
                     cluster_indices=cluster_results.cluster_indices,
-                    sign_consistency_check=True)
+                    sign_consistency_check=True,
+                    min_seqlets_in_motif=0)
 
             #obtain unique seqlets from adjusted motifs
             seqlets = dict([(y.exidx_start_end_string, y)

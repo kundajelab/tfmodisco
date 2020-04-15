@@ -517,7 +517,8 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
             neighbors_of_things_to_scan = [list(range(len(filters)))
                                            for x in things_to_scan] 
         assert len(neighbors_of_things_to_scan) == things_to_scan.shape[0]
-        assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
+        assert np.max([np.max(x) for x in neighbors_of_things_to_scan])\
+                < filters.shape[0]
         assert len(things_to_scan.shape)==3
         assert len(filters.shape)==3
 
