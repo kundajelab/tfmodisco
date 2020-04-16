@@ -66,8 +66,12 @@ class MemeInitClustererFactory(InitClustererFactory):
         seqlet_fa_to_write = outdir+"/inp_seqlets.fa"
         seqlet_fa_fh = open(seqlet_fa_to_write, 'w') 
         if (len(seqlets) > self.num_seqlets_to_use):
+            print(np.random.RandomState(1).choice(     
+                         np.arange(self.num_seqlets_to_use),                    
+                         replace=False))
             seqlets = [seqlets[x] for x in np.random.RandomState(1).choice(
-                         np.arange(self.num_seqlets_to_use),
+                         np.arange(len(seqlets)),
+                         size=self.num_seqlets_to_use,
                          replace=False)]
 
         letter_order = "ACGT"
