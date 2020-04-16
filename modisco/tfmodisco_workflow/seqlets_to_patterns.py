@@ -63,7 +63,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        skip_fine_grained=False,
 
                        tsne_perplexity = 10,
-                       use_louvain=True,
+                       use_louvain=False,
                        louvain_initclusters_weight=1.0,
                        n_leiden_iterations_r1=-1,
                        n_leiden_iterations_r2=-1,
@@ -94,6 +94,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        verbose=True, seed=1234):
 
         self.initclusterer_factory = initclusterer_factory
+        if (use_louvain==True):
+            assert self.initclusterer_factory==None,\
+                    ("Louvain doesn't support cluster initialization;"
+                     +" set use_louvain to False")
 
         #affinity_mat calculation
         self.n_cores = n_cores

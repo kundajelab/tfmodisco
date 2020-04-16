@@ -168,14 +168,17 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         self.seed=seed
         self.initclusters_weight = initclusters_weight
 
-    def get_coocc_mat_from_initclusters(self, initclusters):
-        cooc = np.zeros(len(initclusters)) 
-        for idx in range(max(initclusters)+1):
-            in_cluster_mask = initclusters==idx
-            cooc[in_cluster_mask,:][:,in_cluster_mask] = 1.0
-        return cooc
+    #def get_coocc_mat_from_initclusters(self, initclusters):
+    #    cooc = np.zeros(len(initclusters), len(initclusters)) 
+    #    for idx in range(max(initclusters)+1):
+    #        in_cluster_mask = initclusters==idx
+    #        cooc[in_cluster_mask,:][:,in_cluster_mask] = 1.0
+    #    return cooc
     
     def __call__(self, orig_affinity_mat, initclusters=None):
+    
+        assert initclusters==None,\
+                "LouvainCluster doesn't support cluster init"
 
         #replace nan values with zeros
         orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
@@ -190,11 +193,11 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         else:
             affinity_mat = orig_affinity_mat
 
-        if (initclusters is not None):
-            initclusters_cooc =\
-                self.get_coocc_mat_from_initclusters(initclusters=initclusters)
-            affinity_mat = 0.5*(affinity_mat
-                                + initclusters*self.initclusters_weight)
+        #if (initclusters is not None):
+        #    initclusters_cooc =\
+        #        self.get_coocc_mat_from_initclusters(initclusters=initclusters)
+        #    affinity_mat = 0.5*(affinity_mat
+        #                        + initclusters*self.initclusters_weight)
 
         communities, graph, Q, =\
             ph.cluster.runlouvain_given_graph(
