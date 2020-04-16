@@ -25,7 +25,7 @@ def get_seqlet_neighbors_with_initcluster(
     if (initclusters is not None):
         assert len(initclusters)==len(coarse_affmat)
     #get the argsort for coarse_affmat
-    coarse_affmat_argsort = np.argsort(coarse_affmat, axis=-1)
+    coarse_affmat_argsort = np.argsort(-coarse_affmat, axis=-1)
     nearest_neighbors = []
     for row_idx,argsort_row in enumerate(coarse_affmat_argsort):
         combined_neighbor_row = []
@@ -34,9 +34,9 @@ def get_seqlet_neighbors_with_initcluster(
         combined_neighbor_row.extend(neighbor_row_topnn)
         if (initclusters is not None):
             combined_neighbor_row.extend([
-                y for y in [x for x in argsort_row
-                            if initclusters[x]==initclusters[row_idx]][
-                            :nearest_neighbors_to_compute+1]
+                y for y in ([x for x in argsort_row
+                             if initclusters[x]==initclusters[row_idx]][
+                             :nearest_neighbors_to_compute+1])
                 if y not in neighbor_set_topnn])
         nearest_neighbors.append(combined_neighbor_row) 
     return nearest_neighbors
