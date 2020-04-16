@@ -63,8 +63,12 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        skip_fine_grained=False,
 
                        tsne_perplexity = 10,
+                       use_louvain=True,
+                       louvain_initclusters_weight=1.0,
                        n_leiden_iterations_r1=-1,
                        n_leiden_iterations_r2=-1,
+                       louvain_num_runs_and_levels_r1=[(200,-1)],
+                       louvain_num_runs_and_levels_r2=[(200,-1)], 
                        contin_runs_r1 = 50,
                        contin_runs_r2 = 50,
                        final_louvain_level_to_return=1,
@@ -113,10 +117,14 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.tsne_perplexity = tsne_perplexity
 
         #clustering settings
+        self.use_louvain = use_louvain
+        self.louvain_initclusters_weight = louvain_initclusters_weight
         self.n_leiden_iterations_r1 = n_leiden_iterations_r1
         self.n_leiden_iterations_r2 = n_leiden_iterations_r2
         self.contin_runs_r1 = contin_runs_r1
         self.contin_runs_r2 = contin_runs_r2
+        self.louvain_num_runs_and_levels_r1 = louvain_num_runs_and_levels_r1
+        self.louvain_num_runs_and_levels_r2 = louvain_num_runs_and_levels_r2
         self.final_louvain_level_to_return = final_louvain_level_to_return
 
         #postprocessor1 settings
@@ -164,6 +172,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                  self.affmat_correlation_threshold),
                 ('filter_beyond_first_round', filter_beyond_first_round),
                 ('tsne_perplexity', self.tsne_perplexity),
+                ('use_louvain', self.use_louvain),
                 ('louvain_num_runs_and_levels_r1',
                  self.louvain_num_runs_and_levels_r1),
                 ('louvain_num_runs_and_levels_r2',
@@ -266,41 +275,46 @@ class TfModiscoSeqletsToPatternsFactory(object):
         affmat_transformer_r1 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
         print("TfModiscoSeqletsToPatternsFactory: seed=%d" % self.seed)
-        #for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
-        #    affmat_transformer_r1 = affmat_transformer_r1.chain(
-        #        affinitymat.transformers.LouvainMembershipAverage(
-        #            n_runs=n_runs,
-        #            level_to_return=level_to_return,
-        #            parallel_threads=self.n_cores, seed=self.seed))
-        #clusterer_r1 = cluster.core.LouvainCluster(
-        #    level_to_return=self.final_louvain_level_to_return,
-        #    affmat_transformer=affmat_transformer_r1,
-        #    contin_runs=self.louvain_contin_runs_r1,
-        #    verbose=self.verbose, seed=self.seed)
-
-        clusterer_r1 = cluster.core.LeidenCluster(
-            contin_runs=self.contin_runs_r1,
-            n_leiden_iterations=self.n_leiden_iterations_r1,
-            verbose=self.verbose)
+        if (self.use_louvain):
+            for n_runs, level_to_return in self.louvain_num_runs_and_levels_r1:
+                affmat_transformer_r1 = affmat_transformer_r1.chain(
+                    affinitymat.transformers.LouvainMembershipAverage(
+                        n_runs=n_runs,
+                        level_to_return=level_to_return,
+                        parallel_threads=self.n_cores, seed=self.seed))
+            clusterer_r1 = cluster.core.LouvainCluster(
+                level_to_return=self.final_louvain_level_to_return,
+                affmat_transformer=affmat_transformer_r1,
+                contin_runs=self.contin_runs_r1,
+                verbose=self.verbose, seed=self.seed)
+        else:
+            clusterer_r1 = cluster.core.LeidenCluster(
+                affmat_transformer=affmat_transformer_r1,
+                contin_runs=self.contin_runs_r1,
+                n_leiden_iterations=self.n_leiden_iterations_r1,
+                verbose=self.verbose)
 
         affmat_transformer_r2 = affinitymat.transformers.SymmetrizeByAddition(
                                 probability_normalize=True)
-        #for n_runs, level_to_return in self.louvain_num_runs_and_levels_r2:
-        #    affmat_transformer_r2 = affmat_transformer_r2.chain(
-        #        affinitymat.transformers.LouvainMembershipAverage(
-        #            n_runs=n_runs,
-        #            level_to_return=level_to_return,
-        #            parallel_threads=self.n_cores, seed=self.seed))
-        #clusterer_r2 = cluster.core.LouvainCluster(
-        #    level_to_return=self.final_louvain_level_to_return,
-        #    affmat_transformer=affmat_transformer_r2,
-        #    contin_runs=self.louvain_contin_runs_r2,
-        #    verbose=self.verbose, seed=self.seed)
-
-        clusterer_r2 = cluster.core.LeidenCluster(
-            contin_runs=self.contin_runs_r2,
-            n_leiden_iterations=self.n_leiden_iterations_r2,
-            verbose=self.verbose)
+        if (self.use_louvain):
+            for n_runs, level_to_return in self.louvain_num_runs_and_levels_r2:
+                affmat_transformer_r2 = affmat_transformer_r2.chain(
+                    affinitymat.transformers.LouvainMembershipAverage(
+                        n_runs=n_runs,
+                        level_to_return=level_to_return,
+                        parallel_threads=self.n_cores, seed=self.seed))
+            clusterer_r2 = cluster.core.LouvainCluster(
+                level_to_return=self.final_louvain_level_to_return,
+                affmat_transformer=affmat_transformer_r2,
+                contin_runs=self.contin_runs_r2,
+                verbose=self.verbose, seed=self.seed,
+                initclusters_weight=self.louvain_initclusters_weight)
+        else:
+            clusterer_r2 = cluster.core.LeidenCluster(
+                affmat_transformer=affmat_transformer_r2,
+                contin_runs=self.contin_runs_r2,
+                n_leiden_iterations=self.n_leiden_iterations_r2,
+                verbose=self.verbose)
         
         clusterer_per_round = [clusterer_r1, clusterer_r2]
 

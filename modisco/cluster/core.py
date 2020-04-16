@@ -155,7 +155,8 @@ class LouvainCluster(AbstractAffinityMatClusterer):
                        max_clusters=None,
                        contin_runs=100,
                        q_tol=0.0, louvain_time_limit=2000,
-                       verbose=True, seed=1234):
+                       verbose=True, seed=1234,
+                       initclusters_weight=1.0):
         self.level_to_return = level_to_return
         self.affmat_transformer = affmat_transformer
         self.min_cluster_size = min_cluster_size
@@ -165,8 +166,16 @@ class LouvainCluster(AbstractAffinityMatClusterer):
         self.louvain_time_limit = louvain_time_limit
         self.verbose = verbose
         self.seed=seed
+        self.initclusters_weight = initclusters_weight
+
+    def get_coocc_mat_from_initclusters(self, initclusters):
+        cooc = np.zeros(len(initclusters)) 
+        for idx in range(max(initclusters)+1):
+            in_cluster_mask = initclusters==idx
+            cooc[in_cluster_mask,:][:,in_cluster_mask] = 1.0
+        return cooc
     
-    def __call__(self, orig_affinity_mat):
+    def __call__(self, orig_affinity_mat, initclusters=None):
 
         #replace nan values with zeros
         orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
@@ -180,6 +189,12 @@ class LouvainCluster(AbstractAffinityMatClusterer):
             affinity_mat = self.affmat_transformer(orig_affinity_mat)
         else:
             affinity_mat = orig_affinity_mat
+
+        if (initclusters is not None):
+            initclusters_cooc =\
+                self.get_coocc_mat_from_initclusters(initclusters=initclusters)
+            affinity_mat = 0.5*(affinity_mat
+                                + initclusters*self.initclusters_weight)
 
         communities, graph, Q, =\
             ph.cluster.runlouvain_given_graph(
