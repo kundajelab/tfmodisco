@@ -35,6 +35,8 @@ modisco/cluster/phenograph/louvain/linux-hierarchy
 modisco/cluster/phenograph/louvain/osx-community
 modisco/cluster/phenograph/louvain/osx-convert
 modisco/cluster/phenograph/louvain/osx-hierarchy
+modisco/clusterinit/__init__.py
+modisco/clusterinit/memeinit.py
 modisco/hit_scoring/__init__.py
 modisco/hit_scoring/fast_hit_scoring.py
 modisco/tfmodisco_workflow/__init__.py
@@ -48,3 +50,4 @@ test/test_affinitymat.py
 test/test_cluster.py
 test/test_coordproducers.py
 test/test_core.py
+test/test_tfmodisco_workflow.py

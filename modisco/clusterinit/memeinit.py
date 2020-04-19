@@ -41,12 +41,12 @@ class InitClustererFactory(object):
 
 class MemeInitClustererFactory(InitClustererFactory):
 
-    def __init__(self, meme_command, base_outdir, num_seqlets_to_use,
+    def __init__(self, meme_command, base_outdir, max_num_seqlets_to_use,
                        nmotifs, e_value_threshold=0.05,
                        **pwm_clusterer_kwargs):
         self.meme_command = meme_command
         self.base_outdir = base_outdir
-        self.num_seqlets_to_use = num_seqlets_to_use 
+        self.max_num_seqlets_to_use = max_num_seqlets_to_use 
         self.nmotifs = nmotifs
         self.call_count = 0 #to avoid overwriting for each metacluster
         self.e_value_threshold = e_value_threshold
@@ -65,13 +65,13 @@ class MemeInitClustererFactory(InitClustererFactory):
 
         seqlet_fa_to_write = outdir+"/inp_seqlets.fa"
         seqlet_fa_fh = open(seqlet_fa_to_write, 'w') 
-        if (len(seqlets) > self.num_seqlets_to_use):
+        if (len(seqlets) > self.max_num_seqlets_to_use):
             print(np.random.RandomState(1).choice(     
-                         np.arange(self.num_seqlets_to_use),                    
+                         np.arange(self.max_num_seqlets_to_use),                    
                          replace=False))
             seqlets = [seqlets[x] for x in np.random.RandomState(1).choice(
                          np.arange(len(seqlets)),
-                         size=self.num_seqlets_to_use,
+                         size=self.max_num_seqlets_to_use,
                          replace=False)]
 
         letter_order = "ACGT"
