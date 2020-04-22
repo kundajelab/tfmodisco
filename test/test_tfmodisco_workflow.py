@@ -97,7 +97,6 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
         self.task_to_scores = task_to_scores
         self.task_to_hyp_scores = task_to_hyp_scores
 
-    @skip
     def test_base_workflow(self): 
 
         onehot_data = self.onehot_data
