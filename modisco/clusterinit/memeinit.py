@@ -9,7 +9,7 @@ from subprocess import Popen, PIPE
 import time
 
 
-def run_meme(meme_command, input_file, outdir, nmotifs):
+def run_meme(meme_command, n_jobs, input_file, outdir, nmotifs):
 
     start = time.time()
     #p = Popen([meme_command,input_file,"-dna","-mod","anr",
@@ -25,7 +25,9 @@ def run_meme(meme_command, input_file, outdir, nmotifs):
     #    sys.stdout.write(output)
     print("Running MEME")
     command = (meme_command+" "+input_file+" -dna -mod anr -nmotifs "            
-               +str(nmotifs)+" -minw 6 -maxw 50 -oc "+outdir)
+               +str(nmotifs)
+               +("" if n_jobs==1 else " -p "+str(n_jobs))
+               +" -minw 6 -maxw 50 -oc "+outdir)
     print("Command:",command)
     os.system(command)
     print("Duration of MEME:",time.time()-start,"seconds")
@@ -43,14 +45,15 @@ class MemeInitClustererFactory(InitClustererFactory):
 
     def __init__(self, meme_command, base_outdir, max_num_seqlets_to_use,
                        nmotifs, e_value_threshold=0.05,
-                       **pwm_clusterer_kwargs):
+                       n_jobs=1, verbose=True):
         self.meme_command = meme_command
         self.base_outdir = base_outdir
         self.max_num_seqlets_to_use = max_num_seqlets_to_use 
         self.nmotifs = nmotifs
         self.call_count = 0 #to avoid overwriting for each metacluster
         self.e_value_threshold = e_value_threshold
-        self.pwm_clusterer_kwargs = pwm_clusterer_kwargs
+        self.n_jobs = n_jobs
+        self.verbose = verbose
 
     def __call__(self, seqlets):
 
@@ -86,13 +89,14 @@ class MemeInitClustererFactory(InitClustererFactory):
 
         run_meme(meme_command=self.meme_command,
                  input_file=seqlet_fa_to_write,
-                 outdir=outdir, nmotifs=self.nmotifs) 
+                 outdir=outdir, nmotifs=self.nmotifs,
+                 n_jobs=self.n_jobs) 
 
         motifs = parse_meme(meme_xml=outdir+"/meme.xml",
                             e_value_threshold=self.e_value_threshold)
         return PwmClusterer(
                 pwms=motifs, onehot_track_name=self.onehot_track_name,
-                **self.pwm_clusterer_kwargs)
+                n_jobs=self.n_jobs, verbose=self.verbose)
 
 
 class Pwm(object):
