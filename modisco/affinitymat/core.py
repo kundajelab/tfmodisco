@@ -471,8 +471,8 @@ class AffmatFromSeqletsWithNNpairs(object):
                     self.pattern_comparison_settings.track_transformer)
 
         if (seqlet_neighbors is None):
-            seqlet_neighbors = np.array([list(range(len(filter_seqlets)))
-                                         for x in seqlets]) 
+            seqlet_neighbors = [list(range(len(filter_seqlets)))
+                                for x in seqlets] 
 
         #apply the cross metric
         affmat_fwd = self.sim_metric_on_nn_pairs(
@@ -514,11 +514,11 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
     def __call__(self, filters, things_to_scan, min_overlap,
                        neighbors_of_things_to_scan=None):
         if (neighbors_of_things_to_scan is None):
-            neighbors_of_things_to_scan =\
-                np.array([list(range(len(filters)))
-                          for x in things_to_scan]) 
-        assert neighbors_of_things_to_scan.shape[0]==things_to_scan.shape[0]
-        assert np.max(neighbors_of_things_to_scan) < filters.shape[0]
+            neighbors_of_things_to_scan = [list(range(len(filters)))
+                                           for x in things_to_scan] 
+        assert len(neighbors_of_things_to_scan) == things_to_scan.shape[0]
+        assert np.max([np.max(x) for x in neighbors_of_things_to_scan])\
+                < filters.shape[0]
         assert len(things_to_scan.shape)==3
         assert len(filters.shape)==3
 
