@@ -66,7 +66,8 @@ class MemeInitClustererFactory(InitClustererFactory):
 
         outdir = self.base_outdir+"/metacluster"+str(self.call_count)
         self.call_count += 1
-        os.makedirs(outdir, exist_ok=True)
+        if (os.path.exists(outdir)==False):
+            os.makedirs(outdir)
 
         seqlet_fa_to_write = outdir+"/inp_seqlets.fa"
         seqlet_fa_fh = open(seqlet_fa_to_write, 'w') 

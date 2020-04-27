@@ -40,6 +40,8 @@ install:
   - pip install tqdm
   - pip install psutil
   - pip install matplotlib
+  #Set the 'Agg' backend to prevent a TclError with python 2
+  - echo "backend: Agg" > ~/.config/matplotlib/matplotlibrc
   ##MEME installation
   - wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
   - tar zxf meme-5.1.1.tar.gz
