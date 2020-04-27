@@ -14,6 +14,10 @@ notifications:
 before_install:
   #ghostscript is used by the MEME suite - specifically, it's invoked in a meme-chip test
   - sudo apt-get install -y ghostscript-x
+  #Set the 'Agg' backend to prevent a TclError with python 2
+  # I seem to get errors when I use $HOME instead of /home/travis
+  - mkdir -p ~/.config/matplotlib/
+  - echo "backend: Agg" > ~/.config/matplotlib/matplotlibrc
 
 install:
   #code below copied from keras' .travis.yml
@@ -40,10 +44,6 @@ install:
   - pip install tqdm
   - pip install psutil
   - pip install matplotlib
-  #Set the 'Agg' backend to prevent a TclError with python 2
-  # I seem to get errors when I use $HOME instead of /home/travis
-  - mkdir -p $HOME/.config/matplotlib/
-  - echo "backend: Agg" > $HOME/.config/matplotlib/matplotlibrc
   ##MEME installation
   - wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
   - tar zxf meme-5.1.1.tar.gz
