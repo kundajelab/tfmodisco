@@ -17,7 +17,10 @@ before_install:
   #Set the 'Agg' backend to prevent a TclError with python 2
   # I seem to get errors when I use $HOME instead of /home/travis
   - mkdir -p ~/.config/matplotlib/
-  - echo "backend: Agg" > ~/.config/matplotlib/matplotlibrc
+  - echo -e "test1" > ~/test.txt
+  - echo -e "test2" > ~/.config/test.txt
+  - echo -e "test3" > ~/.config/matplotlib/test.txt
+  - echo -e "backend: Agg" > ~/.config/matplotlib/matplotlibrc
 
 install:
   #code below copied from keras' .travis.yml
