@@ -35,6 +35,17 @@ install:
   - pip install tqdm
   - pip install psutil
   - pip install matplotlib
+  ##MEME installation
+  #- wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
+  #- tar zxf meme-5.1.1.tar.gz
+  #- cd meme-5.1.1
+  #- ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
+  #- make
+  #- make test
+  #- make install
+  #- cd ..
+  #- export PATH="$HOME/meme/bin:$PATH"
+  #- meme #test to see if it works...
 
 script:
 - PYTHONPATH=$PWD:$PYTHONPATH py.test
