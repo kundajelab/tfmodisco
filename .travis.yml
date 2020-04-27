@@ -59,7 +59,6 @@ install:
   - make install
   - cd ..
   - export PATH="$HOME/meme/bin:$PATH"
-  - meme #test to see if it works...
 
 script:
 - PYTHONPATH=$PWD:$PYTHONPATH py.test
