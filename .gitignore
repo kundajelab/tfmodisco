@@ -12,3 +12,5 @@
 **/*.gz
 **/*.json
 dist
+meme_out
+plot_save_directory
