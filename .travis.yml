@@ -20,6 +20,10 @@ before_install:
   - echo -e "test1" > ~/test.txt
   - echo -e "test2" > ~/.config/test.txt
   - echo -e "test3" > ~/.config/matplotlib/test.txt
+  - echo -e "test3" > ~/.config/matplotlib/matplotlibrc
+  - echo -e "backend Agg" > ~/.config/matplotlib/matplotlibrc
+  - echo -e "backend\: Agg" > ~/.config/matplotlib/matplotlibrc
+  - cat ~/.config/matplotlib/matplotlibrc
   - echo -e "backend: Agg" > ~/.config/matplotlib/matplotlibrc
 
 install:
