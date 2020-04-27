@@ -36,16 +36,24 @@ install:
   - pip install psutil
   - pip install matplotlib
   ##MEME installation
-  #- wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
-  #- tar zxf meme-5.1.1.tar.gz
-  #- cd meme-5.1.1
-  #- ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
-  #- make
-  #- make test
-  #- make install
-  #- cd ..
-  #- export PATH="$HOME/meme/bin:$PATH"
-  #- meme #test to see if it works...
+  - wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
+  - tar zxf meme-5.1.1.tar.gz
+  - cd meme-5.1.1
+  - curl -L http://cpanmin.us | perl - File::Which
+  - curl -L http://cpanmin.us | perl - HTML::PullParser
+  - curl -L http://cpanmin.us | perl - HTML::Template
+  - curl -L http://cpanmin.us | perl - HTML::TreeBuilder
+  - curl -L http://cpanmin.us | perl - JSON
+  - curl -L http://cpanmin.us | perl - XML::Simple
+  - curl -L http://cpanmin.us | perl - XML::Parser::Expat
+  - perl scripts/dependencies.pl
+  - ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
+  - make
+  - make test
+  - make install
+  - cd ..
+  - export PATH="$HOME/meme/bin:$PATH"
+  - meme #test to see if it works...
 
 script:
 - PYTHONPATH=$PWD:$PYTHONPATH py.test
