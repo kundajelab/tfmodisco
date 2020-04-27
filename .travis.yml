@@ -55,7 +55,8 @@ install:
   - perl scripts/dependencies.pl
   - ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
   - make
-  - make test
+  #- make test; skip the tests since some of them are buggy and stall the build
+  # (see: https://groups.google.com/forum/#!topic/meme-suite/D3XR7Ws1gec)
   - make install
   - cd ..
   - export PATH="$HOME/meme/bin:$PATH"

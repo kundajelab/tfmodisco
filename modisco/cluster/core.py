@@ -150,10 +150,9 @@ def get_igraph_from_adjacency(adjacency, directed=None):
     except:
         pass
     if g.vcount() != adjacency.shape[0]:
-        logg.warning(
-            f'The constructed graph has only {g.vcount()} nodes. '
-            'Your adjacency matrix contained redundant nodes.'
-        )
+        print('WARNING: The constructed graph has only '
+              +str(g.vcount())+' nodes. '
+             'Your adjacency matrix contained redundant nodes.')
     return g
      
  
