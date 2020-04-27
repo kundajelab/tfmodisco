@@ -39,6 +39,7 @@ install:
   - wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
   - tar zxf meme-5.1.1.tar.gz
   - cd meme-5.1.1
+  - export PERL5LIB=$HOME/perl5/lib/perl5:$PERL5LIB
   - curl -L http://cpanmin.us | perl - File::Which
   - curl -L http://cpanmin.us | perl - HTML::PullParser
   - curl -L http://cpanmin.us | perl - HTML::Template
