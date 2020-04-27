@@ -151,7 +151,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
                       modisco.clusterinit.memeinit.MemeInitClustererFactory(
                         meme_command="meme", base_outdir="meme_out",
                         max_num_seqlets_to_use=10000, nmotifs=3,
-                        n_jobs=1),
+                        n_jobs=4),
                     trim_to_window_size=15,
                     initial_flank_to_add=5,
                     kmer_len=5, num_gaps=1,
@@ -166,7 +166,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
              plot_save_dir="plot_save_directory"))
 
     #@skip
-    def test_parallel_memeinit_workflow(self): 
+    def test_norevcomp_memeinit_workflow(self): 
 
         onehot_data = self.onehot_data
         task_to_scores = self.task_to_scores
@@ -200,4 +200,5 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
              hypothetical_contribs=task_to_hyp_scores,
              one_hot=onehot_data,
              null_per_pos_scores = null_per_pos_scores,
-             plot_save_dir="plot_save_directory"))
+             plot_save_dir="plot_save_directory",
+             revcomp=False))

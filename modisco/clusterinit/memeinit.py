@@ -9,7 +9,7 @@ from subprocess import Popen, PIPE
 import time
 
 
-def run_meme(meme_command, n_jobs, input_file, outdir, nmotifs):
+def run_meme(meme_command, n_jobs, input_file, outdir, nmotifs, revcomp):
 
     start = time.time()
     #p = Popen([meme_command,input_file,"-dna","-mod","anr",
@@ -24,10 +24,12 @@ def run_meme(meme_command, n_jobs, input_file, outdir, nmotifs):
     #        break
     #    sys.stdout.write(output)
     print("Running MEME")
-    command = (meme_command+" "+input_file+" -dna -mod anr -nmotifs "            
+    command = (meme_command+" "+input_file+" -dna -mod zoops -nmotifs "            
                +str(nmotifs)
                +("" if n_jobs==1 else " -p "+str(n_jobs))
-               +" -minw 6 -maxw 50 -oc "+outdir)
+               +" -minw 6 -maxw 50 -objfun classic"
+               +(" -revcomp" if revcomp else "")
+               +" -markov_order 0 -oc "+outdir)
     print("Command:",command)
     os.system(command)
     print("Duration of MEME:",time.time()-start,"seconds")
@@ -87,16 +89,24 @@ class MemeInitClustererFactory(InitClustererFactory):
                                 np.argmax(seqlet_onehot, axis=-1)])+"\n") 
         seqlet_fa_fh.close()
 
+        #determine whether there's a revcomp sequence
+        if (seqlets[0][onehot_track_name].rev is None):
+            revcomp = False 
+        else:
+            revcomp = True
+
         run_meme(meme_command=self.meme_command,
                  input_file=seqlet_fa_to_write,
                  outdir=outdir, nmotifs=self.nmotifs,
-                 n_jobs=self.n_jobs) 
+                 n_jobs=self.n_jobs,
+                 revcomp=revcomp) 
 
         motifs = parse_meme(meme_xml=outdir+"/meme.xml",
                             e_value_threshold=self.e_value_threshold)
         return PwmClusterer(
                 pwms=motifs, onehot_track_name=self.onehot_track_name,
-                n_jobs=self.n_jobs, verbose=self.verbose)
+                n_jobs=self.n_jobs, verbose=self.verbose,
+                revcomp=revcomp)
 
 
 class Pwm(object):
@@ -135,21 +145,30 @@ def parse_meme(meme_xml, e_value_threshold):
     return motifs
 
 
-def get_max_across_sequences(onehot_seq, weightmat):
-    fwd_pwm_scan_results = util.compute_pwm_scan(onehot_seq=onehot_seq,
-                                         weightmat=weightmat)
-    rev_pwm_scan_results = util.compute_pwm_scan(onehot_seq=onehot_seq,
-                                         weightmat=weightmat[::-1, ::-1])
-    return np.max(np.maximum(fwd_pwm_scan_results, rev_pwm_scan_results),
-                  axis=-1)
+def get_max_across_sequences(onehot_seq, weightmat, revcomp):
+    fwd_pwm_scan_results = util.compute_pwm_scan(
+                                 onehot_seq=onehot_seq, weightmat=weightmat)
+    if (revcomp):
+        rev_pwm_scan_results = util.compute_pwm_scan(
+                                        onehot_seq=onehot_seq,
+                                        weightmat=weightmat[::-1, ::-1])
+        to_return = np.max(np.maximum(fwd_pwm_scan_results,
+                                      rev_pwm_scan_results), axis=-1)
+    else:
+        to_return = np.max(fwd_pwm_scan_results, axis=-1) 
+
+    return to_return
 
 
 class PwmClusterer(object):
 
     def __init__(self, pwms, n_jobs,
-                 onehot_track_name, verbose=True):
+                 onehot_track_name,
+                 revcomp,
+                 verbose=True):
         self.pwms = pwms
         self.n_jobs = n_jobs
+        self.revcomp = revcomp
         self.verbose = verbose
         self.onehot_track_name = onehot_track_name
 
@@ -161,7 +180,7 @@ class PwmClusterer(object):
         #do a motif scan on onehot_seqlets
         max_pwm_scores_perseq = np.array(Parallel(n_jobs=self.n_jobs)(
                                     delayed(get_max_across_sequences)(
-                                     onehot_seqlets, pwm.matrix)
+                                     onehot_seqlets, pwm.matrix, self.revcomp)
                                     for pwm in self.pwms))
         #map seqlets to best match motif if min > motif threshold 
         argmax_pwm = np.argmax(max_pwm_scores_perseq, axis=0)
