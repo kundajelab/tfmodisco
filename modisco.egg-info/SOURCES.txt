@@ -46,8 +46,5 @@ modisco/visualization/__init__.py
 modisco/visualization/matplotlibhelpers.py
 modisco/visualization/tsne.py
 modisco/visualization/viz_sequence.py
-test/test_affinitymat.py
-test/test_cluster.py
-test/test_coordproducers.py
 test/test_core.py
 test/test_tfmodisco_workflow.py
