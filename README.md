@@ -1,6 +1,6 @@
 ## TF-MoDISco
 
-[![DOI](https://zenodo.org/badge/62352963.svg)](https://zenodo.org/badge/latestdoi/62352963)
+[![Build Status](https://api.travis-ci.org/kundajelab/tfmodisco.svg?branch=master)](https://travis-ci.org/kundajelab/tfmodisco) [![license](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](https://github.com/kundajelab/tfmodisco/blob/master/LICENSE) [![DOI](https://zenodo.org/badge/62352963.svg)](https://zenodo.org/badge/latestdoi/62352963)
 
 **NOTE: we are still refining the multi-task version of TF-MoDISco. If you encounter difficulties running TF-MoDISco with multiple tasks, our recommendation is to run it on one task at a time.**
 
