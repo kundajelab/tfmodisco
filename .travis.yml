@@ -39,7 +39,7 @@ install:
   - wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
   - tar zxf meme-5.1.1.tar.gz
   - cd meme-5.1.1
-  - ./configure --prefix=`$HOME/meme --with-url=http://alternate.meme-suite.org/ --enable-build-libxml2 --enable-build-libxslt
+  - ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/ --enable-build-libxml2 --enable-build-libxslt
   - make
   - make test
   - make install
