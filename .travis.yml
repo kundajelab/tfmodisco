@@ -41,11 +41,9 @@ install:
   - pip install psutil
   - pip install matplotlib
   #Set the 'Agg' backend to prevent a TclError with python 2
-  - mkdir -p $HOME/.config/matplotlib/
-  - ls $HOME
-  - ls $HOME/.config
-  - ls $HOME/.config/matplotlib
-  - echo "backend: Agg" > $HOME/.config/matplotlib/matplotlibrc
+  # I seem to get errors when I use $HOME instead of /home/travis
+  - mkdir -p /home/travis/.config/matplotlib/
+  - echo "backend: Agg" > /home/travis/.config/matplotlib/matplotlibrc
   ##MEME installation
   - wget http://alternate.meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
   - tar zxf meme-5.1.1.tar.gz
