@@ -107,20 +107,29 @@ class LeidenCluster(AbstractAffinityMatClusterer):
         else:
             toiterover = range(self.contin_runs)
 
+        #if an initclustering is specified, we would want to try the Leiden
+        # both with and without that initialization and take the one that
+        # gets the best modularity
+        initclusters_to_try_list = [None]
+        if (initclusters is not None):
+            initclusters_to_try_list.append(initclusters)
+
         for seed in toiterover:
-            partition = leidenalg.find_partition(
-                the_graph, self.partitiontype,
-                weights=np.array(the_graph.es['weight']).astype(np.float64),
-                n_iterations=self.n_leiden_iterations,
-                initial_membership=initclusters,
-                seed=seed*100)
-            quality = partition.quality()
-            if ((best_quality is None) or (quality > best_quality)):
-                best_quality = quality
-                best_clustering = np.array(partition.membership)
-                if (self.verbose):
-                    print("Quality:",best_quality)
-                    sys.stdout.flush()
+            for initclusters_to_try in initclusters_to_try_list:
+                partition = leidenalg.find_partition(
+                    the_graph, self.partitiontype,
+                    weights=(np.array(the_graph.es['weight'])
+                             .astype(np.float64)),
+                    n_iterations=self.n_leiden_iterations,
+                    initial_membership=initclusters_to_try,
+                    seed=seed*100)
+                quality = partition.quality()
+                if ((best_quality is None) or (quality > best_quality)):
+                    best_quality = quality
+                    best_clustering = np.array(partition.membership)
+                    if (self.verbose):
+                        print("Quality:",best_quality)
+                        sys.stdout.flush()
         return ClusterResults(cluster_indices=best_clustering,
                               quality=best_quality)
 
