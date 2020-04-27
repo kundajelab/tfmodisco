@@ -26,9 +26,13 @@ install:
   # Useful for debugging any issues with conda
   - conda info -a
 
-  - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION numpy pytest h5py nose joblib scikit-learn leidenalg tqdm
+  - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION numpy pytest h5py nose
   - source activate test-environment
   - pip install tensorflow==$TF_VERSION
+  - pip install joblib
+  - pip install scikit-learn
+  - pip install leidenalg
+  - pip install tqdm
 
 script:
 - PYTHONPATH=$PWD:$PYTHONPATH py.test
