@@ -222,9 +222,11 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
         #check for enforced symmetry
         assert np.max(np.abs(affinity_mat_fwd.T - affinity_mat_fwd))<1e-3,\
                 np.max(np.abs(affinity_mat_fwd.T - affinity_mat_fwd))
-        if (affinity_mat_rev is not None):
-            assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-3,\
-                    np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))
+        #This assert need not hold anymore with filter embeddings, which aren't
+        # guaranteed revcomp symmetry...
+        #if (affinity_mat_rev is not None):
+        #    assert np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))<1e-3,\
+        #            np.max(np.abs(affinity_mat_rev.T - affinity_mat_rev))
 
         cp3_time = time.time()
 

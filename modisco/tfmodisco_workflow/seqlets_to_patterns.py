@@ -61,6 +61,9 @@ def legacy_tfmodiscoseqletstopatternsfactory(current_constructor):
             to_fish_out=['kmer_len', 'num_gaps',
                          'num_mismatches', 'gpu_batch_size'])
         if (len(gapped_kmer_kwargs) > 0):
+            assert 'embedder_factory' not in kwargs,\
+                ("Cannot both specify embedder_factory and "
+                 +str(gapped_kmer_kwargs))
             kwargs['embedder_factory'] = (
                   seqlet_embedding.gapped_kmer
                   .GappedKmerEmbedderFactory(**gapped_kmer_kwargs))
