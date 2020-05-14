@@ -1,10 +1,10 @@
 Metadata-Version: 2.1
 Name: modisco
-Version: 0.5.6.5
+Version: 0.5.7.0
 Summary: TF MOtif Discovery from Importance SCOres
 Home-page: https://github.com/kundajelab/tfmodisco
 License: UNKNOWN
 Description: Algorithm for discovering consolidated patterns from base-pair-level importance scores
 Platform: UNKNOWN
-Provides-Extra: tensorflow with gpu
 Provides-Extra: tensorflow
+Provides-Extra: tensorflow with gpu

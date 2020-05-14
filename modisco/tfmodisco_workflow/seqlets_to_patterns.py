@@ -5,6 +5,7 @@ from .. import cluster
 from .. import aggregator
 from .. import core
 from .. import util
+from .. import seqlet_embedding
 from collections import defaultdict, OrderedDict, Counter
 import numpy as np
 import time
@@ -42,18 +43,50 @@ def get_seqlet_neighbors_with_initcluster(
     return nearest_neighbors
 
 
+def fish_out_kwargs(orig_kwargs, to_fish_out):
+    fished_out = {}
+    for kwarg_name in to_fish_out:
+        if kwarg_name in orig_kwargs:
+            fished_out[kwarg_name] = orig_kwargs[kwarg_name]
+            del orig_kwargs[kwarg_name] 
+    return fished_out
+
+
+#adds backwargs compatibility re gapped kmer arguments
+def legacy_tfmodiscoseqletstopatternsfactory(current_constructor):
+
+    def new_constructor(*args, **kwargs): 
+        gapped_kmer_kwargs = fish_out_kwargs(
+            orig_kwargs=kwargs,
+            to_fish_out=['kmer_len', 'num_gaps',
+                         'num_mismatches', 'gpu_batch_size'])
+        if (len(gapped_kmer_kwargs) > 0):
+            assert 'embedder_factory' not in kwargs,\
+                ("Cannot both specify embedder_factory and "
+                 +str(gapped_kmer_kwargs))
+            kwargs['embedder_factory'] = (
+                  seqlet_embedding.gapped_kmer
+                  .GappedKmerEmbedderFactory(**gapped_kmer_kwargs))
+        return current_constructor(*args, **kwargs) 
+    return new_constructor 
+
+
+##legacy
+#alphabet_size=None,
+#kmer_len=None, num_gaps=3, num_mismatches=2,
+#gpu_batch_size=20,
 class TfModiscoSeqletsToPatternsFactory(object):
 
+    @legacy_tfmodiscoseqletstopatternsfactory
     def __init__(self, n_cores=4,
                        min_overlap_while_sliding=0.7,
 
                        #init clusterer factory
                        initclusterer_factory=None,                       
 
-                       #gapped kmer embedding arguments
-                       alphabet_size=4,
-                       kmer_len=8, num_gaps=3, num_mismatches=2,
-                       gpu_batch_size=20,
+                       embedder_factory=(
+                        seqlet_embedding.gapped_kmer
+                                        .GappedKmerEmbedderFactory()),
 
                        nn_n_jobs=4,
                        nearest_neighbors_to_compute=500,
@@ -103,12 +136,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.n_cores = n_cores
         self.min_overlap_while_sliding = min_overlap_while_sliding
 
-        #gapped kmer embedding arguments
-        self.alphabet_size = alphabet_size
-        self.kmer_len = kmer_len
-        self.num_gaps = num_gaps
-        self.num_mismatches = num_mismatches
-        self.gpu_batch_size = gpu_batch_size
+        self.embedder_factory = embedder_factory
 
         self.nn_n_jobs = nn_n_jobs
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
@@ -165,9 +193,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 ('initclusterer_factory',
                  self.initclusterer_factory.get_jsonable_config())
                 ('min_overlap_while_sliding', self.min_overlap_while_sliding),
-                ('alphabet_size', self.alphabet_size),
-                ('kmer_len', self.kmer_len),
-                ('num_gaps', self.num_gaps),
+                ('embedder_factory',
+                 self.embedder_factory.get_jsonable_config()),
                 ('num_mismatches', self.num_mismatches),
                 ('nn_n_jobs', self.nn_n_jobs),
                 ('nearest_neighbors_to_compute',
@@ -231,24 +258,17 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 track_transformer=affinitymat.L1Normalizer(), 
                 min_overlap=self.min_overlap_while_sliding)
 
-        #gapped kmer embedder
-        gkmer_embedder = affinitymat.core.GappedKmerEmbedder(
-            alphabet_size=self.alphabet_size,
-            kmer_len=self.kmer_len,
-            num_gaps=self.num_gaps,
-            num_mismatches=self.num_mismatches,
-            batch_size=self.gpu_batch_size,
-            num_filters_to_retain=None,
-            onehot_track_name=onehot_track_name,
-            toscore_track_names_and_signs=list(
+        #coarse_grained 1d embedder
+        seqlets_to_1d_embedder = self.embedder_factory(
+                onehot_track_name=onehot_track_name,
+                toscore_track_names_and_signs=list(
                 zip(hypothetical_contribs_track_names,
-                    [np.sign(x) for x in track_signs])),
-            normalizer=affinitymat.core.MeanNormalizer())
+                    [np.sign(x) for x in track_signs])))
 
         #affinity matrix from embeddings
         coarse_affmat_computer =\
             affinitymat.core.AffmatFromSeqletEmbeddings(
-                seqlets_to_1d_embedder=gkmer_embedder,
+                seqlets_to_1d_embedder=seqlets_to_1d_embedder,
                 affinity_mat_from_1d=\
                     affinitymat.core.NumpyCosineSimilarity(
                         verbose=self.verbose,
