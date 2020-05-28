@@ -301,6 +301,130 @@ class FlipSignNullDist(GenerateNullDist):
         return np.concatenate(window_sum_function(null_tracks), axis=0)
 
 
+class PercentileBasedWindows(AbstractCoordProducer):
+    count = 0
+    def __init__(self, sliding, plot_save_dir="figures",
+                       max_num_to_use_for_percentile=50000,
+                       seed=1234):
+        self.sliding = sliding
+        self.seed = seed
+        self.plot_save_dir = plot_save_dir
+        self.max_num_to_use_for_percentile = max_num_to_use_for_percentile
+
+    def log_percentile_transform(score_track):
+        all_scores = []
+        for track in score_track:
+            all_scores.extend(track)
+        all_scores = np.array(all_scores)         
+        if len(all_scores) > self.max_num_to_use_for_percentile:
+            all_scores = np.random.RandomState(self.seed).choice(
+                            a=all_scores,
+                            size=self.max_num_to_use_for_percentile,
+                            replace=False)
+        sorted_all_scores = sorted(all_scores)
+        del all_scores
+        transformed_all_scores = []
+        for scores_row in all_scores:
+            transformed_all_scores.append(
+                -np.log(np.searchsorted(a=sorted_all_scores, v=scores_row)/
+                        len(sorted_all_scores)))
+        return transformed_all_scores
+
+    def __call__(self, score_track, tnt_results=None, **kwargs):
+    
+        assert all([len(x.shape)==1 for x in score_track]) 
+
+        #transform all the scores to percentiles 
+        log_percentile_scores = self.log_percentile_transform(
+                                      score_track=score_track)
+        del score_track
+
+        window_sum_function = get_simple_window_sum_function(self.sliding)
+
+        if (self.verbose):
+            print("Computing windowed sums on original")
+            sys.stdout.flush()
+        original_summed_logpercentile_track = window_sum_function(
+            arrs=log_percentile_scores) 
+
+        ##Determine the window thresholds
+
+        ##val_transformer in my case would be cdf w.r.t. gamma dist I think.
+
+        ##tnt_results = TransformAndThresholdResults(
+        ##    neg_threshold=neg_threshold,
+        ##    transformed_neg_threshold=val_transformer(neg_threshold),
+        ##    pos_threshold=pos_threshold,
+        ##    transformed_pos_threshold=val_transformer(pos_threshold),
+        ##    val_transformer=val_transformer)
+
+        #neg_threshold = tnt_results.neg_threshold
+        #pos_threshold = tnt_results.pos_threshold
+
+        #summed_score_track = [np.array(x) for x in original_summed_score_track]
+
+        ##if a position is less than the threshold, set it to -np.inf
+        #summed_score_track = [
+        #    np.array([np.abs(y) if (y > pos_threshold
+        #                    or y < neg_threshold)
+        #                   else -np.inf for y in x])
+        #    for x in summed_score_track]
+
+        #coords = []
+        #for example_idx,single_score_track in enumerate(summed_score_track):
+        #    #set the stuff near the flanks to -np.inf so that we
+        #    # don't pick it up during argmax
+        #    single_score_track[0:self.flank] = -np.inf
+        #    single_score_track[len(single_score_track)-(self.flank):
+        #                       len(single_score_track)] = -np.inf
+        #    while True:
+        #        argmax = np.argmax(single_score_track,axis=0)
+        #        max_val = single_score_track[argmax]
+
+        #        #bail if exhausted everything that passed the threshold
+        #        #and was not suppressed
+        #        if (max_val == -np.inf):
+        #            break
+
+        #        #need to be able to expand without going off the edge
+        #        if ((argmax >= self.flank) and
+        #            (argmax < (len(single_score_track)-self.flank))): 
+
+        #            coord = SeqletCoordsFWAP(
+        #                example_idx=example_idx,
+        #                start=argmax-self.flank,
+        #                end=argmax+self.sliding+self.flank,
+        #                score=original_summed_score_track[example_idx][argmax]) 
+        #            assert (coord.score > pos_threshold
+        #                    or coord.score < neg_threshold)
+        #            coords.append(coord)
+        #        else:
+        #            assert False,\
+        #             ("This shouldn't happen because I set stuff near the"
+        #              "border to -np.inf early on")
+        #        #suppress the chunks within +- self.suppress
+        #        left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),
+        #                                         0))
+        #        right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
+        #                             len(single_score_track)))
+        #        single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
+
+        #if (self.verbose):
+        #    print("Got "+str(len(coords))+" coords")
+        #    sys.stdout.flush()
+
+        #if ((self.max_seqlets_total is not None) and
+        #    len(coords) > self.max_seqlets_total):
+        #    if (self.verbose):
+        #        print("Limiting to top "+str(self.max_seqlets_total))
+        #        sys.stdout.flush()
+        #    coords = sorted(coords, key=lambda x: -np.abs(x.score))\
+        #                       [:self.max_seqlets_total]
+        #return CoordProducerResults(
+        #            coords=coords,
+        #            tnt_results=tnt_results)   
+
+
 class FixedWindowAroundChunks(AbstractCoordProducer):
     count = 0
     def __init__(self, sliding,

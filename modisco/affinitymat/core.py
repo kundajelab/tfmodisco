@@ -347,10 +347,25 @@ class AffmatFromSeqletsWithNNpairs(object):
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
         else:
             affmat_rev = None
-        affmat = (np.maximum(affmat_fwd, affmat_rev) if
-                  (affmat_rev is not None) else np.array(affmat_fwd))
-        return affmat
-        
+        if (len(affmat_fwd.shape)==3):
+            #dims are N x N x 2, where first entry of last idx is sim,
+            # and the second entry is the alignment.
+            if (affmat_rev is None):
+                affmat = affmat_fwd
+            else:
+                #will return something that's N x N x 3, where the third
+                # entry in last dim is is_fwd 
+                is_fwd = (affmat_fwd[:,:,0] > affmat_rev[:,:,0])*1.0
+                affmat = np.zeros(affmat_fwd.shape[0],
+                                     affmat_fwd.shape[1],3)
+                affmat[:,:,0:2] = (affmat_fwd*is_fwd[:,:,None]
+                                   + affmat_rev*(1-is_fwd[:,:,None]))
+                affmat[:,:,2] = is_fwd 
+
+        else:
+            affmat = (np.maximum(affmat_fwd, affmat_rev) if
+                      (affmat_rev is not None) else np.array(affmat_fwd))
+        return affmat  
 
 
 class AbstractSimMetricOnNNpairs(object):
