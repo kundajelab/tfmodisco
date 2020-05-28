@@ -356,8 +356,7 @@ class AffmatFromSeqletsWithNNpairs(object):
                 #will return something that's N x N x 3, where the third
                 # entry in last dim is is_fwd 
                 is_fwd = (affmat_fwd[:,:,0] > affmat_rev[:,:,0])*1.0
-                affmat = np.zeros(affmat_fwd.shape[0],
-                                     affmat_fwd.shape[1],3)
+                affmat = np.zeros((affmat_fwd.shape[0],affmat_fwd.shape[1],3))
                 affmat[:,:,0:2] = (affmat_fwd*is_fwd[:,:,None]
                                    + affmat_rev*(1-is_fwd[:,:,None]))
                 affmat[:,:,2] = is_fwd 
