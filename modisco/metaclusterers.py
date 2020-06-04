@@ -147,6 +147,10 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             print(vector)
             print(to_return)
             assert False
+        if (np.sum(np.abs(to_return))==0):
+            print(vector)
+            print(to_return)
+            assert False
         return to_return
     
     def weak_vector_to_pattern(self, vector):
@@ -154,6 +158,10 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
                 0 if np.abs(element) < self.weak_threshold_for_counting_sign
                   else (1 if element > 0 else -1) for element in vector])
         if all([ v == 0 for v in to_return ]) :
+            print(vector)
+            print(to_return)
+            assert False
+        if (np.sum(np.abs(to_return))==0):
             print(vector)
             print(to_return)
             assert False
@@ -290,6 +298,8 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
         all_possible_activity_patterns =\
             list(itertools.product(*[(1,-1,0) for x
                  in range(attribute_vectors.shape[1])]))
+        all_possible_activity_patterns.remove(
+            tuple([0]*attribute_vectors.shape[1]))
 
         activity_pattern_to_attribute_vectors = defaultdict(list)        
         for vector in attribute_vectors:
@@ -308,7 +318,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             (len(activity_pattern_to_attribute_vectors[
                  self.pattern_to_str(activity_pattern)])
              > self.min_cluster_size)]
-        
+
         activity_patterns = []
         final_activity_pattern_to_vectors = defaultdict(list)
         for vector in attribute_vectors:
@@ -316,7 +326,7 @@ class SignBasedPatternClustering(AbstractMetaclusterer):
             activity_patterns.append(best_pattern)
             if best_pattern is not None:
                 final_activity_pattern_to_vectors[best_pattern].append(vector)
-            
+
         self.final_surviving_activity_patterns = set([
             self.pattern_to_str(activity_pattern) for activity_pattern in 
             all_possible_activity_patterns if
