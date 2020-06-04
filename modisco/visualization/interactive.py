@@ -58,6 +58,10 @@ def make_interactive_plot(pattern, track_names_and_signs,
     def accept(event):
         selected_indices = selector.ind
         all_seqlets = pattern.seqlets
+        ax[0].set_title("Number of points selected: "
+                        +str(len(selected_indices)))
+        ax[1].clear()
+        ax[2].clear()
         mean_contrib = np.mean(np.array([
             all_seqlets[idx][track_name].fwd*sign
             for idx in selected_indices
@@ -65,8 +69,6 @@ def make_interactive_plot(pattern, track_names_and_signs,
         mean_onehot = np.mean(np.array([
             all_seqlets[idx]["sequence"].fwd
             for idx in selected_indices]), axis=0)
-        ax[1].clear()
-        ax[2].clear()
         viz_sequence.plot_weights_given_ax(ax=ax[1], array=mean_contrib,
                                            height_padding_factor=0.2,
                                            length_padding=1.0,
