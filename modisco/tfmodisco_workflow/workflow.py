@@ -117,6 +117,7 @@ class SubMetaclusterResults(object):
 
 def prep_track_set(task_names, contrib_scores,
                     hypothetical_contribs, one_hot,
+                    custom_perpos_contribs=None,
                     revcomp=True, other_tracks=[]):
     contrib_scores_tracks = [
         core.DataTrack(
@@ -141,9 +142,22 @@ def prep_track_set(task_names, contrib_scores,
                         rev_tracks=([x[::-1, ::-1] for x in one_hot]
                                     if revcomp else None),
                         has_pos_axis=True)
+
+    custom_perpos_contrib_tracks = []
+    if (custom_perpos_contribs):
+        custom_perpos_contrib_tracks = [
+            core.DataTrack(name=key+"_custom_perposcontribs",
+                           fwd_tracks=custom_perpos_contribs[key],
+                           rev_tracks=([x[::-1] for x in
+                                       custom_perpos_contribs[key]]
+                                       if revcomp else None),
+                           has_pos_axis=True)
+                           for key in task_names] 
+
     track_set = core.TrackSet(
                     data_tracks=contrib_scores_tracks
-                    +hypothetical_contribs_tracks+[onehot_track]+other_tracks)
+                    +hypothetical_contribs_tracks+[onehot_track]
+                    +custom_perpos_contrib_tracks+other_tracks)
     return track_set
 
 
@@ -152,6 +166,7 @@ class TfModiscoWorkflow(object):
     def __init__(self,
                  seqlets_to_patterns_factory=
                  seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
+                 use_percentile_null=False,
                  sliding_window_size=21, flank_size=10,
                  histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
@@ -172,6 +187,7 @@ class TfModiscoWorkflow(object):
                 +" min_passing_windows_frac, which defaults to 0.005")
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
+        self.use_percentile_null = use_percentile_null
         self.sliding_window_size = sliding_window_size
         self.flank_size = flank_size
         self.histogram_bins = histogram_bins
@@ -212,18 +228,35 @@ class TfModiscoWorkflow(object):
 
         print_memory_use()
 
-        self.coord_producer = coordproducers.FixedWindowAroundChunks(
-            sliding=self.sliding_window_size,
-            flank=self.flank_size,
-            suppress=(int(0.5*self.sliding_window_size)
-                      + self.flank_size),
-            target_fdr=self.target_seqlet_fdr,
-            min_passing_windows_frac=self.min_passing_windows_frac,
-            max_passing_windows_frac=self.max_passing_windows_frac,
-            separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
-            max_seqlets_total=None,
-            verbose=self.verbose,
-            plot_save_dir=plot_save_dir) 
+        if (self.use_percentile_null):
+            self.coord_producer = coordproducers.PercentileBasedWindows(
+                sliding=self.sliding_window_size,
+                flank=self.flank_size,
+                suppress=(int(0.5*self.sliding_window_size)
+                          + self.flank_size),
+                target_fdr=self.target_seqlet_fdr,
+                max_seqlets_total=None,
+                verbose=self.verbose,
+                plot_save_dir=plot_save_dir) 
+        else:
+            self.coord_producer = coordproducers.FixedWindowAroundChunks(
+                sliding=self.sliding_window_size,
+                flank=self.flank_size,
+                suppress=(int(0.5*self.sliding_window_size)
+                          + self.flank_size),
+                target_fdr=self.target_seqlet_fdr,
+                min_passing_windows_frac=self.min_passing_windows_frac,
+                max_passing_windows_frac=self.max_passing_windows_frac,
+                separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+                max_seqlets_total=None,
+                verbose=self.verbose,
+                plot_save_dir=plot_save_dir) 
+
+        custom_perpos_contribs = per_position_contrib_scores
+        if (per_position_contrib_scores is None):
+            per_position_contrib_scores = OrderedDict([
+                (x, [np.sum(s,axis=1) for s in contrib_scores[x]])
+                for x in task_names])
 
         track_set = prep_track_set(
                         task_names=task_names,
@@ -231,12 +264,9 @@ class TfModiscoWorkflow(object):
                         hypothetical_contribs=hypothetical_contribs,
                         one_hot=one_hot,
                         revcomp=revcomp,
+                        custom_perpos_contribs=custom_perpos_contribs,
                         other_tracks=other_tracks)
 
-        if (per_position_contrib_scores is None):
-            per_position_contrib_scores = OrderedDict([
-                (x, [np.sum(s,axis=1) for s in contrib_scores[x]])
-                for x in task_names])
 
         multitask_seqlet_creation_results = core.MultiTaskSeqletCreator(
             coord_producer=self.coord_producer,
@@ -284,7 +314,9 @@ class TfModiscoWorkflow(object):
         task_name_to_value_provider = OrderedDict([
             (task_name,
              value_provider.TransformCentralWindowValueProvider(
-                track_name=task_name+"_contrib_scores",
+                track_name=(task_name+"_contrib_scores"
+                            if custom_perpos_contribs is None else
+                            task_name+"_custom_perposcontribs"),
                 central_window=self.sliding_window_size,
                 val_transformer= 
                  coord_producer_results.tnt_results.val_transformer))

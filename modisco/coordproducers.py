@@ -9,7 +9,8 @@ import sys
 import time
 from .value_provider import (
     AbstractValTransformer, AbsPercentileValTransformer,
-    SignedPercentileValTransformer)
+    SignedPercentileValTransformer, Gamma2xCdfMHalfValTransformer)
+import scipy
 
 
 class TransformAndThresholdResults(object):
@@ -66,8 +67,9 @@ class SeqletCoordsFWAP(SeqletCoordinates):
     """
         Coordinates for the FixedWindowAroundChunks CoordProducer 
     """
-    def __init__(self, example_idx, start, end, score):
+    def __init__(self, example_idx, start, end, score, score2=None):
         self.score = score 
+        self.score2 = score2
         super(SeqletCoordsFWAP, self).__init__(
             example_idx=example_idx,
             start=start, end=end,
@@ -144,6 +146,32 @@ class TakeAbs(GenerateNullDist):
         return null_tracks
 
 
+class LogPercentileGammaNullDist(GenerateNullDist):
+
+    def __init__(self, num_to_samp, random_seed=1234):
+        self.num_to_samp = num_to_samp
+        self.random_seed = random_seed
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        num_to_samp = grp.attrs["num_to_samp"]
+        return cls(num_to_samp=num_to_samp)
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["num_to_samp"] = self.num_to_samp
+
+    def __call__(self, score_track, windowsize, original_summed_score_track):
+
+        #original_summed_score_track is supplied to avoid recomputing it 
+        window_sum_function = get_simple_window_sum_function(windowsize)
+        if (original_summed_score_track is not None):
+            original_summed_score_track = window_sum_function(arrs=score_track) 
+
+        rng = np.random.RandomState(self.random_seed)
+        return rng.gamma(shape=windowsize, size=self.num_to_samp)
+
+
 class LaplaceNullDist(GenerateNullDist):
 
     def __init__(self, num_to_samp, verbose=True,
@@ -157,12 +185,14 @@ class LaplaceNullDist(GenerateNullDist):
 
     @classmethod
     def from_hdf5(cls, grp):
+        num_to_samp = grp.attrs["num_to_samp"]
         verbose = grp.attrs["verbose"]
         percentiles_to_use = np.array(grp["percentiles_to_use"][:])
-        return cls(verbose=verbose)
+        return cls(num_to_samp=num_to_samp, verbose=verbose)
 
     def save_hdf5(self, grp):
         grp.attrs["class"] = type(self).__name__
+        grp.attrs["num_to_samp"] = self.num_to_samp
         grp.attrs["verbose"] = self.verbose 
         grp.create_dataset('percentiles_to_use',
                            data=self.percentiles_to_use)
@@ -301,128 +331,267 @@ class FlipSignNullDist(GenerateNullDist):
         return np.concatenate(window_sum_function(null_tracks), axis=0)
 
 
-class PercentileBasedWindows(AbstractCoordProducer):
-    count = 0
-    def __init__(self, sliding, plot_save_dir="figures",
-                       max_num_to_use_for_percentile=50000,
-                       seed=1234):
-        self.sliding = sliding
-        self.seed = seed
-        self.plot_save_dir = plot_save_dir
-        self.max_num_to_use_for_percentile = max_num_to_use_for_percentile
+def flatten(list_of_arrs):
+    to_return = []
+    for arr in list_of_arrs:
+        to_return.extend(arr) 
+    return np.array(to_return)
 
-    def log_percentile_transform(score_track):
-        all_scores = []
-        for track in score_track:
-            all_scores.extend(track)
-        all_scores = np.array(all_scores)         
-        if len(all_scores) > self.max_num_to_use_for_percentile:
-            all_scores = np.random.RandomState(self.seed).choice(
-                            a=all_scores,
-                            size=self.max_num_to_use_for_percentile,
-                            replace=False)
-        sorted_all_scores = sorted(all_scores)
-        del all_scores
-        transformed_all_scores = []
-        for scores_row in all_scores:
-            transformed_all_scores.append(
-                -np.log(np.searchsorted(a=sorted_all_scores, v=scores_row)/
-                        len(sorted_all_scores)))
-        return transformed_all_scores
 
-    def __call__(self, score_track, tnt_results=None, **kwargs):
-    
-        assert all([len(x.shape)==1 for x in score_track]) 
+def per_sequence_zscore_log_percentile_transform(score_track, seed=1234):
+    transformed_all_scores = []
+    for scores_row in score_track:
+        median = np.median(scores_row)
+        mad = scipy.stats.median_absolute_deviation(scores_row) 
+        transformed_all_scores.append(
+         -np.log((1-(scipy.stats.norm.cdf(
+                     x=scores_row, loc=median, scale=mad))) + 1e-7 ))
+    return transformed_all_scores
 
-        #transform all the scores to percentiles 
-        log_percentile_scores = self.log_percentile_transform(
-                                      score_track=score_track)
-        del score_track
 
-        window_sum_function = get_simple_window_sum_function(self.sliding)
+def per_sequence_log_percentile_transform(score_track, seed=1234):
+    transformed_all_scores = []
+    for scores_row in score_track:
+        sorted_scores = sorted(scores_row)
+        #the +1 is to avoid log(0) issues
+        transformed_all_scores.append(
+         -np.log(1-(np.searchsorted(a=sorted_scores, v=scores_row)/
+                     len(sorted_scores))))
+    return transformed_all_scores
 
-        if (self.verbose):
-            print("Computing windowed sums on original")
-            sys.stdout.flush()
-        original_summed_logpercentile_track = window_sum_function(
-            arrs=log_percentile_scores) 
 
-        ##Determine the window thresholds
+def log_percentile_transform(max_num_to_use_for_percentile,
+                             score_track, seed=1234):
+    all_scores = flatten(list_of_arrs=score_track) 
+    if len(all_scores) > max_num_to_use_for_percentile:
+        all_scores = np.random.randomstate(seed).choice(
+                        a=all_scores,
+                        size=max_num_to_use_for_percentile,
+                        replace=false)
+    sorted_all_scores = sorted(all_scores)
+    del all_scores
+    transformed_all_scores = []
+    for scores_row in score_track:
+        #the +1 is to avoid log(0) issues
+        transformed_all_scores.append(
+         -np.log((1-(np.searchsorted(a=sorted_all_scores, v=scores_row)/
+                     len(sorted_all_scores)))))
+    return transformed_all_scores
 
-        ##val_transformer in my case would be cdf w.r.t. gamma dist I think.
 
-        ##tnt_results = TransformAndThresholdResults(
-        ##    neg_threshold=neg_threshold,
-        ##    transformed_neg_threshold=val_transformer(neg_threshold),
-        ##    pos_threshold=pos_threshold,
-        ##    transformed_pos_threshold=val_transformer(pos_threshold),
-        ##    val_transformer=val_transformer)
-
-        #neg_threshold = tnt_results.neg_threshold
-        #pos_threshold = tnt_results.pos_threshold
-
-        #summed_score_track = [np.array(x) for x in original_summed_score_track]
-
-        ##if a position is less than the threshold, set it to -np.inf
-        #summed_score_track = [
-        #    np.array([np.abs(y) if (y > pos_threshold
-        #                    or y < neg_threshold)
-        #                   else -np.inf for y in x])
-        #    for x in summed_score_track]
-
-        #coords = []
-        #for example_idx,single_score_track in enumerate(summed_score_track):
-        #    #set the stuff near the flanks to -np.inf so that we
-        #    # don't pick it up during argmax
-        #    single_score_track[0:self.flank] = -np.inf
-        #    single_score_track[len(single_score_track)-(self.flank):
-        #                       len(single_score_track)] = -np.inf
-        #    while True:
-        #        argmax = np.argmax(single_score_track,axis=0)
-        #        max_val = single_score_track[argmax]
-
-        #        #bail if exhausted everything that passed the threshold
-        #        #and was not suppressed
-        #        if (max_val == -np.inf):
-        #            break
-
-        #        #need to be able to expand without going off the edge
-        #        if ((argmax >= self.flank) and
-        #            (argmax < (len(single_score_track)-self.flank))): 
-
-        #            coord = SeqletCoordsFWAP(
-        #                example_idx=example_idx,
-        #                start=argmax-self.flank,
-        #                end=argmax+self.sliding+self.flank,
-        #                score=original_summed_score_track[example_idx][argmax]) 
-        #            assert (coord.score > pos_threshold
-        #                    or coord.score < neg_threshold)
-        #            coords.append(coord)
-        #        else:
-        #            assert False,\
-        #             ("This shouldn't happen because I set stuff near the"
-        #              "border to -np.inf early on")
-        #        #suppress the chunks within +- self.suppress
-        #        left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),
-        #                                         0))
-        #        right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
-        #                             len(single_score_track)))
-        #        single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
-
-        #if (self.verbose):
-        #    print("Got "+str(len(coords))+" coords")
-        #    sys.stdout.flush()
-
-        #if ((self.max_seqlets_total is not None) and
-        #    len(coords) > self.max_seqlets_total):
-        #    if (self.verbose):
-        #        print("Limiting to top "+str(self.max_seqlets_total))
-        #        sys.stdout.flush()
-        #    coords = sorted(coords, key=lambda x: -np.abs(x.score))\
-        #                       [:self.max_seqlets_total]
-        #return CoordProducerResults(
-        #            coords=coords,
-        #            tnt_results=tnt_results)   
+#class PercentileBasedWindows(AbstractCoordProducer):
+#    count = 0
+#    def __init__(self, sliding, target_fdr, max_seqlets_total, verbose=True,
+#                       plot_save_dir="figures",
+#                       max_num_to_use_for_percentile=50000,
+#                       seed=1234):
+#        self.sliding = sliding
+#        self.target_fdr = target_fdr
+#        self.max_seqlets_total = max_seqlets_total
+#        self.verbose = verbose
+#        self.plot_save_dir = plot_save_dir
+#        self.max_num_to_use_for_percentile = max_num_to_use_for_percentile
+#        self.seed = seed
+#
+#    def __init__(self, sliding,
+#                       flank,
+#                       suppress, #flanks to suppress
+#                       target_fdr,
+#                       max_seqlets_total=None,
+#                       progress_update=5000,
+#                       verbose=True,
+#                       plot_save_dir="figures",
+#                       max_num_to_use_for_percentile=50000,
+#                       seed=1234):
+#        self.sliding = sliding
+#        self.flank = flank
+#        self.suppress = suppress
+#        self.target_fdr = target_fdr
+#        self.max_seqlets_total = None
+#        self.progress_update = progress_update
+#        self.verbose = verbose
+#        self.plot_save_dir = plot_save_dir
+#        self.max_num_to_use_for_percentile = max_num_to_use_for_percentile
+#        self.seed = seed
+#
+#    def log_percentile_transform(self, score_track):
+#        all_scores = flatten(list_of_arrs=score_track) 
+#        if len(all_scores) > self.max_num_to_use_for_percentile:
+#            all_scores = np.random.RandomState(self.seed).choice(
+#                            a=all_scores,
+#                            size=self.max_num_to_use_for_percentile,
+#                            replace=False)
+#        sorted_all_scores = sorted(all_scores)
+#        del all_scores
+#        transformed_all_scores = []
+#        for scores_row in score_track:
+#            #the +1 is to avoid log(0) issues
+#            transformed_all_scores.append(
+#             -np.log((np.searchsorted(a=sorted_all_scores, v=scores_row)+1)/
+#                     len(sorted_all_scores)))
+#        return transformed_all_scores
+#
+#    def __call__(self, score_track, tnt_results=None, **kwargs):
+#    
+#        assert all([len(x.shape)==1 for x in score_track]) 
+#
+#        #transform all the scores to percentiles 
+#        log_percentile_scores = self.log_percentile_transform(
+#                                      score_track=score_track)
+#        del score_track
+#
+#        window_sum_function = get_simple_window_sum_function(self.sliding)
+#
+#        if (self.verbose):
+#            print("Computing windowed sums on original")
+#            sys.stdout.flush()
+#        original_summed_logpercentile_track = window_sum_function(
+#            arrs=log_percentile_scores) 
+#
+#        if (tnt_results is None):
+#            all_logpercentile_windowsums = np.array(sorted(flatten(
+#                original_summed_logpercentile_track)))
+#
+#            #Determine the window thresholds
+#            # First, figure out what the cdf would look like
+#            # Percentiles are uniformly distributed; -log of percentile is
+#            # exponentially distributed. Sum of multiple exponential
+#            # distributions is gamma distributed. Specifically, it would
+#            # be a gamma distribution with shape parameter = self.sliding,
+#            # and scale=1.
+#           
+#            #To compute the fdr, we can compare the empirical CDF to the
+#            # expected CDF 
+#            empirical_cdfs = (np.arange(len(all_logpercentile_windowsums))/
+#                              len(all_logpercentile_windowsums))
+#            val_transformer = Gamma2xCdfMHalfValTransformer(a=self.sliding) 
+#            expected_cdfs = scipy.stats.gamma.cdf(
+#                             x=all_logpercentile_windowsums, a=self.sliding)
+#            pos_fdrs = (1-expected_cdfs)/(1-empirical_cdfs)
+#            neg_fdrs = expected_cdfs/empirical_cdfs
+#            
+#            pos_threshold = ([x[1] for x in
+#             zip(pos_fdrs, all_logpercentile_windowsums) if x[0]
+#              <= self.target_fdr]+[all_logpercentile_windowsums[-1]])[0]
+#            neg_threshold = ([all_logpercentile_windowsums[0]]
+#             +[x[1] for x in zip(neg_fdrs, all_logpercentile_windowsums)
+#             if x[0] <= self.target_fdr])[-1]
+#
+#            frac_passing_windows =(
+#                sum(all_logpercentile_windowsums >= pos_threshold)
+#                 + sum(all_logpercentile_windowsums <= neg_threshold))/float(
+#                len(all_logpercentile_windowsums))
+#
+#            if (self.verbose):
+#                print("Fraction passing threshold:",frac_passing_windows)
+#                print("Thresholds from null dist were",
+#                      neg_threshold," and ",pos_threshold)
+#
+#
+#            from matplotlib import pyplot as plt
+#            plt.figure()
+#            hist, histbins, _ = plt.hist(all_logpercentile_windowsums,
+#                                         bins=100, density=True)
+#            plt.plot(histbins, scipy.stats.gamma.pdf(
+#                                x=histbins, a=self.sliding)) 
+#            #plt.plot(all_logpercentile_windowsums, empirical_cdfs)
+#            #plt.plot(all_logpercentile_windowsums, expected_cdfs)
+#            plt.plot([neg_threshold, neg_threshold], [0, max(hist)],
+#                     color="red")
+#            plt.plot([pos_threshold, pos_threshold], [0, max(hist)],
+#                     color="red")
+#            if plt.isinteractive():
+#                plt.show()
+#            else:
+#                import os, errno
+#                try:
+#                    os.makedirs(self.plot_save_dir)
+#                except OSError as e:
+#                    if e.errno != errno.EEXIST:
+#                        raise
+#                fname = (self.plot_save_dir+"/scoredist_" +
+#                         str(FixedWindowAroundChunks.count) + ".png")
+#                plt.savefig(fname)
+#                print("saving plot to " + fname)
+#                FixedWindowAroundChunks.count += 1
+#
+#            tnt_results = TransformAndThresholdResults(
+#                neg_threshold=neg_threshold,
+#                transformed_neg_threshold=val_transformer(neg_threshold),
+#                pos_threshold=pos_threshold,
+#                transformed_pos_threshold=val_transformer(pos_threshold),
+#                val_transformer=val_transformer)
+#
+#        neg_threshold = tnt_results.neg_threshold
+#        pos_threshold = tnt_results.pos_threshold
+#
+#        summed_logpercentile_track = [np.array(x) for x in
+#                                      original_summed_logpercentile_track]
+#        #if a position is less than the threshold, set it to -np.inf
+#        summed_logpercentile_track = [
+#            np.array([np.abs(y) if (y > pos_threshold or y < neg_threshold)
+#                      else -np.inf for y in x])
+#            for x in summed_logpercentile_track]
+#        #transformed_track
+#        transformed_track = [
+#            np.array([(val_transformer(y) if y > -np.inf else y)
+#                       for y in x])
+#                       for x in summed_logpercentile_track]
+#        coords = []
+#        for example_idx,single_score_track in enumerate(transformed_track):
+#            #set the stuff near the flanks to -np.inf so that we
+#            # don't pick it up during argmax
+#            single_score_track[0:self.flank] = -np.inf
+#            single_score_track[len(single_score_track)-(self.flank):
+#                               len(single_score_track)] = -np.inf
+#            while True:
+#                argmax = np.argmax(single_score_track,axis=0)
+#                max_val = single_score_track[argmax]
+#
+#                #bail if exhausted everything that passed the threshold
+#                #and was not suppressed
+#                if (max_val == -np.inf):
+#                    break
+#
+#                #need to be able to expand without going off the edge
+#                if ((argmax >= self.flank) and
+#                    (argmax < (len(single_score_track)-self.flank))): 
+#
+#                    coord = SeqletCoordsFWAP(
+#                        example_idx=example_idx,
+#                        start=argmax-self.flank,
+#                        end=argmax+self.sliding+self.flank,
+#                        score=original_summed_logpercentile_track[
+#                               example_idx][argmax],
+#                        score2=max_val) #score2 for debugging 
+#                    assert (coord.score2 <= self.target_fdr
+#                            or (1-coord.score2) <= self.target_fdr)
+#                    coords.append(coord)
+#                else:
+#                    assert False,\
+#                     ("This shouldn't happen because I set stuff near the"
+#                      "border to -np.inf early on")
+#                #suppress the chunks within +- self.suppress
+#                left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),
+#                                                 0))
+#                right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
+#                                     len(single_score_track)))
+#                single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
+#
+#        if (self.verbose):
+#            print("Got "+str(len(coords))+" coords")
+#            sys.stdout.flush()
+#
+#        if ((self.max_seqlets_total is not None) and
+#            len(coords) > self.max_seqlets_total):
+#            if (self.verbose):
+#                print("Limiting to top "+str(self.max_seqlets_total))
+#                sys.stdout.flush()
+#            coords = sorted(coords, key=lambda x: -np.abs(x.score))\
+#                               [:self.max_seqlets_total]
+#        return CoordProducerResults(
+#                    coords=coords,
+#                    tnt_results=tnt_results)   
 
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -536,21 +705,25 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                          [len(pos_orig_vals)/len(pos_null_vals)
                           for x in pos_null_vals]))
             pos_val_precisions = pos_ir.transform(pos_orig_vals)
-            neg_ir = IsotonicRegression(increasing=False).fit(
-                X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
-                y=([1.0 for x in neg_orig_vals]
-                   +[0.0 for x in neg_null_vals]),
-                sample_weight=([1.0 for x in neg_orig_vals]+
-                         [len(neg_orig_vals)/len(neg_null_vals)
-                          for x in neg_null_vals]))
-            neg_val_precisions = neg_ir.transform(neg_orig_vals)
+            if (len(neg_orig_vals) > 0):
+                neg_ir = IsotonicRegression(increasing=False).fit(
+                    X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
+                    y=([1.0 for x in neg_orig_vals]
+                       +[0.0 for x in neg_null_vals]),
+                    sample_weight=([1.0 for x in neg_orig_vals]+
+                             [len(neg_orig_vals)/len(neg_null_vals)
+                              for x in neg_null_vals]))
+                neg_val_precisions = neg_ir.transform(neg_orig_vals)
 
             pos_threshold = ([x[1] for x in
              zip(pos_val_precisions, pos_orig_vals) if x[0]
               >= (1-self.target_fdr)]+[pos_orig_vals[-1]])[0]
-            neg_threshold = ([x[1] for x in
-             zip(neg_val_precisions, neg_orig_vals) if x[0]
-              >= (1-self.target_fdr)]+[neg_orig_vals[-1]])[0]
+            if (len(neg_orig_vals) > 0):
+                neg_threshold = ([x[1] for x in
+                 zip(neg_val_precisions, neg_orig_vals) if x[0]
+                  >= (1-self.target_fdr)]+[neg_orig_vals[-1]])[0]
+            else:
+                neg_threshold = -np.inf
             frac_passing_windows =(
                 sum(pos_orig_vals >= pos_threshold)
                  + sum(neg_orig_vals <= neg_threshold))/float(len(orig_vals))
@@ -626,21 +799,23 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             poshistvals,posbins = zip(*[x for x in zip(hist,bincenters)
                                          if x[1] > 0])
             posbin_precisions = pos_ir.transform(posbins) 
-            neghistvals, negbins = zip(*[x for x in zip(hist,bincenters)
-                                         if x[1] < 0])
-            negbin_precisions = neg_ir.transform(negbins) 
-            plt.plot(list(negbins)+list(posbins),
+            plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
+                     color="red")
+
+            if (len(neg_orig_vals) > 0):
+                neghistvals, negbins = zip(*[x for x in zip(hist,bincenters)
+                                             if x[1] < 0])
+                negbin_precisions = neg_ir.transform(negbins) 
+                plt.plot(list(negbins)+list(posbins),
                      (list(np.minimum(neghistvals,
                                      neghistvals*(1-negbin_precisions)/
                                                  (negbin_precisions+1E-7)))+
                       list(np.minimum(poshistvals,
                                       poshistvals*(1-posbin_precisions)/
                                                  (posbin_precisions+1E-7)))),
-                     color="purple")
-            plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
-                     color="red")
-            plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
-                     color="red")
+                         color="purple")
+                plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
+                         color="red")
 
             if plt.isinteractive():
                 plt.show()
