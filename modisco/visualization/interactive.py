@@ -26,11 +26,15 @@ def compute_pairwise_continjacc_simmat(pattern, track_names_and_signs):
     return sim_mat
 
 
-def get_tsne_embedding(pattern, track_names_and_signs):
+def get_tsne_embedding(pattern, track_names_and_signs, seed=1234):
+    print("Computing pairwise similarities")
     pairwise_simmat = compute_pairwise_continjacc_simmat(
                     pattern=pattern,
                     track_names_and_signs=track_names_and_signs)
-    tsne_embedding = (sklearn.manifold.TSNE(metric="precomputed")
+    print("Computing tsne embedding")
+    tsne_embedding = (sklearn.manifold.TSNE(metric="precomputed",
+                                            verbose=2,
+                                            random_state=seed)
                       .fit_transform(1/(pairwise_simmat+1)))
     return tsne_embedding
 
@@ -101,6 +105,8 @@ class SelectFromCollection(object):
 
         # Ensure that we have separate colors for each object
         self.fc = collection.get_facecolors()
+        assert len(self.fc)==1
+        self.orig_fc = np.array(self.fc[0])
         if len(self.fc) == 0:
             raise ValueError('Collection must have a facecolor')
         elif len(self.fc) == 1:
@@ -113,7 +119,12 @@ class SelectFromCollection(object):
         path = Path(verts)
         self.ind = np.nonzero(path.contains_points(self.xys))[0]
         self.fc[:, -1] = self.alpha_other
+        self.fc[:, 0:3] = self.orig_fc[None,:3]
+        #Red color for selection
         self.fc[self.ind, -1] = 1
+        self.fc[self.ind, 0] = 1
+        self.fc[self.ind, 1] = 0
+        self.fc[self.ind, 2] = 0
         self.collection.set_facecolors(self.fc)
         self.canvas.draw_idle()
 
