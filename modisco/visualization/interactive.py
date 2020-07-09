@@ -26,7 +26,7 @@ def compute_pairwise_continjacc_simmat(pattern, track_names_and_signs):
     return sim_mat
 
 
-def get_tsne_embedding(pattern, track_names_and_signs, perplexity=10,
+def get_tsne_embedding(pattern, track_names_and_signs, perplexity,
                        seed=1234):
     print("Computing pairwise similarities")
     pairwise_simmat = compute_pairwise_continjacc_simmat(
@@ -37,17 +37,20 @@ def get_tsne_embedding(pattern, track_names_and_signs, perplexity=10,
                                             verbose=0,
                                             perplexity=perplexity,
                                             random_state=seed)
-                      .fit_transform(1/(pairwise_simmat+2)))
+                      .fit_transform(1/(np.maximum(pairwise_simmat, 1e-7) )))
+    #1/(pairwise_simmat) mapps the affinities to distances.
     print("Computed embedding")
     return tsne_embedding
 
 
 def make_interactive_plot(pattern, track_names_and_signs,
-                          figsize=(10,7), height_ratios=[2,1,1]):
+                          figsize=(10,7), height_ratios=[2,1,1],
+                          perplexity=10):
 
     tsne_embedding = get_tsne_embedding(
         pattern=pattern,
-        track_names_and_signs=track_names_and_signs)
+        track_names_and_signs=track_names_and_signs,
+        perplexity=perplexity)
 
     fig, ax = plt.subplots(nrows=3, ncols=1,
                            gridspec_kw={'height_ratios': height_ratios},
