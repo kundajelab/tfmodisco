@@ -223,13 +223,11 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
             agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
             template_to_startidx=template_to_startidx,
-            embedding_size=embedding_size,
-            n_jobs=self.n_jobs)
+            embedding_size=embedding_size)
         sparse_agkm_embeddings_rev = get_sparse_mat_from_agkm_embeddings(
             agkm_embeddings=advanced_gappedkmer_embeddings_rev,
             template_to_startidx=template_to_startidx,
-            embedding_size=embedding_size,
-            n_jobs=self.n_jobs)
+            embedding_size=embedding_size)
 
         return sparse_agkm_embeddings_fwd, sparse_agkm_embeddings_rev
 
@@ -277,11 +275,10 @@ def map_agkm_embedding_to_sparsevec(gapped_kmer_to_totalseqimp,
 
 def get_sparse_mat_from_agkm_embeddings(agkm_embeddings,
                                         template_to_startidx,
-                                        embedding_size,
-                                        n_jobs=1):
+                                        embedding_size):
     #not sure why, but parallelization doesn't help that much here?
     # so I am setting n_jobs to 1.
-    all_agkm_data_and_cols = Parallel(n_jobs=n_jobs, verbose=True)(
+    all_agkm_data_and_cols = Parallel(n_jobs=1, verbose=True)(
         delayed(map_agkm_embedding_to_sparsevec)(
             agkm_embedding,
             template_to_startidx)
