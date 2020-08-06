@@ -223,11 +223,13 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
             agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
             template_to_startidx=template_to_startidx,
-            embedding_size=embedding_size)
+            embedding_size=embedding_size,
+            n_jobs=self.n_jobs)
         sparse_agkm_embeddings_rev = get_sparse_mat_from_agkm_embeddings(
             agkm_embeddings=advanced_gappedkmer_embeddings_rev,
             template_to_startidx=template_to_startidx,
-            embedding_size=embedding_size)
+            embedding_size=embedding_size,
+            n_jobs=self.n_jobs)
 
         return sparse_agkm_embeddings_fwd, sparse_agkm_embeddings_rev
 
@@ -295,7 +297,8 @@ def get_sparse_mat_from_agkm_embeddings(agkm_embeddings,
         row_ind.extend([this_row_idx for x in single_agkm_data])
     
     csr_mat = scipy.sparse.csr_matrix(
-        (data, (row_ind, col_ind)),
+        (data, (np.array(row_ind).astype("int64"),
+                np.array(col_ind).astype("int64"))),
         shape=(len(agkm_embeddings), embedding_size))
     return csr_mat
 
