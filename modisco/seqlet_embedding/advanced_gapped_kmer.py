@@ -7,6 +7,8 @@ from .. import core as modiscocore
 import itertools
 import numpy as np
 import sys
+from joblib import Parallel, delayed
+import scipy
 
 
 def fast_recursively_get_gappedkmersandimp(posbaseimptuples, max_k,
@@ -135,7 +137,7 @@ def prepare_gapped_kmer_from_seqlet(seqlet, topn, min_k,
     onehot = getattr(seqlet[onehot_track_name], attr)
     contrib_scores = np.sum([getattr(seqlet[track_name], attr)*onehot*sign
             for track_name, sign in toscore_track_names_and_signs ], axis=0)
-    return prepare_gapped_kmer_from_seqlet(
+    return prepare_gapped_kmer_from_contribs(
             contrib_scores=contrib_scores, topn=topn, min_k=min_k,
             max_k=max_k, max_gap=max_gap, max_len=max_len) 
 
@@ -165,7 +167,7 @@ class AdvancedGappedKmerEmbedderFactory(object):
                 ])
 
     def __call__(self, onehot_track_name, toscore_track_names_and_signs):
-        return prepare_gapped_kmer_from_seqlet(
+        return AdvancedGappedKmerEmbedder(
                 topn=self.topn, min_k=self.min_k, max_k=self.max_k,
                 max_gap=self.max_gap, max_len=self.max_len,
                 alphabet_size=self.alphabet_size,
@@ -186,6 +188,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         self.max_k = max_k
         self.max_gap = max_gap
         self.max_len = max_len
+        self.alphabet_size = alphabet_size
         self.n_jobs = n_jobs
         self.onehot_track_name = onehot_track_name
         self.toscore_track_names_and_signs = toscore_track_names_and_signs
@@ -200,7 +203,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                     self.max_len, True,
                     self.onehot_track_name,
                     self.toscore_track_names_and_signs)
-                   for i in range(seqlets))
+                   for i in range(len(seqlets)))
         advanced_gappedkmer_embeddings_rev =\
             Parallel(n_jobs=self.n_jobs, verbose=True)(
                 delayed(prepare_gapped_kmer_from_seqlet)(
@@ -210,11 +213,12 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                     self.max_len, False,
                     self.onehot_track_name,
                     self.toscore_track_names_and_signs)
-                   for i in range(seqlets)) 
+                   for i in range(len(seqlets))) 
 
-        template_to_startidx, embedding_size = get_template_to_startidx(
-            max_len=self.max_len, min_k=self.min_k,
-            max_k=self.max_k, alphabetsize=4)
+        template_to_startidx, embedding_size =\
+            get_template_to_startidx_and_embedding_size(
+                max_len=self.max_len, min_k=self.min_k,
+                max_k=self.max_k, alphabet_size=self.alphabet_size)
 
         sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
             agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
@@ -229,7 +233,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
 
 
 def get_template_to_startidx_and_embedding_size(
-        max_len, min_k, max_k, alphabetsize):
+        max_len, min_k, max_k, alphabet_size):
     template_to_startidx = {}
     start_idx = 0
     for a_len in range(min_k, max_len+1):
@@ -241,7 +245,7 @@ def get_template_to_startidx_and_embedding_size(
                     template[nongap_pos] = True
                 template = tuple([True]+template+[True])
                 template_to_startidx[template] = start_idx
-                start_idx += alphabetsize**(num_nongap+2)
+                start_idx += alphabet_size**(num_nongap+2)
     return template_to_startidx, start_idx
 
 

@@ -10,3 +10,4 @@ from . import tfmodisco_workflow
 from . import value_provider
 from . import clusterinit
 from . import seqlet_embedding
+from . import cluster

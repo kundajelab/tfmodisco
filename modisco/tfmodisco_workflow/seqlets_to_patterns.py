@@ -843,9 +843,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     min_seqlets_in_motif=0)
 
             #obtain unique seqlets from adjusted motifs
-            seqlets = dict([(y.exidx_start_end_string, y)
+            seqlets = list(dict([(y.exidx_start_end_string, y)
                              for x in cluster_to_motif.values()
-                             for y in x.seqlets]).values()
+                             for y in x.seqlets]).values())
 
         if (self.verbose):
             print("Got "+str(len(cluster_to_motif.values()))+" clusters")

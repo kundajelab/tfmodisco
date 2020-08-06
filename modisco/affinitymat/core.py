@@ -8,6 +8,7 @@ import sys
 import time
 import itertools
 import scipy.stats
+import sklearn
 from joblib import Parallel, delayed
 
 
@@ -109,8 +110,7 @@ def sparse_cosine_similarity(sparse_mat_1, sparse_mat_2):
     return normed_sparse_mat_1.dot(normed_sparse_mat_2.transpose())
 
 
-class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
-        AbstractSparseAffmatFromFwdAndRevOneDVecs):
+class SparseNumpyCosineSimFromFwdAndRevOneDVecs():
 
     def __init__(self, n_neighbors, verbose, nn_n_jobs,
                        memory_cap_gb=1.0):
