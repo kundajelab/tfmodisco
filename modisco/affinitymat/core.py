@@ -98,6 +98,59 @@ class AbstractAffinityMatrixFromOneD(object):
         raise NotImplementedError()
 
 
+def magnitude_norm_sparsemat(sparse_mat):
+    return sklearn.preprocessing.normalize(sparse_mat, norm='l2', axis=1)
+    #return sparse_mat.divide(sparse_mat.multiply(sparse_mat).sum(axis=-1))
+
+
+def sparse_cosine_similarity(sparse_mat_1, sparse_mat_2):
+    normed_sparse_mat_1 = magnitude_norm_sparsemat(sparse_mat=sparse_mat_1)
+    normed_sparse_mat_2 = magnitude_norm_sparsemat(sparse_mat=sparse_mat_2)
+    return normed_sparse_mat_1.dot(normed_sparse_mat_2.transpose())
+
+
+class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
+        AbstractSparseAffmatFromFwdAndRevOneDVecs):
+
+    def __init__(self, n_neighbors, verbose, nn_n_jobs,
+                       memory_cap_gb=1.0):
+        self.n_neighbors = n_neighbors   
+        self.nn_n_jobs = nn_n_jobs
+        self.verbose = verbose
+        self.memory_cap_gb = memory_cap_gb
+
+    def __call__(self, fwd_vecs, rev_vecs):
+
+        #normalize the vectors 
+        fwd_vecs = magnitude_norm_sparsemat(sparse_mat=fwd_vecs)
+        rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
+
+        fwd_sims = fwd_vecs.dot(fwd_vecs.transpose())
+        rev_sims = fwd_vecs.dot(rev_vecs.transpose())
+
+        #assuming float64 for the affinity matrix, figure out the batch size
+        # to use given the memory cap
+        memory_cap_gb = (self.memory_cap_gb if rev_vecs
+                         is None else self.memory_cap_gb/2.0)
+        batch_size = int(memory_cap_gb*(2**30)/(len(fwd_vecs)*8))
+        batch_size = min(max(1,batch_size),len(fwd_vecs))
+        if (self.verbose):
+            print("Batching in slices of size",batch_size)
+            sys.stdout.flush()
+
+        topk_cosine_sim_results = []
+        for i in tqdm(range(0,len(fwd_vecs),batch_size)):
+            topk_cosine_sim_results.append(
+                top_k_fwdandrev_dot_prod(fwd_vecs[i:i+batch_size],
+                                         rev_vecs,
+                                         fwd_vecs, self.n_neighbors+1))
+        neighbors = np.concatenate(
+                     [x[0] for x in topk_cosine_sim_results], axis=0)
+        sims = np.concatenate([x[1] for x in topk_cosine_sim_results], axis=0) 
+
+        return sims, neighbors
+
+
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
     def __init__(self, verbose, gpu_batch_size=None):
@@ -107,28 +160,35 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
     def __call__(self, vecs1, vecs2):
 
         start_time = time.time()
-        normed_vecs1 = np.nan_to_num(
-                        vecs1/np.linalg.norm(vecs1, axis=1)[:,None],
-                        copy=False)
-        normed_vecs2 = np.nan_to_num(
-                        vecs2/np.linalg.norm(vecs2, axis=1)[:,None],
-                        copy=False)
-        if (self.verbose):
-            print("Normalization computed in",
-                  round(time.time()-start_time,2),"s")
-            sys.stdout.flush()
-        if (self.gpu_batch_size is not None):
-            to_return = B.matrix_dot_product(normed_vecs1, normed_vecs2.T,
-                                             batch_size=self.gpu_batch_size)
+        if (scipy.sparse.issparse(vecs1)):
+            vecs1 = magnitude_norm_sparsemat(sparse_mat=vecs1)
+            vecs2 = magnitude_norm_sparsemat(sparse_mat=vecs2)
+            to_return = vecs1.dot(vecs2.transpose())
+            #cast to dense for now
+            to_return = np.array(to_return.todense())
         else:
-            #do the multiplication on the CPU
-            to_return = np.dot(normed_vecs1,normed_vecs2.T)
-        end_time = time.time()
-    
-        if (self.verbose):
-            print("Cosine similarity mat computed in",
-                  round(end_time-start_time,2),"s")
-            sys.stdout.flush()
+            normed_vecs1 = np.nan_to_num(
+                            vecs1/np.linalg.norm(vecs1, axis=1)[:,None],
+                            copy=False)
+            normed_vecs2 = np.nan_to_num(
+                            vecs2/np.linalg.norm(vecs2, axis=1)[:,None],
+                            copy=False)
+            if (self.verbose):
+                print("Normalization computed in",
+                      round(time.time()-start_time,2),"s")
+                sys.stdout.flush()
+            if (self.gpu_batch_size is not None):
+                to_return = B.matrix_dot_product(normed_vecs1, normed_vecs2.T,
+                                                 batch_size=self.gpu_batch_size)
+            else:
+                #do the multiplication on the CPU
+                to_return = np.dot(normed_vecs1,normed_vecs2.T)
+            end_time = time.time()
+        
+            if (self.verbose):
+                print("Cosine similarity mat computed in",
+                      round(end_time-start_time,2),"s")
+                sys.stdout.flush()
 
         return to_return
 
