@@ -10,6 +10,7 @@ import itertools
 import scipy.stats
 import sklearn
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 
 def print_memory_use():
@@ -125,8 +126,8 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs():
         fwd_vecs = magnitude_norm_sparsemat(sparse_mat=fwd_vecs)
         rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
 
-        fwd_sims = fwd_vecs.dot(fwd_vecs.transpose())
-        rev_sims = fwd_vecs.dot(rev_vecs.transpose())
+        #fwd_sims = fwd_vecs.dot(fwd_vecs.transpose())
+        #rev_sims = fwd_vecs.dot(rev_vecs.transpose())
 
         #assuming float64 for the affinity matrix, figure out the batch size
         # to use given the memory cap
@@ -153,9 +154,9 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs():
 
 class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
 
-    def __init__(self, verbose, gpu_batch_size=None):
+    def __init__(self, verbose, rows_per_batch=500):
         self.verbose = verbose
-        self.gpu_batch_size = gpu_batch_size
+        self.rows_per_batch = rows_per_batch
 
     def __call__(self, vecs1, vecs2):
 
@@ -163,9 +164,20 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
         if (scipy.sparse.issparse(vecs1)):
             vecs1 = magnitude_norm_sparsemat(sparse_mat=vecs1)
             vecs2 = magnitude_norm_sparsemat(sparse_mat=vecs2)
-            to_return = vecs1.dot(vecs2.transpose())
+
+            if (self.verbose):
+                print("Batching in slices of size",self.rows_per_batch)
+                sys.stdout.flush()
+
+            transpose_vecs2 = vecs2.transpose()
+            to_return = np.zeros((vecs1.shape[0], vecs2.shape[0]))
+            for i in tqdm(range(0, vecs1.shape[0], self.rows_per_batch)):
+                to_return[i:min(i+self.rows_per_batch, vecs1.shape[0])] =\
+                    np.array(vecs1[i:i+self.rows_per_batch]
+                              .dot(transpose_vecs2).todense())
+            #to_return = vecs1.dot(vecs2.transpose())
             #cast to dense for now
-            to_return = np.array(to_return.todense())
+            #to_return = np.array(to_return.todense())
         else:
             normed_vecs1 = np.nan_to_num(
                             vecs1/np.linalg.norm(vecs1, axis=1)[:,None],
@@ -177,12 +189,8 @@ class NumpyCosineSimilarity(AbstractAffinityMatrixFromOneD):
                 print("Normalization computed in",
                       round(time.time()-start_time,2),"s")
                 sys.stdout.flush()
-            if (self.gpu_batch_size is not None):
-                to_return = B.matrix_dot_product(normed_vecs1, normed_vecs2.T,
-                                                 batch_size=self.gpu_batch_size)
-            else:
-                #do the multiplication on the CPU
-                to_return = np.dot(normed_vecs1,normed_vecs2.T)
+            #do the multiplication on the CPU
+            to_return = np.dot(normed_vecs1,normed_vecs2.T)
             end_time = time.time()
         
             if (self.verbose):

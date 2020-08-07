@@ -271,8 +271,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 seqlets_to_1d_embedder=seqlets_to_1d_embedder,
                 affinity_mat_from_1d=\
                     affinitymat.core.NumpyCosineSimilarity(
-                        verbose=self.verbose,
-                        gpu_batch_size=None),
+                        verbose=self.verbose),
                 verbose=self.verbose)
 
         affmat_from_seqlets_with_nn_pairs =\

@@ -9,6 +9,7 @@ import numpy as np
 import sys
 from joblib import Parallel, delayed
 import scipy
+import time
 
 
 def fast_recursively_get_gappedkmersandimp(posbaseimptuples, max_k,
@@ -292,10 +293,13 @@ def get_sparse_mat_from_agkm_embeddings(agkm_embeddings,
         data.extend(single_agkm_data)
         col_ind.extend(single_agkm_cols)
         row_ind.extend([this_row_idx for x in single_agkm_data])
-    
+
+    print("Constructing csr matrix...")
+    start = time.time() 
     csr_mat = scipy.sparse.csr_matrix(
         (data, (np.array(row_ind).astype("int64"),
                 np.array(col_ind).astype("int64"))),
         shape=(len(agkm_embeddings), embedding_size))
+    print("csr matrix made in",time.time()-start,"s")
     return csr_mat
 
