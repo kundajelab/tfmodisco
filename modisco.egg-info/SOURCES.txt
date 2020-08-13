@@ -47,6 +47,7 @@ modisco/tfmodisco_workflow/__init__.py
 modisco/tfmodisco_workflow/seqlets_to_patterns.py
 modisco/tfmodisco_workflow/workflow.py
 modisco/visualization/__init__.py
+modisco/visualization/interactive.py
 modisco/visualization/matplotlibhelpers.py
 modisco/visualization/tsne.py
 modisco/visualization/viz_sequence.py

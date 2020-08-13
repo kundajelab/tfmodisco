@@ -271,8 +271,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 seqlets_to_1d_embedder=seqlets_to_1d_embedder,
                 affinity_mat_from_1d=\
                     affinitymat.core.NumpyCosineSimilarity(
-                        verbose=self.verbose,
-                        gpu_batch_size=None),
+                        verbose=self.verbose),
                 verbose=self.verbose)
 
         affmat_from_seqlets_with_nn_pairs =\
@@ -843,9 +842,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     min_seqlets_in_motif=0)
 
             #obtain unique seqlets from adjusted motifs
-            seqlets = dict([(y.exidx_start_end_string, y)
+            seqlets = list(dict([(y.exidx_start_end_string, y)
                              for x in cluster_to_motif.values()
-                             for y in x.seqlets]).values()
+                             for y in x.seqlets]).values())
 
         if (self.verbose):
             print("Got "+str(len(cluster_to_motif.values()))+" clusters")
