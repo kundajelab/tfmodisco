@@ -237,7 +237,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        other_comparison_track_names=[]):
 
         bg_freq = np.mean(
-            track_set.track_name_to_data_track[onehot_track_name],
+            track_set.track_name_to_data_track[onehot_track_name].fwd_tracks,
             axis=(0,1))
         assert len(bg_freq.shape)==1
 
