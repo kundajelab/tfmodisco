@@ -236,6 +236,11 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        track_signs,
                        other_comparison_track_names=[]):
 
+        bg_freq = np.mean(
+            track_set.track_name_to_data_track[onehot_track_name].fwd_tracks,
+            axis=(0,1))
+        assert len(bg_freq.shape)==1
+
         assert len(track_signs)==len(hypothetical_contribs_track_names)
         assert len(track_signs)==len(contrib_scores_track_names)
 
@@ -271,8 +276,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 seqlets_to_1d_embedder=seqlets_to_1d_embedder,
                 affinity_mat_from_1d=\
                     affinitymat.core.NumpyCosineSimilarity(
-                        verbose=self.verbose,
-                        gpu_batch_size=None),
+                        verbose=self.verbose),
                 verbose=self.verbose)
 
         affmat_from_seqlets_with_nn_pairs =\
@@ -347,9 +351,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
             aggregator.ExpandSeqletsToFillPattern(
                 track_set=track_set,
                 flank_to_add=self.initial_flank_to_add).chain(
-            aggregator.TrimToBestWindow(
+            aggregator.TrimToBestWindowByIC(
                 window_size=self.trim_to_window_size,
-                track_names=contrib_scores_track_names)).chain(
+                onehot_track_name=onehot_track_name,
+                bg_freq=bg_freq)).chain(
             aggregator.ExpandSeqletsToFillPattern(
                 track_set=track_set,
                 flank_to_add=self.initial_flank_to_add))
@@ -843,9 +848,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                     min_seqlets_in_motif=0)
 
             #obtain unique seqlets from adjusted motifs
-            seqlets = dict([(y.exidx_start_end_string, y)
+            seqlets = list(dict([(y.exidx_start_end_string, y)
                              for x in cluster_to_motif.values()
-                             for y in x.seqlets]).values()
+                             for y in x.seqlets]).values())
 
         if (self.verbose):
             print("Got "+str(len(cluster_to_motif.values()))+" clusters")

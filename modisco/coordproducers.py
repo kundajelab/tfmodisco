@@ -10,6 +10,7 @@ import time
 from .value_provider import (
     AbstractValTransformer, AbsPercentileValTransformer,
     SignedPercentileValTransformer)
+import scipy
 
 
 class TransformAndThresholdResults(object):
@@ -157,12 +158,14 @@ class LaplaceNullDist(GenerateNullDist):
 
     @classmethod
     def from_hdf5(cls, grp):
+        num_to_samp = grp.attrs["num_to_samp"]
         verbose = grp.attrs["verbose"]
         percentiles_to_use = np.array(grp["percentiles_to_use"][:])
-        return cls(verbose=verbose)
+        return cls(num_to_samp=num_to_samp, verbose=verbose)
 
     def save_hdf5(self, grp):
         grp.attrs["class"] = type(self).__name__
+        grp.attrs["num_to_samp"] = self.num_to_samp
         grp.attrs["verbose"] = self.verbose 
         grp.create_dataset('percentiles_to_use',
                            data=self.percentiles_to_use)
@@ -412,21 +415,25 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                          [len(pos_orig_vals)/len(pos_null_vals)
                           for x in pos_null_vals]))
             pos_val_precisions = pos_ir.transform(pos_orig_vals)
-            neg_ir = IsotonicRegression(increasing=False).fit(
-                X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
-                y=([1.0 for x in neg_orig_vals]
-                   +[0.0 for x in neg_null_vals]),
-                sample_weight=([1.0 for x in neg_orig_vals]+
-                         [len(neg_orig_vals)/len(neg_null_vals)
-                          for x in neg_null_vals]))
-            neg_val_precisions = neg_ir.transform(neg_orig_vals)
+            if (len(neg_orig_vals) > 0):
+                neg_ir = IsotonicRegression(increasing=False).fit(
+                    X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
+                    y=([1.0 for x in neg_orig_vals]
+                       +[0.0 for x in neg_null_vals]),
+                    sample_weight=([1.0 for x in neg_orig_vals]+
+                             [len(neg_orig_vals)/len(neg_null_vals)
+                              for x in neg_null_vals]))
+                neg_val_precisions = neg_ir.transform(neg_orig_vals)
 
             pos_threshold = ([x[1] for x in
              zip(pos_val_precisions, pos_orig_vals) if x[0]
               >= (1-self.target_fdr)]+[pos_orig_vals[-1]])[0]
-            neg_threshold = ([x[1] for x in
-             zip(neg_val_precisions, neg_orig_vals) if x[0]
-              >= (1-self.target_fdr)]+[neg_orig_vals[-1]])[0]
+            if (len(neg_orig_vals) > 0):
+                neg_threshold = ([x[1] for x in
+                 zip(neg_val_precisions, neg_orig_vals) if x[0]
+                  >= (1-self.target_fdr)]+[neg_orig_vals[-1]])[0]
+            else:
+                neg_threshold = -np.inf
             frac_passing_windows =(
                 sum(pos_orig_vals >= pos_threshold)
                  + sum(neg_orig_vals <= neg_threshold))/float(len(orig_vals))
@@ -502,21 +509,23 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             poshistvals,posbins = zip(*[x for x in zip(hist,bincenters)
                                          if x[1] > 0])
             posbin_precisions = pos_ir.transform(posbins) 
-            neghistvals, negbins = zip(*[x for x in zip(hist,bincenters)
-                                         if x[1] < 0])
-            negbin_precisions = neg_ir.transform(negbins) 
-            plt.plot(list(negbins)+list(posbins),
+            plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
+                     color="red")
+
+            if (len(neg_orig_vals) > 0):
+                neghistvals, negbins = zip(*[x for x in zip(hist,bincenters)
+                                             if x[1] < 0])
+                negbin_precisions = neg_ir.transform(negbins) 
+                plt.plot(list(negbins)+list(posbins),
                      (list(np.minimum(neghistvals,
                                      neghistvals*(1-negbin_precisions)/
                                                  (negbin_precisions+1E-7)))+
                       list(np.minimum(poshistvals,
                                       poshistvals*(1-posbin_precisions)/
                                                  (posbin_precisions+1E-7)))),
-                     color="purple")
-            plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
-                     color="red")
-            plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
-                     color="red")
+                         color="purple")
+                plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
+                         color="red")
 
             if plt.isinteractive():
                 plt.show()

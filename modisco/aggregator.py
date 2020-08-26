@@ -41,27 +41,40 @@ class TrimToFracSupport(AbstractAggSeqletPostprocessor):
                   verbose=self.verbose) for x in aggregated_seqlets]
 
 
-class TrimToBestWindow(AbstractAggSeqletPostprocessor):
+class AbstractTrimToBestWindow(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, window_size, track_names):
+    def __init__(self, window_size):
         self.window_size = window_size
-        self.track_names = track_names
+
+    def score_positions(self, aggregated_seqlet):
+        raise NotImplementError()
 
     def __call__(self, aggregated_seqlets):
         trimmed_agg_seqlets = []
         for aggregated_seqlet in aggregated_seqlets:
             start_idx = np.argmax(util.cpu_sliding_window_sum(
-                arr=np.sum(np.abs(
-                    np.concatenate(
-                    [aggregated_seqlet[track_name].fwd
-                      .reshape(len(aggregated_seqlet),-1) for
-                     track_name in self.track_names], axis=1)),axis=1),
+                arr=self.score_positions(aggregated_seqlet),
                 window_size=self.window_size))
             end_idx = start_idx + self.window_size
             trimmed_agg_seqlets.append(
                 aggregated_seqlet.trim_to_start_and_end_idx(
                     start_idx=start_idx, end_idx=end_idx)) 
         return trimmed_agg_seqlets
+
+
+class TrimToBestWindowByIC(AbstractTrimToBestWindow):
+
+    def __init__(self, window_size, onehot_track_name, bg_freq):
+        super(TrimToBestWindowByIC, self).__init__(window_size=window_size)
+        self.onehot_track_name = onehot_track_name
+        self.bg_freq = bg_freq
+
+    #sub up imp for each track, take l1 norm, average across seqlets
+    def score_positions(self, aggregated_seqlet):
+        ppm = aggregated_seqlet[self.onehot_track_name].fwd
+        per_pos_ic = util.compute_per_position_ic(
+            ppm=ppm, background=self.bg_freq, pseudocount=0.001)
+        return per_pos_ic
 
 
 class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
