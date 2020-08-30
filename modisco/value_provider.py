@@ -78,27 +78,6 @@ class AbstractValTransformer(object):
         return the_class.from_hdf5(grp) 
 
 
-#2x Cdf - 0.5
-class Gamma2xCdfMHalfValTransformer(AbstractValTransformer):
-
-    def __init__(self, a):
-        self.a = a
-
-    @classmethod
-    def from_hdf5(cls, grp):
-        a = grp.attrs["a"]
-        return cls(a=a) 
-
-    def save_hdf5(self, grp):
-        grp.attrs["class"] = type(self).__name__
-        grp.attrs["a"] = self.a
-
-    def __call__(self, val):
-        #I'm doing it this way to maintain continuity in the scores
-        signed_onempval = (scipy.stats.gamma.cdf(x=val, a=self.a)-0.5)*2 
-        return signed_onempval
-
-
 class AbsPercentileValTransformer(AbstractValTransformer):
 
     def __init__(self, distribution):

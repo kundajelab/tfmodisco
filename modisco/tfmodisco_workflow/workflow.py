@@ -166,9 +166,7 @@ class TfModiscoWorkflow(object):
     def __init__(self,
                  seqlets_to_patterns_factory=
                  seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
-                 use_percentile_null=False,
                  sliding_window_size=21, flank_size=10,
-                 histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_metacluster_size=100,
                  min_metacluster_size_frac=0.01,
@@ -187,11 +185,8 @@ class TfModiscoWorkflow(object):
                 +" min_passing_windows_frac, which defaults to 0.005")
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
-        self.use_percentile_null = use_percentile_null
         self.sliding_window_size = sliding_window_size
         self.flank_size = flank_size
-        self.histogram_bins = histogram_bins
-        self.percentiles_in_bandwidth = percentiles_in_bandwidth
         self.overlap_portion = overlap_portion
         self.min_metacluster_size = min_metacluster_size
         self.min_metacluster_size_frac = min_metacluster_size_frac
@@ -227,30 +222,18 @@ class TfModiscoWorkflow(object):
                        plot_save_dir="figures"):
 
         print_memory_use()
-
-        if (self.use_percentile_null):
-            self.coord_producer = coordproducers.PercentileBasedWindows(
-                sliding=self.sliding_window_size,
-                flank=self.flank_size,
-                suppress=(int(0.5*self.sliding_window_size)
-                          + self.flank_size),
-                target_fdr=self.target_seqlet_fdr,
-                max_seqlets_total=None,
-                verbose=self.verbose,
-                plot_save_dir=plot_save_dir) 
-        else:
-            self.coord_producer = coordproducers.FixedWindowAroundChunks(
-                sliding=self.sliding_window_size,
-                flank=self.flank_size,
-                suppress=(int(0.5*self.sliding_window_size)
-                          + self.flank_size),
-                target_fdr=self.target_seqlet_fdr,
-                min_passing_windows_frac=self.min_passing_windows_frac,
-                max_passing_windows_frac=self.max_passing_windows_frac,
-                separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
-                max_seqlets_total=None,
-                verbose=self.verbose,
-                plot_save_dir=plot_save_dir) 
+        self.coord_producer = coordproducers.FixedWindowAroundChunks(
+            sliding=self.sliding_window_size,
+            flank=self.flank_size,
+            suppress=(int(0.5*self.sliding_window_size)
+                      + self.flank_size),
+            target_fdr=self.target_seqlet_fdr,
+            min_passing_windows_frac=self.min_passing_windows_frac,
+            max_passing_windows_frac=self.max_passing_windows_frac,
+            separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+            max_seqlets_total=None,
+            verbose=self.verbose,
+            plot_save_dir=plot_save_dir) 
 
         custom_perpos_contribs = per_position_contrib_scores
         if (per_position_contrib_scores is None):
