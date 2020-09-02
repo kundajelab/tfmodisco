@@ -1,17 +1,19 @@
-from distutils.core import setup
+from setuptools import setup, Extension, find_packages
 from setuptools import find_packages
+
 
 if __name__== '__main__':
     setup(include_package_data=True,
           description='TF MOtif Discovery from Importance SCOres',
           long_description="""Algorithm for discovering consolidated patterns from base-pair-level importance scores""",
           url='https://github.com/kundajelab/tfmodisco',
-          version='0.5.8.0',
+          version='0.5.8.1',
           packages=find_packages(),
           package_data={
                 '': ['cluster/phenograph/louvain/*convert*', 'cluster/phenograph/louvain/*community*', 'cluster/phenograph/louvain/*hierarchy*']
           },
           zip_safe=False,
+          ext_modules=[Extension("modisco.seqlet_embedding.cython_advanced_gapped_kmer", ["modisco/seqlet_embedding/cython_advanced_gapped_kmer.c"])],
           setup_requires=[],
           install_requires=['numpy>=1.9', 'joblib>=0.11', 
                             'scikit-learn>=0.19',
