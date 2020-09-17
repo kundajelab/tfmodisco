@@ -276,7 +276,7 @@ class ReassignSeqletsFromSmallClusters(AbstractAggSeqletPostprocessor):
                 large_patterns, new_assignments =\
                     self.seqlet_assigner(patterns=large_patterns,
                                          seqlets_to_assign=seqlets_to_assign,
-                                         merge_into_existing_patterns=True)
+                                         merge_into_existing_patterns=False)
             large_patterns = self.postprocessor(large_patterns)
             return large_patterns
         else:
