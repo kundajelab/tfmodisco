@@ -556,9 +556,12 @@ class SeqletsToPatternsResults(object):
                         track_set=track_set)
             patterns = util.load_patterns(grp=grp["patterns"],
                                           track_set=track_set) 
-            patterns_withoutreassignment = util.load_patterns(
-                grp=grp["patterns_withoutreassignment"],
-                track_set=track_set) 
+            if "patterns_withoutreassignment" in grp:
+                patterns_withoutreassignment = util.load_patterns(
+                    grp=grp["patterns_withoutreassignment"],
+                    track_set=track_set) 
+            else: #backwards compatibility
+                patterns_withoutreassignment = []
             cluster_results = None
             total_time_taken = None
             return cls(
