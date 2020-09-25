@@ -478,7 +478,6 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         self.cross_metric_single_region = cross_metric_single_region
         self.verbose = verbose
 
-    #min_overlap is w.r.t. the length of 'filters'
     def __call__(self, filters, things_to_scan, min_overlap,
                        neighbors_of_things_to_scan=None,
                        return_sparse=False):
