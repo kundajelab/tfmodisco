@@ -7,8 +7,6 @@ matrix:
           env: TF_VERSION=1.14.0
         - python: 3.6
           env: TF_VERSION=1.14.0
-        - python: 3.8.3
-          env: TF_VERSION=2.3.0
 
 notifications:
   email: true
