@@ -669,7 +669,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                                   " with "+str(motif.num_seqlets)
                                   +" seqlets due to sign disagreement")
                         cluster_to_eliminated_motif[i] = motif
-                cluster_to_motif[i] = motif
         return cluster_to_motif, cluster_to_eliminated_motif
 
 
