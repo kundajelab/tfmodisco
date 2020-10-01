@@ -507,11 +507,14 @@ class SeqletsToPatternsResults(object):
 
     def __init__(self,
                  each_round_initcluster_motifs, 
-                 patterns, cluster_results,
+                 patterns, 
+                 patterns_withoutreassignment,
+                 cluster_results,
                  total_time_taken, success=True, **kwargs):
         self.each_round_initcluster_motifs = each_round_initcluster_motifs
         self.success = success
         self.patterns = patterns
+        self.patterns_withoutreassignment = patterns_withoutreassignment
         self.cluster_results = cluster_results
         self.total_time_taken = total_time_taken
         self.__dict__.update(**kwargs)
@@ -553,11 +556,18 @@ class SeqletsToPatternsResults(object):
                         track_set=track_set)
             patterns = util.load_patterns(grp=grp["patterns"],
                                           track_set=track_set) 
+            if "patterns_withoutreassignment" in grp:
+                patterns_withoutreassignment = util.load_patterns(
+                    grp=grp["patterns_withoutreassignment"],
+                    track_set=track_set) 
+            else: #backwards compatibility
+                patterns_withoutreassignment = []
             cluster_results = None
             total_time_taken = None
             return cls(
                 each_round_initcluster_motifs=each_round_initcluster_motifs,
                 patterns=patterns,
+                patterns_withoutreassignment=patterns_withoutreassignment,
                 cluster_results=cluster_results,
                 total_time_taken=total_time_taken)
         else:
@@ -572,6 +582,9 @@ class SeqletsToPatternsResults(object):
                     grp=grp.create_group("each_round_initcluster_motifs"))
             util.save_patterns(self.patterns,
                                grp.create_group("patterns"))
+            util.save_patterns(
+                self.patterns_withoutreassignment,
+                grp.create_group("patterns_withoutreassignment"))
             self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   
             grp.attrs['total_time_taken'] = self.total_time_taken
 
@@ -892,6 +905,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             sys.stdout.flush()
         reassigned_patterns = self.seqlet_reassigner(merged_patterns)
         final_patterns = self.final_postprocessor(reassigned_patterns)
+        final_patterns_withoutreassignment =\
+            self.final_postprocessor(merged_patterns)
         if (self.verbose):
             print("Got "+str(len(final_patterns))
                   +" patterns after reassignment")
@@ -908,6 +923,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         results = SeqletsToPatternsResults(
             each_round_initcluster_motifs=each_round_initcluster_motifs,             
             patterns=final_patterns,
+            patterns_withoutreassignment=final_patterns_withoutreassignment,
             seqlets=filtered_seqlets, #last stage of filtered seqlets
             #affmat=filtered_affmat,
             cluster_results=cluster_results, 
