@@ -112,11 +112,13 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        initial_flank_to_add=10,
 
                        prob_and_pertrack_sim_merge_thresholds=[
-                        (0.0001,0.84), (0.00001, 0.87), (0.000001, 0.9)],
+                       # (0.0001,0.84), (0.00001, 0.87), (0.000001, 0.9)],
+                       (0.5,0.8), (0.25, 0.85), (0.0, 0.9)],
 
                        prob_and_pertrack_sim_dealbreaker_thresholds=[
-                        (0.1,0.75), (0.01, 0.8), (0.001, 0.83),
-                        (0.0000001,0.9)],
+                       # (0.1,0.75), (0.01, 0.8), (0.001, 0.83),
+                       # (0.0000001,0.9)],
+                        (0.0,0.75)],
 
                        threshold_for_spurious_merge_detection=0.8,
 
@@ -191,7 +193,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 ('class_name', type(self).__name__),
                 ('n_cores', self.n_cores),
                 ('initclusterer_factory',
-                 self.initclusterer_factory.get_jsonable_config())
+                 self.initclusterer_factory.get_jsonable_config()),
                 ('min_overlap_while_sliding', self.min_overlap_while_sliding),
                 ('embedder_factory',
                  self.embedder_factory.get_jsonable_config()),
@@ -413,28 +415,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                         verbose=self.verbose),
             min_in_subcluster=self.final_min_cluster_size)
 
-        #similar_patterns_collapser =\
-        #    aggregator.DynamicThresholdSimilarPatternsCollapser(
-        #        pattern_to_seqlet_sim_computer=
-        #            pattern_to_seqlet_sim_computer,
-        #        pattern_aligner=core.CrossCorrelationPatternAligner(
-        #            pattern_comparison_settings=
-        #                affinitymat.core.PatternComparisonSettings(
-        #                    track_names=(
-        #                        contrib_scores_track_names+
-        #                        other_comparison_track_names), 
-        #                    track_transformer=
-        #                        affinitymat.MeanNormalizer().chain(
-        #                        affinitymat.MagnitudeNormalizer()), 
-        #                    min_overlap=self.min_overlap_while_sliding)),
-        #        collapse_condition=(lambda dist_prob, aligner_sim:
-        #            any([(dist_prob > x[0] and aligner_sim > x[1])
-        #                 for x in prob_and_sim_merge_thresholds])),
-        #        dealbreaker_condition=(lambda dist_prob, aligner_sim:
-        #            any([(dist_prob < x[0] and aligner_sim < x[1])              
-        #                 for x in prob_and_sim_dealbreaker_thresholds])),
-        #        postprocessor=postprocessor1,
-        #        verbose=self.verbose) 
         similar_patterns_collapser =\
             aggregator.DynamicDistanceSimilarPatternsCollapser(
                 pattern_to_pattern_sim_computer=
@@ -450,11 +430,11 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                 affinitymat.MeanNormalizer().chain(
                                 affinitymat.MagnitudeNormalizer()), 
                             min_overlap=self.min_overlap_while_sliding)),
-                collapse_condition=(lambda dist_prob, aligner_sim:
-                    any([(dist_prob > x[0] and aligner_sim > x[1])
+                collapse_condition=(lambda prob, aligner_sim:
+                    any([(prob > x[0] and aligner_sim > x[1])
                          for x in prob_and_sim_merge_thresholds])),
-                dealbreaker_condition=(lambda dist_prob, aligner_sim:
-                    any([(dist_prob < x[0] and aligner_sim < x[1])              
+                dealbreaker_condition=(lambda prob, aligner_sim:
+                    any([(prob < x[0] and aligner_sim < x[1])              
                          for x in prob_and_sim_dealbreaker_thresholds])),
                 postprocessor=postprocessor1,
                 verbose=self.verbose)
@@ -907,7 +887,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             sys.stdout.flush()
         merged_patterns, pattern_merge_hierarchy =\
             self.similar_patterns_collapser( 
-                patterns=split_patterns, seqlets=seqlets) 
+                patterns=split_patterns) 
         merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
         if (self.verbose):
             print("Got "+str(len(merged_patterns))+" patterns after merging")
