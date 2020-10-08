@@ -509,12 +509,15 @@ class SeqletsToPatternsResults(object):
                  each_round_initcluster_motifs, 
                  patterns, 
                  patterns_withoutreassignment,
+                 pattern_merge_hierarchy,
                  cluster_results,
-                 total_time_taken, success=True, **kwargs):
+                 total_time_taken,
+                 success=True, **kwargs):
         self.each_round_initcluster_motifs = each_round_initcluster_motifs
         self.success = success
         self.patterns = patterns
         self.patterns_withoutreassignment = patterns_withoutreassignment
+        self.pattern_merge_hierarchy = pattern_merge_hierarchy
         self.cluster_results = cluster_results
         self.total_time_taken = total_time_taken
         self.__dict__.update(**kwargs)
@@ -563,19 +566,28 @@ class SeqletsToPatternsResults(object):
             else: #backwards compatibility
                 patterns_withoutreassignment = []
             cluster_results = None
-            total_time_taken = None
+            total_time_taken = grp.attrs["total_time_taken"]
+            pattern_merge_hierarchy =\
+                aggregator.PatternMergeHierarchy.from_hdf5(
+                    grp=grp["pattern_merge_hierarchy"],
+                    track_set=track_set)
             return cls(
                 each_round_initcluster_motifs=each_round_initcluster_motifs,
                 patterns=patterns,
                 patterns_withoutreassignment=patterns_withoutreassignment,
+                pattern_merge_hierarchy=pattern_merge_hierarchy,
                 cluster_results=cluster_results,
                 total_time_taken=total_time_taken)
         else:
             return cls(success=False, patterns=None, cluster_results=None,
-                       total_time_taken=None)
+                       total_time_taken=None,
+                       each_round_initcluster_motifs=None,
+                       patterns_withoutreassignment=None,
+                       pattern_merge_hierarchy=None)
 
     def save_hdf5(self, grp):
         grp.attrs["success"] = self.success
+        grp.attrs["total_time_taken"] = self.total_time_taken
         if (self.success):
             if (self.each_round_initcluster_motifs is not None):
                 self.save_each_round_initcluster_motifs(
@@ -587,6 +599,8 @@ class SeqletsToPatternsResults(object):
                 grp.create_group("patterns_withoutreassignment"))
             self.cluster_results.save_hdf5(grp.create_group("cluster_results"))   
             grp.attrs['total_time_taken'] = self.total_time_taken
+            self.pattern_merge_hierarchy.save_hdf5(
+                    grp=grp.create_group("pattern_merge_hierarchy"))
 
 
 class AbstractSeqletsToPatterns(object):
@@ -723,6 +737,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                         patterns=None,
                         seqlets=None,
                         affmat=None,
+                        each_round_initcluster_motifs=None,
+                        patterns_withoutreassignment=None,
                         cluster_results=None, 
                         total_time_taken=None,
                         success=False)

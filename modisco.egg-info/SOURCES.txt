@@ -40,6 +40,7 @@ modisco/clusterinit/memeinit.py
 modisco/hit_scoring/__init__.py
 modisco/hit_scoring/fast_hit_scoring.py
 modisco/seqlet_embedding/__init__.py
+modisco/seqlet_embedding/advanced_gapped_kmer.py
 modisco/seqlet_embedding/core.py
 modisco/seqlet_embedding/gapped_kmer.py
 modisco/seqlet_embedding/onehot_model_output.py
