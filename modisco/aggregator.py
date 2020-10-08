@@ -608,6 +608,28 @@ class PatternMergeHierarchy(object):
     def add_level(self, level_arr):
         self.levels.append(level_arr)
 
+    def save_hdf5(self, grp):
+        root_node_names = []
+        for i in range(len(self.root_nodes)):
+            node_name = "root_node"+str(i)
+            root_node_names.append(node_name) 
+            self.root_nodes[i].save_hdf5(grp.create_group(node_name))
+        util.save_string_list(root_node_names,
+                              dset_name="root_node_names",
+                              grp=grp) 
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        root_node_names = util.load_string_list(dset_name="root_node_names",
+                                                grp=grp) 
+        root_nodes = []
+        for root_node_name in root_node_names:
+            root_node = PatternMergeHierarchyNode.from_hdf5(
+                            grp=grp[root_node_name],
+                            track_set=track_set)
+            root_nodes.append(root_node)
+        return cls(root_nodes=root_nodes) 
+
 
 class PatternMergeHierarchyNode(object):
 
@@ -617,6 +639,46 @@ class PatternMergeHierarchyNode(object):
             child_nodes = []
         self.child_nodes = child_nodes
         self.parent_node = parent_node
+
+    def save_hdf5(self, grp):
+        self.pattern.save_hdf5(grp=grp.create_group("pattern"))
+        if (self.child_nodes is not None):
+            child_node_names = []
+            for i in range(len(self.child_nodes)):
+                child_node_name = "child_node"+str(i)
+                child_node_names.append(child_node_name)
+                self.child_nodes[i].save_hdf5(
+                    grp.create_group(child_node_name))
+            util.save_string_list(child_node_names,
+                                  dset_name="child_node_names",
+                                  grp=grp)
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        pattern = core.AggregatedSeqlet.from_hdf5(grp=grp["pattern"],
+                                                  track_set=track_set)  
+        if "child_node_names" in grp:
+            child_node_names = util.load_string_list(
+                                dset_name="child_node_names",
+                                grp=grp)
+            child_nodes = []
+            for child_node_name in child_node_names:
+                child_node = PatternMergeHierarchyNode.from_hdf5(
+                               grp=grp[child_node_name],
+                               track_set=track_set) 
+                child_nodes.append(child_node)
+               
+        else:
+            child_nodes = None
+   
+        to_return = cls(pattern=pattern,
+                        child_nodes=child_nodes) 
+
+        if (child_nodes is not None):
+            for child_node in child_nodes:
+                child_node.parent_node = to_return
+
+        return to_return
 
 
 class DynamicThresholdSimilarPatternsCollapser(object):
