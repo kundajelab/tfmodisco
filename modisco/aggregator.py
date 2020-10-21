@@ -634,14 +634,26 @@ class PatternMergeHierarchy(object):
 
 class PatternMergeHierarchyNode(object):
 
-    def __init__(self, pattern, child_nodes=None, parent_node=None): 
+    def __init__(self, pattern, child_nodes=None, parent_node=None,
+                       indices_merged=None, submat_crosscontam=None,
+                       submat_alignersim=None): 
         self.pattern = pattern 
         if (child_nodes is None):
             child_nodes = []
         self.child_nodes = child_nodes
         self.parent_node = parent_node
+        self.indices_merged = indices_merged
+        self.submat_crosscontam = submat_crosscontam
+        self.submat_alignersim = submat_alignersim
 
     def save_hdf5(self, grp):
+        if (self.indices_merged is not None):
+            grp.create_dataset("indices_merged",
+                               data=np.array(self.indices_merged)) 
+            grp.create_dataset("submat_crosscontam",
+                               data=np.array(self.submat_crosscontam)) 
+            grp.create_dataset("submat_alignersim",
+                               data=np.array(self.submat_alignersim)) 
         self.pattern.save_hdf5(grp=grp.create_group("pattern"))
         if (self.child_nodes is not None):
             child_node_names = []
@@ -658,6 +670,13 @@ class PatternMergeHierarchyNode(object):
     def from_hdf5(cls, grp, track_set):
         pattern = core.AggregatedSeqlet.from_hdf5(grp=grp["pattern"],
                                                   track_set=track_set)  
+        if "indices_merged" in grp:
+            indices_merged = tuple(grp["indices_merged"][:])
+            submat_crosscontam = np.array(grp["submat_crosscontam"])
+            submat_alignersim = np.array(grp["submat_alignersim"])
+        else:
+            (indices_merged, submat_crosscontam,
+             submat_alignersim) = (None, None, None)
         if "child_node_names" in grp:
             child_node_names = util.load_string_list(
                                 dset_name="child_node_names",
@@ -673,7 +692,10 @@ class PatternMergeHierarchyNode(object):
             child_nodes = None
    
         to_return = cls(pattern=pattern,
-                        child_nodes=child_nodes) 
+                        child_nodes=child_nodes,
+                        indices_merged=indices_merged,
+                        submat_crosscontam=submat_crosscontam,
+                        submat_alignersim=submat_alignersim) 
 
         if (child_nodes is not None):
             for child_node in child_nodes:
@@ -875,8 +897,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         for m2 in merge_under_consideration:
                             if (m1 < m2):
                                 cross_contam_here =\
-                                    max(cross_contamination[m1, m2],
-                                        cross_contamination[m2, m1])
+                                    0.5*(cross_contamination[m1, m2]+
+                                         cross_contamination[m2, m1])
                                 aligner_sim_here =\
                                     patterns_to_patterns_aligner_sim[
                                         m1, m2]
@@ -926,6 +948,9 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     assert len(new_pattern)==1
                     new_pattern = new_pattern[0]
                     for k in range(len(patterns)):
+                        #Replace EVERY case where the parent or child
+                        # pattern is present with the new pattern. This
+                        # effectively does single-linkage.
                         if (patterns[k]==parent_pattern or
                             patterns[k]==child_pattern):
                             patterns[k]=new_pattern
@@ -946,12 +971,42 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                                     for x in patterns]
                 for next_level_node in next_level_nodes:
                     #iterate over all the old patterns and their new parent
-                    for old_pattern_node, corresp_new_pattern\
-                        in zip(current_level_nodes,
-                               old_to_new_pattern_mapping):
+                    # in order to set up the child nodes correctly
+                    for old_pattern_idx,(old_pattern_node, corresp_new_pattern)\
+                        in enumerate(zip(current_level_nodes,
+                                         old_to_new_pattern_mapping)):
+ 
                         #if the node has a new parent
                         if (old_pattern_node.pattern != corresp_new_pattern):
                             if (next_level_node.pattern==corresp_new_pattern):
+
+                                
+                                #corresp_new_pattern should be comprised of a 
+                                # merging of all the old patterns at
+                                # indices_merged_with
+                                indices_merged = tuple(sorted(
+                                    merge_partners_so_far[old_pattern_idx])) 
+                                #get the relevant slice         
+                                submat_crosscontam =\
+                                 cross_contamination[indices_merged,:][:,
+                                                     indices_merged]
+                                submat_alignersim =\
+                                 patterns_to_patterns_aligner_sim[
+                                    indices_merged, :][:,indices_merged]
+
+                                if (next_level_node.indices_merged is not None):
+                                    assert (next_level_node.indices_merged
+                                            ==indices_merged),\
+                                     (next_level_node.indices_merged,
+                                      indices_merged)
+                                else:
+                                    next_level_node.indices_merged =\
+                                        indices_merged
+                                    next_level_node.submat_crosscontam =\
+                                        submat_crosscontam
+                                    next_level_node.submat_alignersim =\
+                                        submat_alignersim
+
                                 next_level_node.child_nodes.append(
                                                 old_pattern_node) 
                                 assert old_pattern_node.parent_node is None
