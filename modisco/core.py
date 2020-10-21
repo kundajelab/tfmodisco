@@ -1046,8 +1046,9 @@ def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
     return get_best_alignment_crossmetric(
                 parent_matrix=parent_matrix, child_matrix=child_matrix,
                 min_overlap=min_overlap,
-                metric=(lambda in1,in2: scipy.signal.correlate2d(
-                                         in1=in1, in2=in2, mode='valid')))
+                #metric=(lambda in1,in2: scipy.signal.correlate2d(
+                #                         in1=in1, in2=in2, mode='valid'))
+                metric=(lambda in1,in2: cross_corr(in1=in1, in2=in2) ))
 
 
 def get_best_alignment_crossabsdiff(parent_matrix, child_matrix, min_overlap):
@@ -1078,11 +1079,19 @@ def cross_absdiff(in1, in2):
 
 
 def cross_continjaccard(in1, in2):
+    return cross_metric(in1=in1, in2=in2, metric=continjaccard)
+
+
+def cross_corr(in1, in2):
+    return cross_metric(in1=in1, in2=in2, metric=corr)
+
+
+def cross_metric(in1, in2, metric):
     len_result = (1+len(in1)-len(in2))
     to_return = np.zeros(len_result)
     for idx in range(len_result):
         snippet = in1[idx:idx+in2.shape[0]]
-        to_return[idx] = continjaccard(in1=snippet, in2=in2)
+        to_return[idx] = metric(in1=snippet, in2=in2)
     return to_return
 
 

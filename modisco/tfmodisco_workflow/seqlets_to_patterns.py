@@ -112,13 +112,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        initial_flank_to_add=10,
 
                        prob_and_pertrack_sim_merge_thresholds=[
-                       # (0.0001,0.84), (0.00001, 0.87), (0.000001, 0.9)],
-                       (0.5,0.8), (0.25, 0.85), (0.0, 0.9)],
+                       (0.8,0.8), (0.5, 0.85), (0.2, 0.9)],
 
                        prob_and_pertrack_sim_dealbreaker_thresholds=[
-                       # (0.1,0.75), (0.01, 0.8), (0.001, 0.83),
-                       # (0.0000001,0.9)],
-                        (0.0,0.75)],
+                        (0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
 
                        threshold_for_spurious_merge_detection=0.8,
 
@@ -393,13 +390,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         #similarity settings for merging
         prob_and_sim_merge_thresholds =\
-            [(x[0], x[1]*(len(contrib_scores_track_names)
-                          +len(other_comparison_track_names)))
-             for x in self.prob_and_pertrack_sim_merge_thresholds]
+            self.prob_and_pertrack_sim_merge_thresholds
         prob_and_sim_dealbreaker_thresholds =\
-            [(x[0], x[1]*(len(contrib_scores_track_names)
-                          +len(other_comparison_track_names)))
-             for x in self.prob_and_pertrack_sim_dealbreaker_thresholds]
+            self.prob_and_pertrack_sim_dealbreaker_thresholds
 
         spurious_merge_detector = aggregator.DetectSpuriousMerging(
             track_names=contrib_scores_track_names,
@@ -415,11 +408,34 @@ class TfModiscoSeqletsToPatternsFactory(object):
                         verbose=self.verbose),
             min_in_subcluster=self.final_min_cluster_size)
 
+        #similar_patterns_collapser =\
+        #    aggregator.DynamicDistanceSimilarPatternsCollapser(
+        #        pattern_to_pattern_sim_computer=
+        #            pattern_to_seqlet_sim_computer,
+        #        aff_to_dist_mat=aff_to_dist_mat,
+        #        pattern_aligner=core.CrossCorrelationPatternAligner(
+        #            pattern_comparison_settings=
+        #                affinitymat.core.PatternComparisonSettings(
+        #                    track_names=(
+        #                        contrib_scores_track_names+
+        #                        other_comparison_track_names), 
+        #                    track_transformer=
+        #                        affinitymat.MeanNormalizer().chain(
+        #                        affinitymat.MagnitudeNormalizer()), 
+        #                    min_overlap=self.min_overlap_while_sliding)),
+        #        collapse_condition=(lambda prob, aligner_sim:
+        #            any([(prob > x[0] and aligner_sim > x[1])
+        #                 for x in prob_and_sim_merge_thresholds])),
+        #        dealbreaker_condition=(lambda prob, aligner_sim:
+        #            any([(prob < x[0] and aligner_sim < x[1])              
+        #                 for x in prob_and_sim_dealbreaker_thresholds])),
+        #        postprocessor=postprocessor1,
+        #        verbose=self.verbose)
+
         similar_patterns_collapser =\
-            aggregator.DynamicDistanceSimilarPatternsCollapser(
-                pattern_to_pattern_sim_computer=
-                    pattern_to_seqlet_sim_computer,
-                aff_to_dist_mat=aff_to_dist_mat,
+            aggregator.DynamicDistanceSimilarPatternsCollapser2(
+                pattern_comparison_settings=pattern_comparison_settings,
+                track_set=track_set,
                 pattern_aligner=core.CrossCorrelationPatternAligner(
                     pattern_comparison_settings=
                         affinitymat.core.PatternComparisonSettings(
@@ -431,13 +447,14 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                 affinitymat.MagnitudeNormalizer()), 
                             min_overlap=self.min_overlap_while_sliding)),
                 collapse_condition=(lambda prob, aligner_sim:
-                    any([(prob > x[0] and aligner_sim > x[1])
+                    any([(prob >= x[0] and aligner_sim >= x[1])
                          for x in prob_and_sim_merge_thresholds])),
                 dealbreaker_condition=(lambda prob, aligner_sim:
-                    any([(prob < x[0] and aligner_sim < x[1])              
+                    any([(prob <= x[0] and aligner_sim <= x[1])              
                          for x in prob_and_sim_dealbreaker_thresholds])),
                 postprocessor=postprocessor1,
                 verbose=self.verbose)
+
 
         seqlet_reassigner =\
            aggregator.ReassignSeqletsFromSmallClusters(
