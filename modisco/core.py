@@ -506,15 +506,14 @@ class Seqlet(Pattern):
     def exidx_start_end_string(self):
         return (str(self.coor.example_idx)+"_"
                 +str(self.coor.start)+"_"+str(self.coor.end))
- 
-        
+
+
+#Using an object rather than namedtuple because alnmt is mutable
 class SeqletAndAlignment(object):
 
     def __init__(self, seqlet, alnmt):
         self.seqlet = seqlet
-        #alnmt is the position of the beginning of seqlet
-        #in the aggregated seqlet
-        self.alnmt = alnmt 
+        self.alnmt = alnmt
 
 
 class AbstractPatternAligner(object):
@@ -590,6 +589,13 @@ class SeqletsAndAlignments(object):
     def __init__(self):
         self.arr = []
         self.unique_seqlets = {} 
+
+    @classmethod
+    def create(cls, seqlets_and_alnmts):
+        obj = cls() 
+        for seqlet_and_alnmt in seqlets_and_alnmts:
+            obj.append(seqlet_and_alnmt)
+        return obj
 
     def __len__(self):
         return len(self.arr)

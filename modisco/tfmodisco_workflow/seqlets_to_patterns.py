@@ -117,6 +117,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        prob_and_pertrack_sim_dealbreaker_thresholds=[
                         (0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
 
+                       merging_max_seqlets_subsample=1000,
                        threshold_for_spurious_merge_detection=0.8,
 
                        min_similarity_for_seqlet_assignment=0.2,
@@ -170,6 +171,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.prob_and_pertrack_sim_dealbreaker_thresholds =\
             prob_and_pertrack_sim_dealbreaker_thresholds
 
+        self.merging_max_seqlets_subsample = merging_max_seqlets_subsample
         self.threshold_for_spurious_merge_detection =\
             threshold_for_spurious_merge_detection
 
@@ -221,6 +223,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
                  self.prob_and_pertrack_sim_merge_thresholds),
                 ('prob_and_pertrack_sim_dealbreaker_thresholds',
                  self.prob_and_pertrack_sim_dealbreaker_thresholds),
+                ('merging_max_seqlets_subsample',
+                 self.merging_max_seqlets_subsample),
                 ('threshold_for_spurious_merge_detection',
                  self.threshold_for_spurious_merge_detection),
                 ('min_similarity_for_seqlet_assignment',
@@ -453,7 +457,9 @@ class TfModiscoSeqletsToPatternsFactory(object):
                     any([(prob <= x[0] and aligner_sim <= x[1])              
                          for x in prob_and_sim_dealbreaker_thresholds])),
                 postprocessor=postprocessor1,
-                verbose=self.verbose)
+                verbose=self.verbose,
+                max_seqlets_subsample=self.merging_max_seqlets_subsample,
+                n_cores=self.n_cores)
 
 
         seqlet_reassigner =\

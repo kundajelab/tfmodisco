@@ -6,6 +6,7 @@ from . import util
 from collections import OrderedDict, defaultdict
 import itertools
 import sys
+from joblib import Parallel, delayed
 from sklearn.metrics import roc_auc_score
 
 
@@ -713,14 +714,18 @@ def compute_continjacc_vec_vs_arr(vec, arr):
     return intersection/union
 
 
-def compute_continjacc_arr1_vs_arr2(arr1, arr2):
-    return np.array([compute_continjacc_vec_vs_arr(vec, arr2)
-                     for vec in arr1])
+def compute_continjacc_arr1_vs_arr2(arr1, arr2, n_cores):
+    return np.array(
+        Parallel(n_jobs=n_cores)(
+            delayed(compute_continjacc_vec_vs_arr)(vec, arr2) for vec in arr1
+        ))
 
 
-def compute_continjacc_arr1_vs_arr2fwdandrev(arr1, arr2fwd, arr2rev):
-    fwd_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2fwd)
-    rev_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2rev)
+def compute_continjacc_arr1_vs_arr2fwdandrev(arr1, arr2fwd, arr2rev, n_cores):
+    fwd_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2fwd,
+                                               n_cores=n_cores)
+    rev_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2rev,
+                                               n_cores=n_cores)
     return np.maximum(fwd_sims, rev_sims)
 
 
@@ -731,7 +736,9 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                        pattern_aligner,
                        collapse_condition, dealbreaker_condition,
                        postprocessor,
-                       verbose=True):
+                       verbose=True,
+                       max_seqlets_subsample=1000,
+                       n_cores=1):
         self.pattern_comparison_settings = pattern_comparison_settings
         self.track_set = track_set
         self.pattern_aligner = pattern_aligner
@@ -739,11 +746,26 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
         self.dealbreaker_condition = dealbreaker_condition
         self.postprocessor = postprocessor
         self.verbose = verbose
+        self.n_cores = n_cores
+        self.max_seqlets_subsample = max_seqlets_subsample
+
+    def subsample_pattern(self, pattern):
+        seqlets_and_alnmts_list = list(pattern.seqlets_and_alnmts)
+        subsample = [seqlets_and_alnmts_list[i]
+                     for i in
+                     np.random.RandomState(1234).choice(
+                         a=np.arange(len(seqlets_and_alnmts_list)),
+                         replace=False,
+                         size=self.max_seqlets_subsample)]
+        return core.AggregatedSeqlet(seqlets_and_alnmts_arr=subsample) 
 
     def __call__(self, patterns):
 
-
         patterns = [x.copy() for x in patterns]
+
+        #Let's subsample 'patterns' to prevent runtime from being too
+        # large in calculating pairwise sims. Max 1000, and also add in
+        # parallelization.
         merge_hierarchy_levels = []        
         current_level_nodes = [
             PatternMergeHierarchyNode(pattern=x) for x in patterns]
@@ -761,13 +783,25 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                 sys.stdout.flush()
             merge_occurred_last_iteration = False
 
+            if (self.verbose):
+                print("Numbers for each pattern pre-subsample:",
+                      str([len(x.seqlets) for x in patterns]))
+            subsample_patterns = [
+                (x if x.num_seqlets <= self.max_seqlets_subsample
+                 else self.subsample_pattern(x)) for x in patterns]
+            if (self.verbose):
+                print("Numbers after subsampling:",
+                      str([len(x.seqlets) for x in subsample_patterns]))
+
             pairwise_aurocs = np.zeros((len(patterns), len(patterns)))
             pairwise_sims = np.zeros((len(patterns), len(patterns)))
 
-            for i,pattern1 in enumerate(patterns):
+            for i,(pattern1, subsample_pattern1) in enumerate(
+                                            zip(patterns, subsample_patterns)):
                 #from modisco.visualization import viz_sequence
                 #viz_sequence.plot_weights(pattern1["task0_contrib_scores"].fwd)
-                for j,pattern2 in enumerate(patterns):
+                for j,(pattern2, subsample_pattern2) in enumerate(
+                                            zip(patterns, subsample_patterns)):
                     #Compute best alignment between pattern pair
                     (alnmt, rc, aligner_sim) =\
                         self.pattern_aligner(pattern1, pattern2)
@@ -775,7 +809,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
                     #get realigned pattern2
                     pattern2_coords = [x.coor
-                        for x in pattern2.seqlets]
+                        for x in subsample_pattern2.seqlets]
                     if (rc):
                         pattern2_coords  = [x.revcomp()
                          for x in pattern2_coords]
@@ -791,7 +825,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
                     pattern1_fwdseqdata, pattern1_revseqdata =\
                       core.get_2d_data_from_patterns(
-                        patterns=pattern1.seqlets,
+                        patterns=subsample_pattern1.seqlets,
                         track_names=
                          self.pattern_comparison_settings.track_names,
                         track_transformer=
@@ -818,19 +852,22 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                      compute_continjacc_arr1_vs_arr2fwdandrev(
                         arr1=flat_pattern1_fwdseqdata,
                         arr2fwd=flat_pattern2_fwdseqdata,
-                        arr2rev=flat_pattern2_revseqdata).ravel()
+                        arr2rev=flat_pattern2_revseqdata,
+                        n_cores=self.n_cores).ravel()
 
                     within_pattern1_sims =\
                      compute_continjacc_arr1_vs_arr2fwdandrev(
                         arr1=flat_pattern1_fwdseqdata,
                         arr2fwd=flat_pattern1_fwdseqdata,
-                        arr2rev=flat_pattern1_revseqdata).ravel()
+                        arr2rev=flat_pattern1_revseqdata,
+                        n_cores=self.n_cores).ravel()
 
                     within_pattern2_sims =\
                      compute_continjacc_arr1_vs_arr2fwdandrev(
                         arr1=flat_pattern2_fwdseqdata,
                         arr2fwd=flat_pattern2_fwdseqdata,
-                        arr2rev=flat_pattern2_revseqdata).ravel()
+                        arr2rev=flat_pattern2_revseqdata,
+                        n_cores=self.n_cores).ravel()
 
                     auroc = roc_auc_score(
                         y_true=[0 for x in between_pattern_sims]
