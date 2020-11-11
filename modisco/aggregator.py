@@ -819,7 +819,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         continue
                     if pairwise_aurocs[i,j] >= 0: #filled in from previous iter
                         assert pairwise_aurocs[j,i] >= 0
-                        print("Skipping prepopulated",(i,j))
                         continue 
                         
                     #Compute best alignment between pattern pair
