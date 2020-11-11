@@ -117,7 +117,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        prob_and_pertrack_sim_dealbreaker_thresholds=[
                         (0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
 
-                       merging_max_seqlets_subsample=1000,
+                       merging_max_seqlets_subsample=300,
                        threshold_for_spurious_merge_detection=0.8,
 
                        min_similarity_for_seqlet_assignment=0.2,

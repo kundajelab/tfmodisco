@@ -8,6 +8,7 @@ import itertools
 import sys
 from joblib import Parallel, delayed
 from sklearn.metrics import roc_auc_score
+import time
 
 
 class AbstractAggSeqletPostprocessor(object):
@@ -774,6 +775,12 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
         merge_occurred_last_iteration = True
         merging_iteration = 0
 
+        #negative numbers to indicate which
+        # entries need to be filled (versus entries we can infer
+        # from the previous iteration of the while loop)
+        pairwise_aurocs = -np.ones((len(patterns), len(patterns)))
+        pairwise_sims = np.zeros((len(patterns), len(patterns)))
+
         #loop until no more patterns get merged
         while (merge_occurred_last_iteration):
             
@@ -793,8 +800,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                 print("Numbers after subsampling:",
                       str([len(x.seqlets) for x in subsample_patterns]))
 
-            pairwise_aurocs = np.zeros((len(patterns), len(patterns)))
-            pairwise_sims = np.zeros((len(patterns), len(patterns)))
 
             for i,(pattern1, subsample_pattern1) in enumerate(
                                             zip(patterns, subsample_patterns)):
@@ -802,6 +807,19 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                 #viz_sequence.plot_weights(pattern1["task0_contrib_scores"].fwd)
                 for j,(pattern2, subsample_pattern2) in enumerate(
                                             zip(patterns, subsample_patterns)):
+                    #Note: I compute both i,j AND j,i because although
+                    # the result is the same for the sim, it can be different
+                    # for the auroc because a different motif is getting
+                    # shifted over.
+                    if (j==i):
+                        pairwise_aurocs[i,j] = 0.5
+                        pairwise_sims[i,j] = 1.0
+                        continue
+                    if pairwise_aurocs[i,j] >= 0: #filled in from previous iter
+                        assert pairwise_aurocs[j,i] >= 0
+                        print("Skipping prepopulated",(i,j))
+                        continue 
+                        
                     #Compute best alignment between pattern pair
                     (alnmt, rc, aligner_sim) =\
                         self.pattern_aligner(pattern1, pattern2)
@@ -848,6 +866,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
                         (len(pattern2_fwdseqdata), -1))
 
+                    print("Computing sim between patterns",i,"and",j)
+                    start = time.time() 
                     between_pattern_sims =\
                      compute_continjacc_arr1_vs_arr2fwdandrev(
                         arr1=flat_pattern1_fwdseqdata,
@@ -862,12 +882,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         arr2rev=flat_pattern1_revseqdata,
                         n_cores=self.n_cores).ravel()
 
-                    within_pattern2_sims =\
-                     compute_continjacc_arr1_vs_arr2fwdandrev(
-                        arr1=flat_pattern2_fwdseqdata,
-                        arr2fwd=flat_pattern2_fwdseqdata,
-                        arr2rev=flat_pattern2_revseqdata,
-                        n_cores=self.n_cores).ravel()
+                    print("Time taken:",time.time()-start)
 
                     auroc = roc_auc_score(
                         y_true=[0 for x in between_pattern_sims]
@@ -875,19 +890,21 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         y_score=list(between_pattern_sims)
                                 +list(within_pattern1_sims))
 
-                    auroc2 = roc_auc_score(
-                        y_true=[0 for x in between_pattern_sims]
-                               +[1 for x in within_pattern2_sims],
-                        y_score=list(between_pattern_sims)
-                                +list(within_pattern2_sims))
+                    #The 'within pattern2 sims' may be less reliable due
+                    # to the shiftover, that's why I won't compute them
+                    #within_pattern2_sims =\
+                    # compute_continjacc_arr1_vs_arr2fwdandrev(
+                    #    arr1=flat_pattern2_fwdseqdata,
+                    #    arr2fwd=flat_pattern2_fwdseqdata,
+                    #    arr2rev=flat_pattern2_revseqdata,
+                    #    n_cores=self.n_cores).ravel()
+                    #auroc2 = roc_auc_score(
+                    #    y_true=[0 for x in between_pattern_sims]
+                    #           +[1 for x in within_pattern2_sims],
+                    #    y_score=list(between_pattern_sims)
+                    #            +list(within_pattern2_sims))
 
-                    #print("pattern1idx: "+str(i),
-                    #      "pattern1 numseqlets: "+str(len(pattern1.seqlets)),
-                    #      "pattern2 idx:"+str(j),
-                    #      "pattern2 numseqlets"+str(len(pattern2.seqlets)),
-                    #      "auroc1 pattern1within:"+str(auroc),
-                    #      "auroc2 pattern2within:"+str(auroc2))
-                    #
+                    #The symmetrization over i,j and j,i is done later
                     pairwise_aurocs[i,j] = auroc
 
 
@@ -913,6 +930,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                             key=lambda x: -x[2])
             #iterate over pairs
             for (i,j,aligner_sim) in sorted_pairs:
+                #symmetrize asymmetric crosscontam
                 cross_contam = 0.5*(cross_contamination[i,j]+
                                     cross_contamination[j,i])
                 if (self.collapse_condition(prob=cross_contam,
@@ -994,14 +1012,39 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
             merge_occurred_last_iteration = (len(indices_to_merge) > 0)
 
             if (merge_occurred_last_iteration):
-                #Once we are out of this loop, each element of 'patterns'
+                #Once we are here, each element of 'patterns'
                 #will have the new parent of the corresponding element
                 #of 'old_patterns'
                 old_to_new_pattern_mapping = patterns
 
-                #sort by size and remove redundant patterns 
+                #sort by size and remove redundant patterns
                 patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
                 patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
+
+                #let's figure out which indices don't require recomputation
+                # and use it to repopulate pairwise_sims and pairwise_aurocs
+                old_to_new_index_mappings = OrderedDict()
+                for old_pattern_idx,(old_pattern_node, corresp_new_pattern)\
+                    in enumerate(zip(current_level_nodes,
+                                     old_to_new_pattern_mapping)):
+                    #if the old pattern was NOT changed in this iteration
+                    if (old_pattern_node.pattern == corresp_new_pattern):
+                        new_idx = patterns.index(corresp_new_pattern) 
+                        old_to_new_index_mappings[old_pattern_idx] = new_idx
+                print("Unmerged patterns remapping:",old_to_new_index_mappings)
+                new_pairwise_aurocs = -np.ones((len(patterns), len(patterns)))
+                new_pairwise_sims = np.zeros((len(patterns), len(patterns)))
+                for old_idx_i, new_idx_i in\
+                    old_to_new_index_mappings.items():
+                    for old_idx_j, new_idx_j in\
+                        old_to_new_index_mappings.items():
+                        new_pairwise_aurocs[new_idx_i, new_idx_j] =\
+                            pairwise_aurocs[old_idx_i, old_idx_j]
+                        new_pairwise_sims[new_idx_i, new_idx_j] =\
+                            pairwise_sims[old_idx_i, old_idx_j]
+                pairwise_aurocs = new_pairwise_aurocs 
+                pairwise_sims = new_pairwise_sims
+                     
 
                 #update the hierarchy
                 next_level_nodes = [PatternMergeHierarchyNode(x)
@@ -1048,6 +1091,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                                                 old_pattern_node) 
                                 assert old_pattern_node.parent_node is None
                                 old_pattern_node.parent_node = next_level_node
+                            
 
                 current_level_nodes=next_level_nodes
 
