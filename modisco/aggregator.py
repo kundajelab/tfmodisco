@@ -783,6 +783,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
         #loop until no more patterns get merged
         while (merge_occurred_last_iteration):
+
+            start  = time.time()
             
             merging_iteration += 1
             if (self.verbose):
@@ -866,8 +868,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
                         (len(pattern2_fwdseqdata), -1))
 
-                    print("Computing sim between patterns",i,"and",j)
-                    start = time.time() 
                     between_pattern_sims =\
                      compute_continjacc_arr1_vs_arr2fwdandrev(
                         arr1=flat_pattern1_fwdseqdata,
@@ -881,8 +881,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         arr2fwd=flat_pattern1_fwdseqdata,
                         arr2rev=flat_pattern1_revseqdata,
                         n_cores=self.n_cores).ravel()
-
-                    print("Time taken:",time.time()-start)
 
                     auroc = roc_auc_score(
                         y_true=[0 for x in between_pattern_sims]
@@ -1094,6 +1092,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                             
 
                 current_level_nodes=next_level_nodes
+                print("Time spent on merging iteration:", time.time()-start)
 
         return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
 
