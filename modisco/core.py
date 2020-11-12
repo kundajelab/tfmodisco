@@ -77,15 +77,37 @@ class DataTrack(object):
                          if self.rev_tracks is not None else None),
                     has_pos_axis=self.has_pos_axis)
         else:
-            assert coor.start >= 0
-            assert len(self.fwd_tracks[coor.example_idx]) >= coor.end, coor.end
-            snippet = Snippet(
-                    fwd=self.fwd_tracks[coor.example_idx][coor.start:coor.end],
-                    rev=(self.rev_tracks[
+            #assert coor.start >= 0
+            #assert len(self.fwd_tracks[coor.example_idx]) >= coor.end, coor.end
+
+            right_pad_needed = max((
+                 coor.end - len(self.fwd_tracks[coor.example_idx])),0)
+            left_pad_needed = max(-coor.start, 0)
+
+            fwd = self.fwd_tracks[coor.example_idx][max(coor.start,0):coor.end]
+            rev = (self.rev_tracks[
                          coor.example_idx][
                          (len(self.rev_tracks[coor.example_idx])-coor.end):
                          (len(self.rev_tracks[coor.example_idx])-coor.start)]
-                         if self.rev_tracks is not None else None),
+                         if self.rev_tracks is not None else None)
+
+            if (left_pad_needed > 0 or right_pad_needed > 0):
+                print("Applying left/right pad of",left_pad_needed,"and",
+                      right_pad_needed,"for",
+                      (coor.example_idx, coor.start, coor.end),
+                      "with total sequence length",
+                      len(self.fwd_tracks[coor.example_idx]))
+                fwd = np.pad(array=fwd,
+                             pad_width=((left_pad_needed, right_pad_needed),
+                                        (0,0)))
+                if (self.rev_tracks is not None):
+                    rev = np.pad(array=rev,
+                                 pad_width=(
+                                  (right_pad_needed, left_pad_needed),
+                                  (0,0)))
+            snippet = Snippet(
+                    fwd=fwd,
+                    rev=rev,
                     has_pos_axis=self.has_pos_axis)
         if (coor.is_revcomp):
             snippet = snippet.revcomp()
@@ -366,6 +388,12 @@ class SeqletCoordinates(object):
                 start=self.start, end=self.end,
                 is_revcomp=(self.is_revcomp==False))
 
+    def shift(self, shift_amt):
+        return SeqletCoordinates(
+                example_idx=self.example_idx,
+                start=self.start+shift_amt, end=self.end+shift_amt,
+                is_revcomp=self.is_revcomp)
+
     def __len__(self):
         return self.end - self.start
 
@@ -479,15 +507,14 @@ class Seqlet(Pattern):
     def exidx_start_end_string(self):
         return (str(self.coor.example_idx)+"_"
                 +str(self.coor.start)+"_"+str(self.coor.end))
- 
-        
+
+
+#Using an object rather than namedtuple because alnmt is mutable
 class SeqletAndAlignment(object):
 
     def __init__(self, seqlet, alnmt):
         self.seqlet = seqlet
-        #alnmt is the position of the beginning of seqlet
-        #in the aggregated seqlet
-        self.alnmt = alnmt 
+        self.alnmt = alnmt
 
 
 class AbstractPatternAligner(object):
@@ -563,6 +590,13 @@ class SeqletsAndAlignments(object):
     def __init__(self):
         self.arr = []
         self.unique_seqlets = {} 
+
+    @classmethod
+    def create(cls, seqlets_and_alnmts):
+        obj = cls() 
+        for seqlet_and_alnmt in seqlets_and_alnmts:
+            obj.append(seqlet_and_alnmt)
+        return obj
 
     def __len__(self):
         return len(self.arr)
@@ -645,35 +679,17 @@ class AggregatedSeqlet(Pattern):
 
     def trim_to_positions_with_min_support(self,
             min_frac, min_num, verbose=True):
-        per_position_center_counts =\
-            self.get_per_position_seqlet_center_counts()
-        max_support = max(per_position_center_counts)
+        max_support = max(self.per_position_counts)
         num = min(min_num, max_support*min_frac)
         left_idx = 0
-        while per_position_center_counts[left_idx] < num:
+        while self.per_position_counts[left_idx] < num:
             left_idx += 1
-        right_idx = len(per_position_center_counts)
-        while per_position_center_counts[right_idx-1] < num:
+        right_idx = len(self.per_position_counts)
+        while self.per_position_counts[right_idx-1] < num:
             right_idx -= 1
-
-        retained_seqlets_and_alnmts = []
-        for seqlet_and_alnmt in self.seqlets_and_alnmts:
-            seqlet_center = (
-                seqlet_and_alnmt.alnmt+0.5*len(seqlet_and_alnmt.seqlet))
-            #if the seqlet will fit within the trimmed pattern
-            if ((seqlet_center >= left_idx) and
-                (seqlet_center <= right_idx)):
-                retained_seqlets_and_alnmts.append(seqlet_and_alnmt)
-        new_start_idx = min([x.alnmt for x in retained_seqlets_and_alnmts])
-        new_seqlets_and_alnmnts = [SeqletAndAlignment(seqlet=x.seqlet,
-                                    alnmt=x.alnmt-new_start_idx) for x in
-                                    retained_seqlets_and_alnmts] 
-        num_trimmed = self.num_seqlets - len(new_seqlets_and_alnmnts) 
-        if (verbose):
-            print("Trimmed",num_trimmed,"out of",self.num_seqlets)
-            sys.stdout.flush()
-        
-        return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
+        return self.trim_to_start_and_end_idx(start_idx=left_idx,
+                                              end_idx=right_idx,
+                                              no_skip=False) 
 
     def trim_by_ic(self, ppm_track_name, background, threshold,
                          pseudocount=0.001):
@@ -692,10 +708,11 @@ class AggregatedSeqlet(Pattern):
                   start_idx=passing_positions[0][0],
                   end_idx=passing_positions[0][-1]+1)
 
-    def trim_to_start_and_end_idx(self, start_idx, end_idx):
+    def trim_to_start_and_end_idx(self, start_idx, end_idx, no_skip=True):
         new_seqlets_and_alnmnts = [] 
         skipped = 0
         for seqlet_and_alnmt in self._seqlets_and_alnmts:
+            #if the seqlet overlaps with the target region
             if (seqlet_and_alnmt.alnmt < end_idx and
                 ((seqlet_and_alnmt.alnmt + len(seqlet_and_alnmt.seqlet))
                   > start_idx)):
@@ -717,10 +734,16 @@ class AggregatedSeqlet(Pattern):
                     SeqletAndAlignment(seqlet=new_seqlet,
                                        alnmt=new_alnmt)) 
             else:
-                print(seqlet_and_alnmt.alnmt)
-                print(len(seqlet_and_alnmt.seqlet))
-                print(start_idx, end_idx)
-                assert False
+                skipped += 1
+                if (no_skip): 
+                    print("Error - there should be no seqlet skipping here")
+                    print(seqlet_and_alnmt.alnmt)
+                    print(len(seqlet_and_alnmt.seqlet))
+                    print(start_idx, end_idx)
+                    assert False
+        if (no_skip==False):
+            print("Trimming eliminated",skipped,"seqlets out of",
+                  len(self._seqlets_and_alnmts))
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts)
 
     def get_per_position_seqlet_center_counts(self):
@@ -1030,8 +1053,9 @@ def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
     return get_best_alignment_crossmetric(
                 parent_matrix=parent_matrix, child_matrix=child_matrix,
                 min_overlap=min_overlap,
-                metric=(lambda in1,in2: scipy.signal.correlate2d(
-                                         in1=in1, in2=in2, mode='valid')))
+                #metric=(lambda in1,in2: scipy.signal.correlate2d(
+                #                         in1=in1, in2=in2, mode='valid'))
+                metric=(lambda in1,in2: cross_corr(in1=in1, in2=in2) ))
 
 
 def get_best_alignment_crossabsdiff(parent_matrix, child_matrix, min_overlap):
@@ -1062,11 +1086,19 @@ def cross_absdiff(in1, in2):
 
 
 def cross_continjaccard(in1, in2):
+    return cross_metric(in1=in1, in2=in2, metric=continjaccard)
+
+
+def cross_corr(in1, in2):
+    return cross_metric(in1=in1, in2=in2, metric=corr)
+
+
+def cross_metric(in1, in2, metric):
     len_result = (1+len(in1)-len(in2))
     to_return = np.zeros(len_result)
     for idx in range(len_result):
         snippet = in1[idx:idx+in2.shape[0]]
-        to_return[idx] = continjaccard(in1=snippet, in2=in2)
+        to_return[idx] = metric(in1=snippet, in2=in2)
     return to_return
 
 
