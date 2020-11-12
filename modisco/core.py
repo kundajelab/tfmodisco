@@ -84,7 +84,7 @@ class DataTrack(object):
                  coor.end - len(self.fwd_tracks[coor.example_idx])),0)
             left_pad_needed = max(-coor.start, 0)
 
-            fwd = self.fwd_tracks[coor.example_idx][coor.start:coor.end]
+            fwd = self.fwd_tracks[coor.example_idx][max(coor.start,0):coor.end]
             rev = (self.rev_tracks[
                          coor.example_idx][
                          (len(self.rev_tracks[coor.example_idx])-coor.end):
@@ -98,12 +98,13 @@ class DataTrack(object):
                       "with total sequence length",
                       len(self.fwd_tracks[coor.example_idx]))
                 fwd = np.pad(array=fwd,
-                             pad_width=((0,0),
-                                        (left_pad_needed, right_pad_needed)))
+                             pad_width=((left_pad_needed, right_pad_needed),
+                                        (0,0)))
                 if (self.rev_tracks is not None):
                     rev = np.pad(array=rev,
-                                 pad_width=((0,0),
-                                  (right_pad_needed, left_pad_needed)))
+                                 pad_width=(
+                                  (right_pad_needed, left_pad_needed),
+                                  (0,0)))
             snippet = Snippet(
                     fwd=fwd,
                     rev=rev,

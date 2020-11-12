@@ -723,11 +723,13 @@ def compute_continjacc_arr1_vs_arr2(arr1, arr2, n_cores):
 
 
 def compute_continjacc_arr1_vs_arr2fwdandrev(arr1, arr2fwd, arr2rev, n_cores):
-    fwd_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2fwd,
+    sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2fwd,
                                                n_cores=n_cores)
-    rev_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2rev,
-                                               n_cores=n_cores)
-    return np.maximum(fwd_sims, rev_sims)
+    if (arr2rev is not None):
+        rev_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2rev,
+                                                   n_cores=n_cores)
+        sims = np.maximum(sims, rev_sims)
+    return sims
 
 
 class DynamicDistanceSimilarPatternsCollapser2(object):
@@ -860,12 +862,17 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     #Flatten, compute continjacc sim at this alignment
                     flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
                         (len(pattern1_fwdseqdata), -1))
-                    flat_pattern1_revseqdata = pattern1_revseqdata.reshape(
-                        (len(pattern1_revseqdata), -1))
                     flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
                         (len(pattern2_fwdseqdata), -1))
-                    flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
-                        (len(pattern2_fwdseqdata), -1))
+                    if (pattern1_revseqdata is not None):
+                        flat_pattern1_revseqdata = pattern1_revseqdata.reshape(
+                            (len(pattern1_revseqdata), -1))
+                        flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
+                            (len(pattern2_fwdseqdata), -1))
+                    else:
+                        flat_pattern1_revseqdata = None 
+                        flat_pattern2_revseqdata = None 
+                        assert rc==False
 
                     between_pattern_sims =\
                      compute_continjacc_arr1_vs_arr2fwdandrev(
