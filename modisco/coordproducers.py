@@ -354,14 +354,14 @@ def valatmaxabs(arrs):
 
 class VariableWindowWidthPercentileTransform(object):
 
-    def __init__(sliding_window_sizes): 
+    def __init__(self, sliding_window_sizes): 
         self.sliding_window_sizes = sliding_window_sizes
 
     def compute_percentile_transform(window_size, score_track, null_track):
         window_sum_function = get_simple_window_sum_function(window_size)
         original_summed_score_track = window_sum_function(arrs=score_track) 
 
-    def fit(self, score_track, null_track, tnt_results=None):
+    def fit(self, score_track, null_track):
         pos_irs = []
         neg_irs = []
         for sliding_window_size in self.sliding_window_sizes:
