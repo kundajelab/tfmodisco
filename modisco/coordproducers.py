@@ -304,6 +304,121 @@ class FlipSignNullDist(GenerateNullDist):
         return np.concatenate(window_sum_function(null_tracks), axis=0)
 
 
+def get_null_vals(null_track, score_track, windowsize,
+                  original_summed_score_track):
+    if (hasattr(null_track, '__call__')):
+        null_vals = null_track(
+            score_track=score_track,
+            windowsize=windowsize,
+            original_summed_score_track=original_summed_score_track)
+    else:
+        window_sum_function = get_simple_window_sum_function(window_size)
+        null_summed_score_track = window_sum_function(arrs=null_track) 
+        null_vals = list(np.concatenate(null_summed_score_track, axis=0))
+    return null_vals
+
+
+def get_isotonic_regression_classifier(orig_vals, null_vals):
+    from sklearn.isotonic import IsotonicRegression
+    pos_orig_vals = np.array(sorted([x for x in orig_vals if x >= 0]))
+    neg_orig_vals = np.array(sorted([x for x in orig_vals if x < 0],
+                              key=lambda x: abs(x)))
+    pos_null_vals = [x for x in null_vals if x >= 0]
+    neg_null_vals = [x for x in null_vals if x < 0]
+    pos_ir = IsotonicRegression().fit(
+        X=np.concatenate([pos_orig_vals,pos_null_vals], axis=0),
+        y=([1.0 for x in pos_orig_vals]
+           +[0.0 for x in pos_null_vals]),
+        sample_weight=([1.0 for x in pos_orig_vals]+
+                 [len(pos_orig_vals)/len(pos_null_vals)
+                  for x in pos_null_vals]))
+
+    if (len(neg_orig_vals) > 0):
+        neg_ir = IsotonicRegression(increasing=False).fit(
+            X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
+            y=([1.0 for x in neg_orig_vals]
+               +[0.0 for x in neg_null_vals]),
+            sample_weight=([1.0 for x in neg_orig_vals]+
+                     [len(neg_orig_vals)/len(neg_null_vals)
+                      for x in neg_null_vals]))
+    else:
+        neg_ir = None
+
+    return pos_ir, neg_ir, pos_orig_vals, neg_orig_vals
+
+
+def valatmaxabs(arrs):
+    idxs = np.argmax(np.abs(arrs), axis=0)
+    return arrs[idxs, np.arange(len(arrs[0]))]
+
+
+class VariableWindowWidthPercentileTransform(object):
+
+    def __init__(sliding_window_sizes): 
+        self.sliding_window_sizes = sliding_window_sizes
+
+    def compute_percentile_transform(window_size, score_track, null_track):
+        window_sum_function = get_simple_window_sum_function(window_size)
+        original_summed_score_track = window_sum_function(arrs=score_track) 
+
+    def fit(self, score_track, null_track, tnt_results=None):
+        pos_irs = []
+        neg_irs = []
+        for sliding_window_size in self.sliding_window_sizes:
+            print("Fitting - on window size",sliding_window_size)
+            if (hasattr(null_track, '__call__')):
+                null_vals = null_track(
+                    score_track=score_track,
+                    windowsize=self.sliding)
+            else:
+                null_summed_score_track = window_sum_function(arrs=null_track) 
+                null_vals = list(np.concatenate(null_summed_score_track,
+                                                axis=0))
+            window_sums_rows = window_sum_function(arrs=score_track)
+            pos_ir, neg_ir, _, _ = get_isotonic_regression_classifier(
+                    orig_vals=list(
+                        np.concatenate(window_sums_rows, axis=0)),
+                    null_vals=null_vals)
+            pos_irs.append(pos_ir)
+            neg_irs.append(neg_ir)
+        self.pos_irs = pos_irs
+        self.neg_irs = neg_irs
+
+    def transform(self, score_track):
+        percentile_transformed_tracks = []
+        for sliding_window_size in self.sliding_window_sizes:
+            window_sums_rows = window_sum_function(arrs=score_track)
+            transformed_track = []
+            for row_idx, window_sums_row in enumerate(window_sums_rows): 
+                transformed_row = np.zeros_like(window_sums_row)
+
+                pos_val_indices = np.nonzero(window_sums_row > 0)[0] 
+                pos_vals = window_sums_row[pos_val_indices]
+                transformed_pos_vals = pos_ir.transform(pos_vals)
+                transformed_row[pos_val_indices] = transformed_pos_vals
+
+                neg_val_indices = np.nonzero(window_sums_row < 0) 
+                neg_vals = window_sums_row[neg_val_indices]
+                transformed_neg_vals = neg_ir.transform(neg_vals) 
+                transformed_row[neg_val_indices] = -transformed_neg_vals
+
+                #add padding to make up for entries lost due to the sliding
+                # windows
+                transformed_row = np.pad(transformed_row,
+                    pad_width=(
+                        (int(sliding_window_size/2.0),
+                         sliding_window_size-int(sliding_window_size/2.0))))
+                assert len(transformed_row)==len(score_track[row_idx])
+                transformed_track.append(transformed_row) 
+            percentile_transformed_tracks.append(transformed_track)
+        #ultimately, return the result of taking the value that has
+        # the maximum absolute value over all the different transformed tracks
+        return [valatmaxabs(
+                  np.array([percentile_transformed_tracks[i,j]
+                  for i in range(len(percentile_transformed_tracks))]))
+                for j in range(len(score_track))]
+
+
 class FixedWindowAroundChunks(AbstractCoordProducer):
     count = 0
     def __init__(self, sliding,
@@ -387,42 +502,25 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             if (self.verbose):
                 print("Generating null dist")
                 sys.stdout.flush()
-            if (hasattr(null_track, '__call__')):
-                null_vals = null_track(
-                    score_track=score_track,
-                    windowsize=self.sliding,
-                    original_summed_score_track=original_summed_score_track)
-            else:
-                null_summed_score_track = window_sum_function(arrs=null_track) 
-                null_vals = list(np.concatenate(null_summed_score_track, axis=0))
+            
+            null_vals = get_null_vals(
+                null_track=null_track,
+                score_track=score_track,
+                windowsize=self.sliding,
+                original_summed_score_track=original_summed_score_track)
 
             if (self.verbose):
                 print("Computing threshold")
                 sys.stdout.flush()
-            from sklearn.isotonic import IsotonicRegression
             orig_vals = list(
                 np.concatenate(original_summed_score_track, axis=0))
-            pos_orig_vals = np.array(sorted([x for x in orig_vals if x >= 0]))
-            neg_orig_vals = np.array(sorted([x for x in orig_vals if x < 0],
-                                      key=lambda x: abs(x)))
-            pos_null_vals = [x for x in null_vals if x >= 0]
-            neg_null_vals = [x for x in null_vals if x < 0]
-            pos_ir = IsotonicRegression().fit(
-                X=np.concatenate([pos_orig_vals,pos_null_vals], axis=0),
-                y=([1.0 for x in pos_orig_vals]
-                   +[0.0 for x in pos_null_vals]),
-                sample_weight=([1.0 for x in pos_orig_vals]+
-                         [len(pos_orig_vals)/len(pos_null_vals)
-                          for x in pos_null_vals]))
+            pos_ir, neg_ir, pos_orig_vals, neg_orig_vals =\
+                get_isotonic_regression_classifier(
+                    orig_vals=orig_vals,
+                    null_vals=null_vals)
+
             pos_val_precisions = pos_ir.transform(pos_orig_vals)
             if (len(neg_orig_vals) > 0):
-                neg_ir = IsotonicRegression(increasing=False).fit(
-                    X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
-                    y=([1.0 for x in neg_orig_vals]
-                       +[0.0 for x in neg_null_vals]),
-                    sample_weight=([1.0 for x in neg_orig_vals]+
-                             [len(neg_orig_vals)/len(neg_null_vals)
-                              for x in neg_null_vals]))
                 neg_val_precisions = neg_ir.transform(neg_orig_vals)
 
             pos_threshold = ([x[1] for x in
