@@ -339,7 +339,7 @@ def get_isotonic_regression_classifier(orig_vals, null_vals,
                          key=lambda x: abs(x))))
     pos_null_vals = [x for x in null_vals if x >= 0]
     neg_null_vals = [x for x in null_vals if x < 0]
-    pos_ir = IsotonicRegression().fit(
+    pos_ir = IsotonicRegression(out_of_bounds='clip').fit(
         X=np.concatenate([pos_orig_vals,pos_null_vals], axis=0),
         y=([1.0 for x in pos_orig_vals]
            +[0.0 for x in pos_null_vals]),
