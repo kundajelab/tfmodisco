@@ -67,6 +67,59 @@ class TransformCentralWindowValueProvider(AbstractValueProvider):
                    val_transformer=val_transformer)
 
 
+class VariableWidthPrecTransformedValueProvider(AbstractValueProvider):
+
+    def __init__(self, track_name, window_widths, pos_irs, neg_irs):
+        if isinstance(track_name, str):
+            self.track_name = track_name
+        else: 
+            self.track_name = track_name.decode('utf-8')
+        self.window_widths = window_widths
+        self.pos_irs = pos_irs
+        self.neg_irs = neg_irs
+
+    def __call__(self, seqlet):
+        val = self.get_val(seqlet=seqlet)
+        return self.val_transformer(val=val)
+
+    def get_imp_around_central_window(self, seqlet, central_window):
+        flank_to_ignore = int(0.5*(len(seqlet)-central_window))
+        track_values = seqlet[self.track_name]\
+                        .fwd[flank_to_ignore:(len(seqlet)-flank_to_ignore)]
+        return np.sum(track_values)
+
+    def get_val(self, seqlet):
+        vals = []
+        for window_width, pos_ir, neg_ir in self.window_widths:
+            imp = self.get_imp_around_central_window(
+                    seqlet=seqlet, central_window=window_widths) 
+            if (imp >= 0):
+                val = pos_ir.transform([imp])[0]
+            else:
+                val = -neg_ir.transform([imp])[0] 
+            vals.append(val)
+        return vals[np.argmax(np.abs(vals))] 
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["track_name"] = self.track_name
+        grp.attrs["central_window"] = self.central_window
+        self.val_transformer.save_hdf5(grp.create_group("val_transformer")) 
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        if isinstance(grp.attrs["track_name"], str):
+            track_name = grp.attrs["track_name"]
+        else:
+            track_name = grp.attrs["track_name"].decode('utf-8')
+        central_window = grp.attrs["central_window"] 
+        val_transformer = AbstractValTransformer.from_hdf5(
+                             grp["val_transformer"]) 
+        return cls(track_name=track_name,
+                   central_window=central_window,
+                   val_transformer=val_transformer)
+
+
 class AbstractValTransformer(object):
 
     def __call__(self, val):

@@ -392,7 +392,7 @@ class VariableWindowWidthPercentileTransform(object):
             for row_idx, window_sums_row in enumerate(window_sums_rows): 
                 transformed_row = np.zeros_like(window_sums_row)
 
-                pos_val_indices = np.nonzero(window_sums_row > 0)[0] 
+                pos_val_indices = np.nonzero(window_sums_row >= 0)[0] 
                 pos_vals = window_sums_row[pos_val_indices]
                 transformed_pos_vals = pos_ir.transform(pos_vals)
                 transformed_row[pos_val_indices] = transformed_pos_vals
@@ -418,6 +418,32 @@ class VariableWindowWidthPercentileTransform(object):
                   for i in range(len(percentile_transformed_tracks))]))
                 for j in range(len(score_track))]
 
+
+class VariableWindowAroundChunks(AbstractCoordProducer):
+    count = 0
+    def __init__(self, sliding, flank, suppress, target_fdr,
+                       min_passing_windows_frac, max_passing_windows_frac,
+                       separate_pos_neg_thresholds,
+                       max_seqlets_total,
+                       progress_update=5000,
+                       verbose=True): 
+        self.sliding = sliding
+        self.flank = flank
+        self.suppress = suppress
+        self.target_fdr = target_fdr
+        assert max_passing_windows_frac >= min_passing_windows_frac
+        self.min_passing_windows_frac = min_passing_windows_frac 
+        self.max_passing_windows_frac = max_passing_windows_frac
+        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
+        self.max_seqlets_total = None
+        self.progress_update = progress_update
+        self.verbose = verbose
+        self.plot_save_dir = plot_save_dir
+
+    def __call__(self, score_track, null_track, tnt_results=None):
+        
+
+        
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
     count = 0
