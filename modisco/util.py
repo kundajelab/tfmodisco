@@ -377,9 +377,11 @@ def get_betas_from_tsne_conditional_probs(conditional_probs,
 
 def convert_to_percentiles(vals):
     to_return = np.zeros(len(vals))
-    sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
-    for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
-        to_return[orig_idx] = sort_idx/float(len(vals))
+    argsort = np.argsort(vals)
+    to_return[argsort] = np.arange(len(vals))/float(len(vals))
+    #sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
+    #for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
+    #    to_return[orig_idx] = sort_idx/float(len(vals))
     return to_return
 
 
@@ -473,6 +475,11 @@ def rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+def sliding_window_max(a, window):
+    rolling_windows_a = rolling_window(a, window)
+    return np.max(rolling_windows_a, axis=-1) 
 
 
 def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat): 

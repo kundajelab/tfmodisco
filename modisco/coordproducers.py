@@ -318,14 +318,28 @@ def get_null_vals(null_track, score_track, windowsize,
     return null_vals
 
 
-def get_isotonic_regression_classifier(orig_vals, null_vals):
+def subsample_if_large(arr, subsample_cap):
+    if (len(arr) > subsample_cap):
+        print("Subsampling!")
+        sys.stdout.flush()
+        arr = np.random.RandomState(1234).choice(a=arr, size=subsample_cap,
+                                                 replace=False)
+    return arr
+
+
+def get_isotonic_regression_classifier(orig_vals, null_vals,
+                                       subsample_cap=100000):
     from sklearn.isotonic import IsotonicRegression
-    pos_orig_vals = np.array(sorted([x for x in orig_vals if x >= 0]))
-    neg_orig_vals = np.array(sorted([x for x in orig_vals if x < 0],
-                              key=lambda x: abs(x)))
+    orig_vals = subsample_if_large(orig_vals, subsample_cap=subsample_cap)
+    null_vals = subsample_if_large(null_vals, subsample_cap=subsample_cap)
+    pos_orig_vals = (
+        np.array(sorted([x for x in orig_vals if x >= 0])))
+    neg_orig_vals = (
+        np.array(sorted([x for x in orig_vals if x < 0],
+                         key=lambda x: abs(x))))
     pos_null_vals = [x for x in null_vals if x >= 0]
     neg_null_vals = [x for x in null_vals if x < 0]
-    pos_ir = IsotonicRegression().fit(
+    pos_ir = IsotonicRegression(out_of_bounds='clip').fit(
         X=np.concatenate([pos_orig_vals,pos_null_vals], axis=0),
         y=([1.0 for x in pos_orig_vals]
            +[0.0 for x in pos_null_vals]),
@@ -334,7 +348,8 @@ def get_isotonic_regression_classifier(orig_vals, null_vals):
                   for x in pos_null_vals]))
 
     if (len(neg_orig_vals) > 0):
-        neg_ir = IsotonicRegression(increasing=False).fit(
+        neg_ir = IsotonicRegression(increasing=False,
+                                    out_of_bounds='clip').fit(
             X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
             y=([1.0 for x in neg_orig_vals]
                +[0.0 for x in neg_null_vals]),
@@ -349,7 +364,7 @@ def get_isotonic_regression_classifier(orig_vals, null_vals):
 
 def valatmaxabs(arrs):
     idxs = np.argmax(np.abs(arrs), axis=0)
-    return arrs[idxs, np.arange(len(arrs[0]))]
+    return arrs[idxs, np.arange(len(arrs[0]))], idxs
 
 
 class VariableWindowWidthPercentileTransform(object):
@@ -357,24 +372,26 @@ class VariableWindowWidthPercentileTransform(object):
     def __init__(self, sliding_window_sizes): 
         self.sliding_window_sizes = sliding_window_sizes
 
-    def compute_percentile_transform(window_size, score_track, null_track):
-        window_sum_function = get_simple_window_sum_function(window_size)
-        original_summed_score_track = window_sum_function(arrs=score_track) 
-
     def fit(self, score_track, null_track):
         pos_irs = []
         neg_irs = []
         for sliding_window_size in self.sliding_window_sizes:
+            window_sum_function = get_simple_window_sum_function(
+                                        sliding_window_size)
             print("Fitting - on window size",sliding_window_size)
             if (hasattr(null_track, '__call__')):
                 null_vals = null_track(
                     score_track=score_track,
-                    windowsize=self.sliding)
+                    windowsize=sliding_window_size)
             else:
                 null_summed_score_track = window_sum_function(arrs=null_track) 
                 null_vals = list(np.concatenate(null_summed_score_track,
                                                 axis=0))
+            print("Computing window sums")
+            sys.stdout.flush()
             window_sums_rows = window_sum_function(arrs=score_track)
+            print("Done computing window sums")
+            sys.stdout.flush()
             pos_ir, neg_ir, _, _ = get_isotonic_regression_classifier(
                     orig_vals=list(
                         np.concatenate(window_sums_rows, axis=0)),
@@ -386,7 +403,10 @@ class VariableWindowWidthPercentileTransform(object):
 
     def transform(self, score_track):
         percentile_transformed_tracks = []
-        for sliding_window_size in self.sliding_window_sizes:
+        for sliding_window_size, pos_ir, neg_ir in zip(
+         self.sliding_window_sizes, self.pos_irs, self.neg_irs):
+            window_sum_function = get_simple_window_sum_function(
+                                        sliding_window_size)
             window_sums_rows = window_sum_function(arrs=score_track)
             transformed_track = []
             for row_idx, window_sums_row in enumerate(window_sums_rows): 
@@ -397,26 +417,32 @@ class VariableWindowWidthPercentileTransform(object):
                 transformed_pos_vals = pos_ir.transform(pos_vals)
                 transformed_row[pos_val_indices] = transformed_pos_vals
 
-                neg_val_indices = np.nonzero(window_sums_row < 0) 
-                neg_vals = window_sums_row[neg_val_indices]
-                transformed_neg_vals = neg_ir.transform(neg_vals) 
-                transformed_row[neg_val_indices] = -transformed_neg_vals
+                neg_val_indices = np.nonzero(window_sums_row < 0)[0]
+                if (len(neg_val_indices) > 0 and neg_ir is not None):
+                    neg_vals = window_sums_row[neg_val_indices]
+                    transformed_neg_vals = neg_ir.transform(neg_vals) 
+                    transformed_row[neg_val_indices] = -transformed_neg_vals
 
                 #add padding to make up for entries lost due to the sliding
                 # windows
                 transformed_row = np.pad(transformed_row,
                     pad_width=(
-                        (int(sliding_window_size/2.0),
-                         sliding_window_size-int(sliding_window_size/2.0))))
-                assert len(transformed_row)==len(score_track[row_idx])
+                        (int((sliding_window_size-1)/2.0),
+                         (sliding_window_size-1)
+                          -int((sliding_window_size-1)/2.0))))
+                assert len(transformed_row)==len(score_track[row_idx]),\
+                    (len(transformed_row), len(score_track[row_idx]))
                 transformed_track.append(transformed_row) 
             percentile_transformed_tracks.append(transformed_track)
         #ultimately, return the result of taking the value that has
         # the maximum absolute value over all the different transformed tracks
-        return [valatmaxabs(
-                  np.array([percentile_transformed_tracks[i,j]
-                  for i in range(len(percentile_transformed_tracks))]))
-                for j in range(len(score_track))]
+        bestwindowvals = [valatmaxabs(
+                          np.array([percentile_transformed_tracks[i][j]
+                          for i in range(len(percentile_transformed_tracks))]))
+                        for j in range(len(score_track))]
+        #return both the best window values AND the idx of the window size,
+        # as I think the latter is also helpful to know
+        return [x[0] for x in bestwindowvals], [x[1] for x in bestwindowvals] 
 
 
 class VariableWindowAroundChunks(AbstractCoordProducer):
