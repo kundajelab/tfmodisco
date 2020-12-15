@@ -1,6 +1,7 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
 import scipy.stats
+from modisco import util
 
 
 class AbstractValueProvider(object):
@@ -103,21 +104,27 @@ class VariableWidthPrecTransformedValueProvider(AbstractValueProvider):
     def save_hdf5(self, grp):
         grp.attrs["class"] = type(self).__name__
         grp.attrs["track_name"] = self.track_name
-        grp.attrs["central_window"] = self.central_window
-        self.val_transformer.save_hdf5(grp.create_group("val_transformer")) 
+        grp.create_dataset("window_widths", data=np.array(self.window_widths))
+        util.save_list_of_objects(grp=grp.create_group("pos_irs"),
+                                  list_of_objects=self.pos_irs)
+        util.save_list_of_objects(grp=grp.create_group("neg_irs"),
+                                  list_of_objects=self.neg_irs)
 
     @classmethod
     def from_hdf5(cls, grp):
+        from .coordproducers import SavableIsotonicRegression
         if isinstance(grp.attrs["track_name"], str):
             track_name = grp.attrs["track_name"]
         else:
             track_name = grp.attrs["track_name"].decode('utf-8')
-        central_window = grp.attrs["central_window"] 
-        val_transformer = AbstractValTransformer.from_hdf5(
-                             grp["val_transformer"]) 
-        return cls(track_name=track_name,
-                   central_window=central_window,
-                   val_transformer=val_transformer)
+        window_widths = np.array(grp["window_widths"]).astype("int")
+        pos_irs = util.load_list_of_objects(
+            grp=grp["pos_irs"], obj_class=SavableIsotonicRegression)
+        neg_irs = util.load_list_of_objects(
+            grp=grp["neg_irs"], obj_class=SavableIsotonicRegression)
+
+        return cls(track_name=track_name, window_widths=window_widths,
+                   pos_irs=pos_irs, neg_irs=neg_irs)
 
 
 class AbstractValTransformer(object):
@@ -129,6 +136,12 @@ class AbstractValTransformer(object):
     def from_hdf5(cls, grp):
         the_class = eval(grp.attrs["class"])
         return the_class.from_hdf5(grp) 
+
+
+class IdentityFunctionValTransformer(AbstractValTransformer)
+
+    def __call__(self, val):
+        return val 
 
 
 class AbsPercentileValTransformer(AbstractValTransformer):

@@ -327,6 +327,35 @@ def subsample_if_large(arr, subsample_cap):
     return arr
 
 
+class SavableIsotonicRegression(object):
+
+    def __init__(self, origvals, nullvals, increasing):
+        self.origvals = origvals 
+        self.nullvals = nullvals
+        self.increasing = increasing
+        self.ir = IsotonicRegression(out_of_bounds='clip').fit(
+            X=np.concatenate([self.origvals, self.nullvals], axis=0),
+            y=([1.0 for x in self.origvals] + [0.0 for x in self.nullvals]),
+            sample_weight=([1.0 for x in self.origvals]
+                           +[float(len(self.origvals))/len(self.nullvals)
+                             for x in self.origvals]))
+    
+    def transform(self, vals):
+        return self.ir.transform(vals) 
+
+    def save_hdf5(self, grp):
+        grp.attrs['increasing'] = self.increasing
+        grp.create_dataset('origvals', data=self.origvals)
+        grp.create_dataset('nullvals', data=self.nullvals)
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        increase = grp.attrs['increasing']
+        origvals = np.array(grp['origvals'])
+        nullvals = np.array(grp['nullvals'])
+        return cls(origvals=origvals, nullvals=nullvals, increasing=increasing) 
+
+
 def get_isotonic_regression_classifier(orig_vals, null_vals,
                                        subsample_cap=100000):
     from sklearn.isotonic import IsotonicRegression
@@ -339,23 +368,12 @@ def get_isotonic_regression_classifier(orig_vals, null_vals,
                          key=lambda x: abs(x))))
     pos_null_vals = [x for x in null_vals if x >= 0]
     neg_null_vals = [x for x in null_vals if x < 0]
-    pos_ir = IsotonicRegression(out_of_bounds='clip').fit(
-        X=np.concatenate([pos_orig_vals,pos_null_vals], axis=0),
-        y=([1.0 for x in pos_orig_vals]
-           +[0.0 for x in pos_null_vals]),
-        sample_weight=([1.0 for x in pos_orig_vals]+
-                 [len(pos_orig_vals)/len(pos_null_vals)
-                  for x in pos_null_vals]))
+    pos_ir = SavableIsotonicRegression(origvals=pos_orig_vals,
+                nullvals=pos_null_vals, increasing=True) 
 
     if (len(neg_orig_vals) > 0):
-        neg_ir = IsotonicRegression(increasing=False,
-                                    out_of_bounds='clip').fit(
-            X=np.concatenate([neg_orig_vals,neg_null_vals], axis=0),
-            y=([1.0 for x in neg_orig_vals]
-               +[0.0 for x in neg_null_vals]),
-            sample_weight=([1.0 for x in neg_orig_vals]+
-                     [len(neg_orig_vals)/len(neg_null_vals)
-                      for x in neg_null_vals]))
+        neg_ir = SavableIsotonicRegression(origvals=pos_orig_vals,
+                    nullvals=pos_null_vals, increasing=False)
     else:
         neg_ir = None
 
@@ -445,6 +463,7 @@ class VariableWindowWidthPercentileTransform(object):
         return [x[0] for x in bestwindowvals], [x[1] for x in bestwindowvals] 
 
 
+#sliding in this case would be a list of values
 class VariableWindowAroundChunks(AbstractCoordProducer):
     count = 0
     def __init__(self, sliding, flank, suppress, target_fdr,
@@ -454,6 +473,8 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                        progress_update=5000,
                        verbose=True): 
         self.sliding = sliding
+        self.percentile_transformer = VariableWindowWidthPercentileTransform(
+                sliding_window_sizes=self.sliding)
         self.flank = flank
         self.suppress = suppress
         self.target_fdr = target_fdr
@@ -467,9 +488,78 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
         self.plot_save_dir = plot_save_dir
 
     def __call__(self, score_track, null_track, tnt_results=None):
-        
+        if (tnt_results is None):
+            self.percentile_transformer.fit(score_track=score_track,
+                                            null_track=null_track)
+            transformed_score_track =\
+                self.percentile_transformer.transform(score_track=score_track) 
 
-        
+
+def identify_coords(score_track, pos_threshold, neg_threshold,
+                    windowsize, flank, suppress, max_seqlets_total, verbose):
+
+    #cp_score_track = 'copy' of the score track, which can be modified as
+    # coordinates are identified
+    cp_score_track = [np.array(x) for x in score_track]
+    #if a position is less than the threshold, set it to -np.inf
+    cp_score_track = [
+        np.array([np.abs(y) if (y > pos_threshold
+                        or y < neg_threshold)
+                       else -np.inf for y in x])
+        for x in cp_score_track]
+
+    coords = []
+    for example_idx,single_score_track in enumerate(cp_score_track):
+        #set the stuff near the flanks to -np.inf so that we
+        # don't pick it up during argmax
+        single_score_track[0:flank] = -np.inf
+        single_score_track[len(single_score_track)-(flank):
+                           len(single_score_track)] = -np.inf
+        while True:
+            argmax = np.argmax(single_score_track,axis=0)
+            max_val = single_score_track[argmax]
+
+            #bail if exhausted everything that passed the threshold
+            #and was not suppressed
+            if (max_val == -np.inf):
+                break
+
+            #need to be able to expand without going off the edge
+            if ((argmax >= flank) and
+                (argmax < (len(single_score_track)-flank))): 
+
+                coord = SeqletCoordsFWAP(
+                    example_idx=example_idx,
+                    start=argmax-flank,
+                    end=argmax+windowsize+flank,
+                    score=score_track[example_idx][argmax]) 
+                assert (coord.score > pos_threshold
+                        or coord.score < neg_threshold)
+                coords.append(coord)
+            else:
+                assert False,\
+                 ("This shouldn't happen because I set stuff near the"
+                  "border to -np.inf early on")
+            #suppress the chunks within +- suppress
+            left_supp_idx = int(max(np.floor(argmax+0.5-suppress),0))
+            right_supp_idx = int(min(np.ceil(argmax+0.5+suppress),
+                                 len(single_score_track)))
+            single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
+
+    if (verbose):
+        print("Got "+str(len(coords))+" coords")
+        sys.stdout.flush()
+
+    if ((max_seqlets_total is not None) and
+        len(coords) > max_seqlets_total):
+        if (verbose):
+            print("Limiting to top "+str(max_seqlets_total))
+            sys.stdout.flush()
+        coords = sorted(coords, key=lambda x: -np.abs(x.score))\
+                           [:max_seqlets_total]
+    
+    return coords
+                    
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
     count = 0
@@ -699,68 +789,16 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 transformed_pos_threshold=val_transformer(pos_threshold),
                 val_transformer=val_transformer)
 
-        neg_threshold = tnt_results.neg_threshold
-        pos_threshold = tnt_results.pos_threshold
+        coords = identify_coords(
+            score_track=original_summed_score_track,
+            pos_threshold=tnt_results.pos_threshold,
+            neg_threshold=tnt_results.neg_threshold,
+            windowsize=self.sliding,
+            flank=self.flank,
+            suppress=self.suppress,
+            max_seqlets_total=self.max_seqlets_total,
+            verbose=self.verbose)
 
-        summed_score_track = [np.array(x) for x in original_summed_score_track]
-
-        #if a position is less than the threshold, set it to -np.inf
-        summed_score_track = [
-            np.array([np.abs(y) if (y > pos_threshold
-                            or y < neg_threshold)
-                           else -np.inf for y in x])
-            for x in summed_score_track]
-
-        coords = []
-        for example_idx,single_score_track in enumerate(summed_score_track):
-            #set the stuff near the flanks to -np.inf so that we
-            # don't pick it up during argmax
-            single_score_track[0:self.flank] = -np.inf
-            single_score_track[len(single_score_track)-(self.flank):
-                               len(single_score_track)] = -np.inf
-            while True:
-                argmax = np.argmax(single_score_track,axis=0)
-                max_val = single_score_track[argmax]
-
-                #bail if exhausted everything that passed the threshold
-                #and was not suppressed
-                if (max_val == -np.inf):
-                    break
-
-                #need to be able to expand without going off the edge
-                if ((argmax >= self.flank) and
-                    (argmax < (len(single_score_track)-self.flank))): 
-
-                    coord = SeqletCoordsFWAP(
-                        example_idx=example_idx,
-                        start=argmax-self.flank,
-                        end=argmax+self.sliding+self.flank,
-                        score=original_summed_score_track[example_idx][argmax]) 
-                    assert (coord.score > pos_threshold
-                            or coord.score < neg_threshold)
-                    coords.append(coord)
-                else:
-                    assert False,\
-                     ("This shouldn't happen because I set stuff near the"
-                      "border to -np.inf early on")
-                #suppress the chunks within +- self.suppress
-                left_supp_idx = int(max(np.floor(argmax+0.5-self.suppress),
-                                                 0))
-                right_supp_idx = int(min(np.ceil(argmax+0.5+self.suppress),
-                                     len(single_score_track)))
-                single_score_track[left_supp_idx:right_supp_idx] = -np.inf 
-
-        if (self.verbose):
-            print("Got "+str(len(coords))+" coords")
-            sys.stdout.flush()
-
-        if ((self.max_seqlets_total is not None) and
-            len(coords) > self.max_seqlets_total):
-            if (self.verbose):
-                print("Limiting to top "+str(self.max_seqlets_total))
-                sys.stdout.flush()
-            coords = sorted(coords, key=lambda x: -np.abs(x.score))\
-                               [:self.max_seqlets_total]
         return CoordProducerResults(
                     coords=coords,
                     tnt_results=tnt_results) 

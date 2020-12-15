@@ -53,6 +53,20 @@ def save_seqlet_coords(seqlets, dset_name, grp):
                      dset_name=dset_name, grp=grp)
 
 
+def save_list_of_objects(grp, list_of_objects):
+    grp.attrs["num_objects"] = len(list_of_objects) 
+    for idx,obj in enumerate(list_of_objects):
+        obj.save_hdf5(grp=grp.create_group("obj"+str(idx)))
+
+
+def load_list_of_objects(grp, obj_class):
+    num_objects = grp.attrs["num_objects"]
+    list_of_objects = []
+    for idx in range(num_objects):
+        list_of_objects.append(obj_class.from_hdf5(grp=grp["obj"+str(idx)]))
+    return list_of_objects
+
+
 def factorial(val):
     to_return = 1
     for i in range(1,val+1):
