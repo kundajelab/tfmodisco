@@ -99,12 +99,14 @@ class DataTrack(object):
                       len(self.fwd_tracks[coor.example_idx]))
                 fwd = np.pad(array=fwd,
                              pad_width=((left_pad_needed, right_pad_needed),
-                                        (0,0)))
+                                        (0,0)),
+                             mode="constant")
                 if (self.rev_tracks is not None):
                     rev = np.pad(array=rev,
                                  pad_width=(
                                   (right_pad_needed, left_pad_needed),
-                                  (0,0)))
+                                  (0,0)),
+                                 mode="constant")
             snippet = Snippet(
                     fwd=fwd,
                     rev=rev,
