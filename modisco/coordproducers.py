@@ -225,11 +225,11 @@ class LaplaceNullDist(GenerateNullDist):
         grp.create_dataset('percentiles_to_use',
                            data=self.percentiles_to_use)
 
-    def __call__(self, score_track, windowsize, original_summed_score_track):
+    def __call__(self, score_track, window_size, original_summed_score_track):
 
         #original_summed_score_track is supplied to avoid recomputing it 
         if (original_summed_score_track is None):
-            window_sum_function = get_simple_window_sum_function(windowsize)
+            window_sum_function = get_simple_window_sum_function(window_size)
             original_summed_score_track = window_sum_function(arrs=score_track) 
 
         values = np.concatenate(original_summed_score_track, axis=0)
@@ -359,12 +359,12 @@ class FlipSignNullDist(GenerateNullDist):
         return np.concatenate(window_sum_function(null_tracks), axis=0)
 
 
-def get_null_vals(null_track, score_track, windowsize,
+def get_null_vals(null_track, score_track, window_size,
                   original_summed_score_track):
     if (hasattr(null_track, '__call__')):
         null_vals = null_track(
             score_track=score_track,
-            windowsize=windowsize,
+            window_size=window_size,
             original_summed_score_track=original_summed_score_track)
     else:
         window_sum_function = get_simple_window_sum_function(window_size)
@@ -504,20 +504,26 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
             if (hasattr(null_track, '__call__')):
                 null_vals = null_track(
                     score_track=score_track,
-                    windowsize=sliding_window_size,
+                    window_size=sliding_window_size,
                     original_summed_score_track=None)
             else:
                 null_summed_score_track = window_sum_function(arrs=null_track) 
-                null_vals = list(np.concatenate(null_summed_score_track,
-                                                axis=0))
+                null_vals = np.concatenate(null_summed_score_track,
+                                                axis=0)
             print("Computing window sums")
             sys.stdout.flush()
             window_sums_rows = window_sum_function(arrs=score_track)
             print("Done computing window sums")
             sys.stdout.flush()
+
+            orig_vals = np.concatenate(window_sums_rows, axis=0)
+            from matplotlib import pyplot as plt
+            plt.hist(orig_vals, bins=100, density=True, alpha=0.5)
+            plt.hist(null_vals, bins=100, density=True, alpha=0.5)
+            plt.show()
+
             pos_ir, neg_ir, _ = get_isotonic_regression_classifier(
-                    orig_vals=list(
-                        np.concatenate(window_sums_rows, axis=0)),
+                    orig_vals=np.concatenate(window_sums_rows, axis=0),
                     null_vals=null_vals)
             pos_irs.append(pos_ir)
             neg_irs.append(neg_ir)
@@ -572,7 +578,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
 
         #Need to remove padding because identify_coords is assumed to
         # operate on a scoretrack that has already been processed with
-        # a sliding window of windowsize (and assumes that partial windows
+        # a sliding window of window_size (and assumes that partial windows
         # were not included)
         left_padding_to_remove = int((max(self.sliding)-1)/2)
         right_padding_to_remove = (max(self.sliding)-1)-left_padding_to_remove
@@ -581,7 +587,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                          for x in precisiontransformed_score_track],
             pos_threshold=tnt_results.transformed_pos_threshold,
             neg_threshold=tnt_results.transformed_neg_threshold,
-            windowsize=max(self.sliding),
+            window_size=max(self.sliding),
             flank=self.flank,
             suppress=self.suppress,
             max_seqlets_total=self.max_seqlets_total,
@@ -596,9 +602,9 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
 
 
 #identify_coords is expecting something that has already been processed
-# with sliding windows of size windowsize
+# with sliding windows of size window_size
 def identify_coords(score_track, pos_threshold, neg_threshold,
-                    windowsize, flank, suppress,
+                    window_size, flank, suppress,
                     max_seqlets_total, verbose, other_info_tracks={}):
 
     for other_info_track in other_info_tracks.values():
@@ -638,7 +644,7 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
                 coord = SeqletCoordsFWAP(
                     example_idx=example_idx,
                     start=argmax-flank,
-                    end=argmax+windowsize+flank,
+                    end=argmax+window_size+flank,
                     score=score_track[example_idx][argmax],
                     other_info = dict([
                      (track_name, track[example_idx][argmax])
@@ -811,7 +817,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             null_vals = get_null_vals(
                 null_track=null_track,
                 score_track=score_track,
-                windowsize=self.sliding,
+                window_size=self.sliding,
                 original_summed_score_track=original_summed_score_track)
 
             if (self.verbose):
@@ -934,7 +940,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             score_track=original_summed_score_track,
             pos_threshold=tnt_results.pos_threshold,
             neg_threshold=tnt_results.neg_threshold,
-            windowsize=self.sliding,
+            window_size=self.sliding,
             flank=self.flank,
             suppress=self.suppress,
             max_seqlets_total=self.max_seqlets_total,
