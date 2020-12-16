@@ -166,7 +166,7 @@ class TfModiscoWorkflow(object):
     def __init__(self,
                  seqlets_to_patterns_factory=
                  seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
-                 sliding_window_size=21, flank_size=10,
+                 sliding_window_size=[5,9,13,17,21], flank_size=10,
                  overlap_portion=0.5,
                  min_metacluster_size=100,
                  min_metacluster_size_frac=0.01,
@@ -222,18 +222,32 @@ class TfModiscoWorkflow(object):
                        plot_save_dir="figures"):
 
         print_memory_use()
-        self.coord_producer = coordproducers.FixedWindowAroundChunks(
-            sliding=self.sliding_window_size,
-            flank=self.flank_size,
-            suppress=(int(0.5*self.sliding_window_size)
-                      + self.flank_size),
-            target_fdr=self.target_seqlet_fdr,
-            min_passing_windows_frac=self.min_passing_windows_frac,
-            max_passing_windows_frac=self.max_passing_windows_frac,
-            separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
-            max_seqlets_total=None,
-            verbose=self.verbose,
-            plot_save_dir=plot_save_dir) 
+        if (hasattr(self.sliding_window_size, '__iter__')):
+            self.coord_producer = coordproducers.VariableWindowAroundChunks(
+                sliding=self.sliding_window_size,
+                flank=self.flank_size,
+                suppress=(int(0.5*max(self.sliding_window_size))
+                          + self.flank_size),
+                target_fdr=self.target_seqlet_fdr,
+                min_passing_windows_frac=self.min_passing_windows_frac,
+                max_passing_windows_frac=self.max_passing_windows_frac,
+                separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+                max_seqlets_total=None,
+                verbose=self.verbose,
+                plot_save_dir=plot_save_dir) 
+        else:
+            self.coord_producer = coordproducers.FixedWindowAroundChunks(
+                sliding=self.sliding_window_size,
+                flank=self.flank_size,
+                suppress=(int(0.5*self.sliding_window_size)
+                          + self.flank_size),
+                target_fdr=self.target_seqlet_fdr,
+                min_passing_windows_frac=self.min_passing_windows_frac,
+                max_passing_windows_frac=self.max_passing_windows_frac,
+                separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+                max_seqlets_total=None,
+                verbose=self.verbose,
+                plot_save_dir=plot_save_dir) 
 
         custom_perpos_contribs = per_position_contrib_scores
         if (per_position_contrib_scores is None):
@@ -249,7 +263,6 @@ class TfModiscoWorkflow(object):
                         revcomp=revcomp,
                         custom_perpos_contribs=custom_perpos_contribs,
                         other_tracks=other_tracks)
-
 
         multitask_seqlet_creation_results = core.MultiTaskSeqletCreator(
             coord_producer=self.coord_producer,
@@ -275,12 +288,14 @@ class TfModiscoWorkflow(object):
             print("WARNING: you found relatively few seqlets."
                   +" Consider dropping target_seqlet_fdr") 
         
-        if int(self.min_metacluster_size_frac * len(seqlets)) > self.min_metacluster_size:
+        if int(self.min_metacluster_size_frac
+               * len(seqlets)) > self.min_metacluster_size:
             print("min_metacluster_size_frac * len(seqlets) = {0} is more than min_metacluster_size={1}.".\
-                  format(int(self.min_metacluster_size_frac * len(seqlets)), self.min_metacluster_size))
+                  format(int(self.min_metacluster_size_frac
+                             * len(seqlets)), self.min_metacluster_size))
             print("Using it as a new min_metacluster_size")
-            self.min_metacluster_size = int(self.min_metacluster_size_frac * len(seqlets))
-
+            self.min_metacluster_size =\
+                int(self.min_metacluster_size_frac * len(seqlets))
 
         if (self.weak_threshold_for_counting_sign is None):
             weak_threshold_for_counting_sign = weakest_transformed_thresh

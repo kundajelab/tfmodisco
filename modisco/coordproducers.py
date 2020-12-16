@@ -2,18 +2,74 @@ from __future__ import division, print_function, absolute_import
 from .core import SeqletCoordinates
 from modisco import util
 import numpy as np
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, OrderedDict
 import itertools
 from sklearn.neighbors.kde import KernelDensity
 import sys
 import time
 from .value_provider import (
     AbstractValTransformer, AbsPercentileValTransformer,
-    SignedPercentileValTransformer)
+    SignedPercentileValTransformer, PrecisionValTransformer)
 import scipy
 
 
-class TransformAndThresholdResults(object):
+SUBSAMPLE_CAP = 1000000
+
+
+#The only parts of TransformAndThresholdResults that are used in
+# TfModiscoWorkflow are the transformed_pos/neg_thresholds and the
+# val_transformer (used in metaclustering with multiple tasks)
+#TransformAndThresholdResults are also used to be
+# able to replicate the same procedure used for identifying coordinates as
+# when TfMoDisco was first run; the information needed in that case would
+# be specific to the type of Coordproducer used
+class AbstractTransformAndThresholdResults(
+
+    def __init__(self, transformed_neg_threshold, transformed_pos_threshold,
+                       val_transformer):
+        self.transformed_neg_threshold = transformed_neg_threshold
+        self.transformed_pos_threshold = transformed_pos_threshold
+        self.val_transformer = val_transformer
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        if (the_class.__name__ != cls.__name__):
+            return the_class.from_hdf5(grp) 
+
+
+class BasicTransformAndThresholdResults(AbstractTransformAndThresholdResults):
+
+    def save_hdf5(self, grp):
+        grp.attrs["class"] = type(self).__name__
+        grp.attrs["transformed_neg_threshold"] = self.transformed_neg_threshold
+        grp.attrs["transformed_pos_threshold"] = self.transformed_pos_threshold
+        self.val_transformer.save_hdf5(grp.create_group("val_transformer"))
+
+    @classmethod
+    def load_basic_attrs_from_hdf5(cls, grp):
+        transformed_neg_threshold = grp.attrs['transformed_neg_threshold']
+        transformed_pos_threshold = grp.attrs['transformed_pos_threshold']
+        val_transformer = AbstractValTransformer.from_hdf5(
+                            grp["val_transformer"]) 
+        return (transformed_neg_threshold, transformed_pos_threshold,
+                val_transformer)
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        the_class = eval(grp.attrs["class"])
+        (transformed_neg_threshold,
+         transformed_pos_threshold,
+         val_transformer) = cls.load_basic_attrs_from_hdf5(grp)
+        return cls(transformed_neg_threshold=transformed_neg_threshold,
+                   transformed_pos_threshold=transformed_pos_threshold,
+                   val_transformer=val_transformer) 
+
+
+#FWAC = FixedWindowAroundChunks; this TransformAndThresholdResults object
+# is specific to the type of info needed in that case.
+class FWACTransformAndThresholdResults(
+        BasicTransformAndThresholdResults):
 
     def __init__(self, neg_threshold,
                        transformed_neg_threshold,
@@ -25,26 +81,23 @@ class TransformAndThresholdResults(object):
         # transformed distribution used to set the threshold, e.g. a
         # cdf value
         self.neg_threshold = neg_threshold
-        self.transformed_neg_threshold = transformed_neg_threshold
         self.pos_threshold = pos_threshold
-        self.transformed_pos_threshold = transformed_pos_threshold
-        self.val_transformer = val_transformer
+        super(FWACTransformAndThresholdResults, self).__init__(
+            transformed_neg_threshold=transformed_neg_threshold,
+            transformed_pos_threshold=transformed_pos_threshold,
+            val_transformer=val_transformer)
 
     def save_hdf5(self, grp):
+        super(FWACTransformAndThresholdResults, self).save_hdf5(grp)
         grp.attrs["neg_threshold"] = self.neg_threshold
-        grp.attrs["transformed_neg_threshold"] = self.transformed_neg_threshold
         grp.attrs["pos_threshold"] = self.pos_threshold
-        grp.attrs["transformed_pos_threshold"] = self.transformed_pos_threshold
-        self.val_transformer.save_hdf5(grp.create_group("val_transformer"))
 
     @classmethod
     def from_hdf5(cls, grp):
+        (transformed_neg_threshold, transformed_pos_threshold,
+         val_transformer) = cls.load_basic_attrs_from_hdf5(grp)
         neg_threshold = grp.attrs['neg_threshold']
-        transformed_neg_threshold = grp.attrs['transformed_neg_threshold']
         pos_threshold = grp.attrs['pos_threshold']
-        transformed_pos_threshold = grp.attrs['transformed_pos_threshold']
-        val_transformer = AbstractValTransformer.from_hdf5(
-                           grp["val_transformer"]) 
         return cls(neg_threshold=neg_threshold,
                    transformed_neg_threshold=transformed_neg_threshold,
                    pos_threshold=pos_threshold,
@@ -67,8 +120,9 @@ class SeqletCoordsFWAP(SeqletCoordinates):
     """
         Coordinates for the FixedWindowAroundChunks CoordProducer 
     """
-    def __init__(self, example_idx, start, end, score):
+    def __init__(self, example_idx, start, end, score, other_info={}):
         self.score = score 
+        self.other_info = other_info
         super(SeqletCoordsFWAP, self).__init__(
             example_idx=example_idx,
             start=start, end=end,
@@ -86,7 +140,7 @@ class CoordProducerResults(object):
         coord_strings = util.load_string_list(dset_name="coords",
                                               grp=grp)  
         coords = [SeqletCoordinates.from_string(x) for x in coord_strings] 
-        tnt_results = TransformAndThresholdResults.from_hdf5(
+        tnt_results = AbstractTransformAndThresholdResults.from_hdf5(
                                 grp["tnt_results"])
         return CoordProducerResults(coords=coords,
                                     tnt_results=tnt_results)
@@ -318,11 +372,11 @@ def get_null_vals(null_track, score_track, windowsize,
     return null_vals
 
 
-def subsample_if_large(arr, subsample_cap):
-    if (len(arr) > subsample_cap):
+def subsample_if_large(arr):
+    if (len(arr) > SUBSAMPLE_CAP):
         print("Subsampling!")
         sys.stdout.flush()
-        arr = np.random.RandomState(1234).choice(a=arr, size=subsample_cap,
+        arr = np.random.RandomState(1234).choice(a=arr, size=SUBSAMPLE_CAP,
                                                  replace=False)
     return arr
 
@@ -356,11 +410,10 @@ class SavableIsotonicRegression(object):
         return cls(origvals=origvals, nullvals=nullvals, increasing=increasing) 
 
 
-def get_isotonic_regression_classifier(orig_vals, null_vals,
-                                       subsample_cap=100000):
+def get_isotonic_regression_classifier(orig_vals, null_vals):
     from sklearn.isotonic import IsotonicRegression
-    orig_vals = subsample_if_large(orig_vals, subsample_cap=subsample_cap)
-    null_vals = subsample_if_large(null_vals, subsample_cap=subsample_cap)
+    orig_vals = subsample_if_large(orig_vals)
+    null_vals = subsample_if_large(null_vals)
     pos_orig_vals = (
         np.array(sorted([x for x in orig_vals if x >= 0])))
     neg_orig_vals = (
@@ -377,7 +430,7 @@ def get_isotonic_regression_classifier(orig_vals, null_vals,
     else:
         neg_ir = None
 
-    return pos_ir, neg_ir, pos_orig_vals, neg_orig_vals
+    return pos_ir, neg_ir, orig_vals, pos_orig_vals, neg_orig_vals
 
 
 def valatmaxabs(arrs):
@@ -385,12 +438,29 @@ def valatmaxabs(arrs):
     return arrs[idxs, np.arange(len(arrs[0]))], idxs
 
 
-class VariableWindowWidthPercentileTransform(object):
+#sliding in this case would be a list of values
+class VariableWindowAroundChunks(AbstractCoordProducer):
+    count = 0
+    def __init__(self, sliding, flank, suppress, target_fdr,
+                       min_passing_windows_frac, max_passing_windows_frac,
+                       separate_pos_neg_thresholds,
+                       max_seqlets_total,
+                       progress_update=5000,
+                       verbose=True): 
+        self.sliding = sliding
+        self.flank = flank
+        self.suppress = suppress
+        self.target_fdr = target_fdr
+        assert max_passing_windows_frac >= min_passing_windows_frac
+        self.min_passing_windows_frac = min_passing_windows_frac 
+        self.max_passing_windows_frac = max_passing_windows_frac
+        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
+        self.max_seqlets_total = None
+        self.progress_update = progress_update
+        self.verbose = verbose
+        self.plot_save_dir = plot_save_dir
 
-    def __init__(self, sliding_window_sizes): 
-        self.sliding_window_sizes = sliding_window_sizes
-
-    def fit(self, score_track, null_track):
+    def fit_pos_and_neg_irs(self, score_track, null_track):
         pos_irs = []
         neg_irs = []
         for sliding_window_size in self.sliding_window_sizes:
@@ -410,93 +480,81 @@ class VariableWindowWidthPercentileTransform(object):
             window_sums_rows = window_sum_function(arrs=score_track)
             print("Done computing window sums")
             sys.stdout.flush()
-            pos_ir, neg_ir, _, _ = get_isotonic_regression_classifier(
+            pos_ir, neg_ir, _, _, _ = get_isotonic_regression_classifier(
                     orig_vals=list(
                         np.concatenate(window_sums_rows, axis=0)),
                     null_vals=null_vals)
             pos_irs.append(pos_ir)
             neg_irs.append(neg_ir)
-        self.pos_irs = pos_irs
-        self.neg_irs = neg_irs
-
-    def transform(self, score_track):
-        percentile_transformed_tracks = []
-        for sliding_window_size, pos_ir, neg_ir in zip(
-         self.sliding_window_sizes, self.pos_irs, self.neg_irs):
-            window_sum_function = get_simple_window_sum_function(
-                                        sliding_window_size)
-            window_sums_rows = window_sum_function(arrs=score_track)
-            transformed_track = []
-            for row_idx, window_sums_row in enumerate(window_sums_rows): 
-                transformed_row = np.zeros_like(window_sums_row)
-
-                pos_val_indices = np.nonzero(window_sums_row >= 0)[0] 
-                pos_vals = window_sums_row[pos_val_indices]
-                transformed_pos_vals = pos_ir.transform(pos_vals)
-                transformed_row[pos_val_indices] = transformed_pos_vals
-
-                neg_val_indices = np.nonzero(window_sums_row < 0)[0]
-                if (len(neg_val_indices) > 0 and neg_ir is not None):
-                    neg_vals = window_sums_row[neg_val_indices]
-                    transformed_neg_vals = neg_ir.transform(neg_vals) 
-                    transformed_row[neg_val_indices] = -transformed_neg_vals
-
-                #add padding to make up for entries lost due to the sliding
-                # windows
-                transformed_row = np.pad(transformed_row,
-                    pad_width=(
-                        (int((sliding_window_size-1)/2.0),
-                         (sliding_window_size-1)
-                          -int((sliding_window_size-1)/2.0))))
-                assert len(transformed_row)==len(score_track[row_idx]),\
-                    (len(transformed_row), len(score_track[row_idx]))
-                transformed_track.append(transformed_row) 
-            percentile_transformed_tracks.append(transformed_track)
-        #ultimately, return the result of taking the value that has
-        # the maximum absolute value over all the different transformed tracks
-        bestwindowvals = [valatmaxabs(
-                          np.array([percentile_transformed_tracks[i][j]
-                          for i in range(len(percentile_transformed_tracks))]))
-                        for j in range(len(score_track))]
-        #return both the best window values AND the idx of the window size,
-        # as I think the latter is also helpful to know
-        return [x[0] for x in bestwindowvals], [x[1] for x in bestwindowvals] 
-
-
-#sliding in this case would be a list of values
-class VariableWindowAroundChunks(AbstractCoordProducer):
-    count = 0
-    def __init__(self, sliding, flank, suppress, target_fdr,
-                       min_passing_windows_frac, max_passing_windows_frac,
-                       separate_pos_neg_thresholds,
-                       max_seqlets_total,
-                       progress_update=5000,
-                       verbose=True): 
-        self.sliding = sliding
-        self.percentile_transformer = VariableWindowWidthPercentileTransform(
-                sliding_window_sizes=self.sliding)
-        self.flank = flank
-        self.suppress = suppress
-        self.target_fdr = target_fdr
-        assert max_passing_windows_frac >= min_passing_windows_frac
-        self.min_passing_windows_frac = min_passing_windows_frac 
-        self.max_passing_windows_frac = max_passing_windows_frac
-        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
-        self.max_seqlets_total = None
-        self.progress_update = progress_update
-        self.verbose = verbose
-        self.plot_save_dir = plot_save_dir
+        return pos_irs, neg_irs
 
     def __call__(self, score_track, null_track, tnt_results=None):
         if (tnt_results is None):
-            self.percentile_transformer.fit(score_track=score_track,
-                                            null_track=null_track)
-            transformed_score_track =\
-                self.percentile_transformer.transform(score_track=score_track) 
+            pos_irs, neg_irs = self.fit_pos_and_neg_irs(
+                                      score_track=score_track,
+                                      null_track=null_track)
+            precision_transformer = PrecisionValTransformer(
+                                        pos_irs=pos_irs,
+                                        neg_irs=neg_irs) 
+            (precisiontransformed_score_track,
+             precisiontransformed_bestwindowsizeidxs) =\
+                precision_transformer.transform_score_track(
+                    score_track=score_track) 
+
+            subsampled_prec_vals = subsample_if_large(
+                precisiontransformed_score_track.ravel()) 
+
+            #Pick a threshold according the the precisiontransformed score track
+            pos_threshold = TODO
+            neg_threshold = TODO
+
+            pos_threshold, neg_threshold =\
+                refine_thresholds_based_on_frac_passing(
+                    vals=subsampled_prec_vals,
+                    pos_threshold=pos_threshold,
+                    neg_threshold=neg_threshold,
+                    min_passing_windows_frac=self.min_passing_windows_frac,
+                    max_passing_windows_frac=self.max_passing_windows_frac,
+                    separate_pos_neg_thresholds) 
+
+            tnt_results = BasicTransformAndThresholdResults(
+                transformed_neg_threshold=pos_threshold,
+                transformed_pos_threshold=neg_threshold,
+                val_transformer=precision_transformer) 
+
+        else:
+            precision_transformer = tnt_results.precision_transformer
+            (precisiontransformed_score_track,
+             precisiontransformed_bestwindowsizeidxs) =\
+                precision_transformer.transform_score_track(
+                    score_track=score_track) 
+
+        #TODO: look into padding situation
+        assert False #look into padding situation...identify_coords
+        #is expecting something that has already been processed with
+        #sliding windows of size windowsize
+        coords = identify_coords(
+            score_track=precisiontransformed_score_track,
+            pos_threshold=tnt_results.transformed_pos_threshold,
+            neg_threshold=tnt_results.transformed_neg_threshold,
+            windowsize=max(self.sliding),
+            flank=self.flank,
+            suppress=self.suppress,
+            max_seqlets_total=self.max_seqlets_total,
+            verbose=self.verbose,
+            other_info_tracks={'best_window_idx':
+                               precisiontransformed_bestwindowsizeidxs})
+        
+        return CoordProducerResults(
+                    coords=coords,
+                    tnt_results=tnt_results) 
 
 
+#identify_coords is expecting something that has already been processed
+# with sliding windows of size windowsize
 def identify_coords(score_track, pos_threshold, neg_threshold,
-                    windowsize, flank, suppress, max_seqlets_total, verbose):
+                    windowsize, flank, suppress,
+                    max_seqlets_total, verbose, other_info_tracks={}):
 
     #cp_score_track = 'copy' of the score track, which can be modified as
     # coordinates are identified
@@ -532,7 +590,10 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
                     example_idx=example_idx,
                     start=argmax-flank,
                     end=argmax+windowsize+flank,
-                    score=score_track[example_idx][argmax]) 
+                    score=score_track[example_idx][argmax],
+                    other_info = dict([
+                     (track_name, track[example_idx][argmax])
+                     for (track_name, track) in other_info_tracks.items()])) 
                 assert (coord.score > pos_threshold
                         or coord.score < neg_threshold)
                 coords.append(coord)
@@ -559,6 +620,60 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
                            [:max_seqlets_total]
     
     return coords
+
+
+def refine_thresholds_based_on_frac_passing(
+    vals, pos_threshold, neg_threshold,
+    min_passing_windows_frac, max_passing_windows_frac,
+    separate_pos_neg_thresholds, verbose):
+
+    frac_passing_windows =(
+        sum(orig_vals >= pos_threshold)
+         + sum(orig_vals <= neg_threshold))/float(len(orig_vals))
+
+    if (verbose):
+        print("Thresholds from null dist were",
+              neg_threshold," and ",pos_threshold)
+
+    #adjust the thresholds if the fall outside the min/max
+    # windows frac
+    if (frac_passing_windows < min_passing_windows_frac):
+        if (verbose):
+            print("Passing windows frac was",
+                  frac_passing_windows,", which is below ",
+                  min_passing_windows_frac,"; adjusting")
+        if (separate_pos_neg_thresholds):
+            pos_threshold = np.percentile(
+                a=[x for x in orig_vals if x > 0],
+                q=100*(1-min_passing_windows_frac))
+            neg_threshold = np.percentile(
+                a=[x for x in orig_vals if x < 0],
+                q=100*(min_passing_windows_frac))
+        else:
+            pos_threshold = np.percentile(
+                a=np.abs(orig_vals),
+                q=100*(1-min_passing_windows_frac)) 
+            neg_threshold = -pos_threshold
+
+    if (frac_passing_windows > max_passing_windows_frac):
+        if (verbose):
+            print("Passing windows frac was",
+                  frac_passing_windows,", which is above ",
+                  max_passing_windows_frac,"; adjusting")
+        if (separate_pos_neg_thresholds):
+            pos_threshold = np.percentile(
+                a=[x for x in orig_vals if x > 0],
+                q=100*(1-max_passing_windows_frac))
+            neg_threshold = np.percentile(
+                a=[x for x in orig_vals if x < 0],
+                q=100*(max_passing_windows_frac))
+        else:
+            pos_threshold = np.percentile(
+                a=np.abs(orig_vals),
+                q=100*(1-max_passing_windows_frac)) 
+            neg_threshold = -pos_threshold
+
+    return pos_threshold, neg_threshold
                     
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
@@ -656,7 +771,9 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 sys.stdout.flush()
             orig_vals = list(
                 np.concatenate(original_summed_score_track, axis=0))
-            pos_ir, neg_ir, pos_orig_vals, neg_orig_vals =\
+
+            #Note that orig_vals may have been subsampled at this point
+            pos_ir, neg_ir, subsampled_orig_vals =\
                 get_isotonic_regression_classifier(
                     orig_vals=orig_vals,
                     null_vals=null_vals)
@@ -674,50 +791,15 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                   >= (1-self.target_fdr)]+[neg_orig_vals[-1]])[0]
             else:
                 neg_threshold = -np.inf
-            frac_passing_windows =(
-                sum(pos_orig_vals >= pos_threshold)
-                 + sum(neg_orig_vals <= neg_threshold))/float(len(orig_vals))
 
-            if (self.verbose):
-                print("Thresholds from null dist were",
-                      neg_threshold," and ",pos_threshold)
-
-            #adjust the thresholds if the fall outside the min/max
-            # windows frac
-            if (frac_passing_windows < self.min_passing_windows_frac):
-                if (self.verbose):
-                    print("Passing windows frac was",
-                          frac_passing_windows,", which is below ",
-                          self.min_passing_windows_frac,"; adjusting")
-                if (self.separate_pos_neg_thresholds):
-                    pos_threshold = np.percentile(
-                        a=[x for x in orig_vals if x > 0],
-                        q=100*(1-self.min_passing_windows_frac))
-                    neg_threshold = np.percentile(
-                        a=[x for x in orig_vals if x < 0],
-                        q=100*(self.min_passing_windows_frac))
-                else:
-                    pos_threshold = np.percentile(
-                        a=np.abs(orig_vals),
-                        q=100*(1-self.min_passing_windows_frac)) 
-                    neg_threshold = -pos_threshold
-            if (frac_passing_windows > self.max_passing_windows_frac):
-                if (self.verbose):
-                    print("Passing windows frac was",
-                          frac_passing_windows,", which is above ",
-                          self.max_passing_windows_frac,"; adjusting")
-                if (self.separate_pos_neg_thresholds):
-                    pos_threshold = np.percentile(
-                        a=[x for x in orig_vals if x > 0],
-                        q=100*(1-self.max_passing_windows_frac))
-                    neg_threshold = np.percentile(
-                        a=[x for x in orig_vals if x < 0],
-                        q=100*(self.max_passing_windows_frac))
-                else:
-                    pos_threshold = np.percentile(
-                        a=np.abs(orig_vals),
-                        q=100*(1-self.max_passing_windows_frac)) 
-                    neg_threshold = -pos_threshold
+            pos_threshold, neg_threshold =\
+                refine_thresholds_based_on_frac_passing(
+                    vals=subsampled_orig_vals,
+                    pos_threshold=pos_threshold,
+                    neg_threshold=neg_threshold,
+                    min_passing_windows_frac=self.min_passing_windows_frac,
+                    max_passing_windows_frac=self.max_passing_windows_frac,
+                    separate_pos_neg_thresholds) 
 
             if (self.separate_pos_neg_thresholds):
                 val_transformer = SignedPercentileValTransformer(
@@ -782,7 +864,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 print("saving plot to " + fname)
                 FixedWindowAroundChunks.count += 1
 
-            tnt_results = TransformAndThresholdResults(
+            tnt_results = FWACTransformAndThresholdResults(
                 neg_threshold=neg_threshold,
                 transformed_neg_threshold=val_transformer(neg_threshold),
                 pos_threshold=pos_threshold,
