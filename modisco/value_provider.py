@@ -64,8 +64,8 @@ class TransformCentralWindowValueProvider(AbstractValueProvider):
         grp.attrs["class"] = type(self).__name__
         grp.attrs["track_name"] = self.track_name
         if (hasattr(self.central_window, '__iter__')):
-            grp.create_dataset("window_widths",
-                               data=np.array(self.window_widths))
+            grp.create_dataset("central_window",
+                               data=np.array(self.central_window))
         else:
             grp.attrs["central_window"] = self.central_window
         self.val_transformer.save_hdf5(grp.create_group("val_transformer")) 
@@ -98,6 +98,11 @@ class AbstractValTransformer(object):
         return the_class.from_hdf5(grp) 
 
 
+def valatmaxabs(arrs):
+    idxs = np.argmax(np.abs(arrs), axis=0)
+    return arrs[idxs, np.arange(len(arrs[0]))], idxs
+
+
 class PrecisionValTransformer(AbstractValTransformer):
 
     def __init__(self, sliding_window_sizes, pos_irs, neg_irs):
@@ -115,7 +120,7 @@ class PrecisionValTransformer(AbstractValTransformer):
         from .coordproducers import get_simple_window_sum_function
         percentile_transformed_tracks = []
         for sliding_window_size, pos_ir, neg_ir in zip(
-                         self.sliding_window_size, self.pos_irs, self.neg_irs):
+                        self.sliding_window_sizes, self.pos_irs, self.neg_irs):
             window_sum_function = get_simple_window_sum_function(
                                         sliding_window_size)
             window_sums_rows = window_sum_function(arrs=score_track)
@@ -161,13 +166,13 @@ class PrecisionValTransformer(AbstractValTransformer):
     def __call__(self, val): 
         assert len(val)==len(self.pos_irs)
         transformed_vals = []
-        for (a_val, pos_r, neg_ir) in zip(val, self.pos_irs, self.neg_irs):
+        for (a_val, pos_ir, neg_ir) in zip(val, self.pos_irs, self.neg_irs):
             if (a_val >= 0):
                 transformed_val = pos_ir.transform([a_val])[0]
             else:
                 transformed_val = -neg_ir.transform([a_val])[0] 
             transformed_vals.append(transformed_val)
-        return vals[np.argmax(np.abs(transformed_vals))] 
+        return transformed_vals[np.argmax(np.abs(transformed_vals))] 
 
     def save_hdf5(self, grp):
         grp.attrs["class"] = type(self).__name__

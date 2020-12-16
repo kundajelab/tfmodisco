@@ -737,14 +737,15 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 if (self.verbose):
                     print("len(seqlets) is 0 - bailing!")
                 return SeqletsToPatternsResults(
-                        patterns=None,
-                        seqlets=None,
-                        affmat=None,
                         each_round_initcluster_motifs=None,
+                        patterns=None,
                         patterns_withoutreassignment=None,
+                        pattern_merge_hierarchy=None,
                         cluster_results=None, 
                         total_time_taken=None,
-                        success=False)
+                        success=False,
+                        seqlets=None,
+                        affmat=None)
 
             if (self.verbose):
                 print("(Round "+str(round_num)+
@@ -896,12 +897,15 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             if (self.verbose):
                 print("No more surviving patterns - bailing!")
             return SeqletsToPatternsResults(
+                    each_round_initcluster_motifs=None,
                     patterns=None,
-                    seqlets=None,
-                    affmat=None,
+                    patterns_withoutreassignment=None,
+                    pattern_merge_hierarchy=None,
                     cluster_results=None, 
                     total_time_taken=None,
-                    success=False)
+                    success=False,
+                    seqlets=None,
+                    affmat=None)
 
         #Now start merging patterns 
         if (self.verbose):
