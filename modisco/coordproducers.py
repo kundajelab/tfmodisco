@@ -494,6 +494,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                                       score_track=score_track,
                                       null_track=null_track)
             precision_transformer = PrecisionValTransformer(
+                                        sliding_window_sizes=self.sliding,
                                         pos_irs=pos_irs,
                                         neg_irs=neg_irs) 
             (precisiontransformed_score_track,
@@ -505,8 +506,8 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                 precisiontransformed_score_track.ravel()) 
 
             #Pick a threshold according the the precisiontransformed score track
-            pos_threshold = TODO
-            neg_threshold = TODO
+            pos_threshold = (1-self.target_fdr)
+            neg_threshold = -(1-self.target_fdr)
 
             pos_threshold, neg_threshold =\
                 refine_thresholds_based_on_frac_passing(
@@ -529,12 +530,15 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                 precision_transformer.transform_score_track(
                     score_track=score_track) 
 
-        #TODO: look into padding situation
-        assert False #look into padding situation...identify_coords
-        #is expecting something that has already been processed with
-        #sliding windows of size windowsize
+        #Need to remove padding because identify_coords is assumed to
+        # operate on a scoretrack that has already been processed with
+        # a sliding window of windowsize (and assumes that partial windows
+        # were not included)
+        left_padding_to_remove = int((max(self.sliding)-1)/2)
+        right_padding_to_remove = (max(self.sliding)-1)-left_padding_to_remove
         coords = identify_coords(
-            score_track=precisiontransformed_score_track,
+            score_track=precisiontransformed_score_track[
+                         :,left_padding_to_remove:-right_padding_to_remove],
             pos_threshold=tnt_results.transformed_pos_threshold,
             neg_threshold=tnt_results.transformed_neg_threshold,
             windowsize=max(self.sliding),
@@ -543,7 +547,8 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
             max_seqlets_total=self.max_seqlets_total,
             verbose=self.verbose,
             other_info_tracks={'best_window_idx':
-                               precisiontransformed_bestwindowsizeidxs})
+             precisiontransformed_bestwindowsizeidxs[:,
+              left_padding_to_remove:-right_padding_to_remove]})
         
         return CoordProducerResults(
                     coords=coords,
@@ -555,6 +560,9 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
 def identify_coords(score_track, pos_threshold, neg_threshold,
                     windowsize, flank, suppress,
                     max_seqlets_total, verbose, other_info_tracks={}):
+
+    for other_info_track in other_info_tracks.values():
+        assert other_info_track.shape==score_track.shape
 
     #cp_score_track = 'copy' of the score track, which can be modified as
     # coordinates are identified
@@ -715,7 +723,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             max_seqlets_total = grp.attrs["max_seqlets_total"]
         else:
             max_seqlets_total = None
-        #TODO: load min_seqlets feature
         progress_update = grp.attrs["progress_update"]
         verbose = grp.attrs["verbose"]
         return cls(sliding=sliding, flank=flank, suppress=suppress,
@@ -736,7 +743,6 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         grp.attrs["max_passing_windows_frac"] = self.max_passing_windows_frac
         grp.attrs["separate_pos_neg_thresholds"] =\
             self.separate_pos_neg_thresholds
-        #TODO: save min_seqlets feature
         if (self.max_seqlets_total is not None):
             grp.attrs["max_seqlets_total"] = self.max_seqlets_total 
         grp.attrs["progress_update"] = self.progress_update
