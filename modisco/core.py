@@ -86,10 +86,10 @@ class DataTrack(object):
 
             fwd = self.fwd_tracks[coor.example_idx][max(coor.start,0):coor.end]
             rev = (self.rev_tracks[
-                         coor.example_idx][
-                         (len(self.rev_tracks[coor.example_idx])-coor.end):
-                         (len(self.rev_tracks[coor.example_idx])-coor.start)]
-                         if self.rev_tracks is not None else None)
+                        coor.example_idx][
+                        max(len(self.rev_tracks[coor.example_idx])-coor.end,0):
+                        (len(self.rev_tracks[coor.example_idx])-coor.start)]
+                        if self.rev_tracks is not None else None)
 
             if (left_pad_needed > 0 or right_pad_needed > 0):
                 print("Applying left/right pad of",left_pad_needed,"and",
@@ -99,12 +99,14 @@ class DataTrack(object):
                       len(self.fwd_tracks[coor.example_idx]))
                 fwd = np.pad(array=fwd,
                              pad_width=((left_pad_needed, right_pad_needed),
-                                        (0,0)))
+                                        (0,0)),
+                             mode="constant")
                 if (self.rev_tracks is not None):
                     rev = np.pad(array=rev,
                                  pad_width=(
                                   (right_pad_needed, left_pad_needed),
-                                  (0,0)))
+                                  (0,0)),
+                                 mode="constant")
             snippet = Snippet(
                     fwd=fwd,
                     rev=rev,
