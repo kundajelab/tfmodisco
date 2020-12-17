@@ -34,7 +34,10 @@ class AbstractTransformAndThresholdResults(object):
 
     @classmethod
     def from_hdf5(cls, grp):
-        the_class = eval(grp.attrs["class"])
+        if "class" not in grp.attrs:
+            the_class =  FWACTransformAndThresholdResults
+        else:
+            the_class = eval(grp.attrs["class"])
         if (the_class.__name__ != cls.__name__):
             return the_class.from_hdf5(grp) 
 

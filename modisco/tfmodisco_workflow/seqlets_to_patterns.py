@@ -570,10 +570,13 @@ class SeqletsToPatternsResults(object):
                 patterns_withoutreassignment = []
             cluster_results = None
             total_time_taken = grp.attrs["total_time_taken"]
-            pattern_merge_hierarchy =\
-                aggregator.PatternMergeHierarchy.from_hdf5(
-                    grp=grp["pattern_merge_hierarchy"],
-                    track_set=track_set)
+            if ("pattern_merge_hierarchy" in grp):
+                pattern_merge_hierarchy =\
+                    aggregator.PatternMergeHierarchy.from_hdf5(
+                        grp=grp["pattern_merge_hierarchy"],
+                        track_set=track_set)
+            else:
+                pattern_merge_hierarchy = None
             return cls(
                 each_round_initcluster_motifs=each_round_initcluster_motifs,
                 patterns=patterns,
