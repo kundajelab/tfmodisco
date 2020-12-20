@@ -880,7 +880,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     #do a check about the per-example sum
                     per_ex_sum_pattern1_zeromask = (np.sum(np.abs(
                         flat_pattern1_fwdseqdata),axis=-1))==0
-                    per_ex_sum_pattern2 = (np.sum(np.abs(
+                    per_ex_sum_pattern2_zeromask = (np.sum(np.abs(
                         flat_pattern2_fwdseqdata),axis=-1))==0
                     if (np.sum(per_ex_sum_pattern1_zeromask) > 0):
                         print("WARNING: Zeros present for pattern1 coords")
