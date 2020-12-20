@@ -712,10 +712,12 @@ def compute_continjacc_vec_vs_arr(vec, arr):
     union = np.sum(np.maximum(abs_vec[None,:], abs_arr), axis=-1)
     intersection = np.sum((np.minimum(abs_vec[None,:], abs_arr)
                     *np.sign(vec[None,:])*np.sign(arr)), axis=-1)
+    zeros_mask = (union==0)
+    union = (union*(zeros_mask==False) + 1e-7*zeros_mask)
     return intersection/union
 
 
-def compute_continjacc_arr1_vs_arr2(arr1, arr2, n_cores):
+def compute_continjacc_arr1_vs_arr2(arr1, arr2, n_cores): 
     return np.array(
         Parallel(n_jobs=n_cores)(
             delayed(compute_continjacc_vec_vs_arr)(vec, arr2) for vec in arr1
@@ -873,6 +875,25 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         flat_pattern1_revseqdata = None 
                         flat_pattern2_revseqdata = None 
                         assert rc==False
+
+                    #Do a check for all-zero scores, print warning
+                    #do a check about the per-example sum
+                    per_ex_sum_pattern1_zeromask = (np.sum(np.abs(
+                        flat_pattern1_fwdseqdata),axis=-1))==0
+                    per_ex_sum_pattern2_zeromask = (np.sum(np.abs(
+                        flat_pattern2_fwdseqdata),axis=-1))==0
+                    if (np.sum(per_ex_sum_pattern1_zeromask) > 0):
+                        print("WARNING: Zeros present for pattern1 coords")
+                        zero_seqlet_locs =\
+                            np.nonzero(per_ex_sum_pattern1_zeromask) 
+                        print("\n".join([str(s.coor) for s in
+                                         subsample_pattern1.seqlets]))
+                    if (np.sum(per_ex_sum_pattern2_zeromask) > 0):
+                        print("WARNING: Zeros present for pattern2 coords")
+                        zero_seqlet_locs =\
+                            np.nonzero(per_ex_sum_pattern2_zeromask)
+                        print("\n".join([str(coor) for coor in
+                                         pattern2_coords]))
 
                     between_pattern_sims =\
                      compute_continjacc_arr1_vs_arr2fwdandrev(
