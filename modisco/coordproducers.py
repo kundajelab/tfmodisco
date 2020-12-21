@@ -385,33 +385,76 @@ def subsample_if_large(arr):
     return arr
 
 
+def irval_to_probpos(irval, frac_neg):
+    #n(x):= pdf of null dist (negatives)
+    #p(x):= pdf of positive distribution
+    #f_p:= fraction of positives
+    #f_n:= fraction of negatives = 1-f_p
+    #o(x):= pdf of observed distribution = n(x)f_n + p(x)f_p
+    #The isotonic regression produces a(x) = o(x)/[o(x) + n(x)]
+    # o(x)/[o(x) + n(x)] = [n(x)f_n + o(x)f_p]/[n(x)(1+f_n) + p(x)]
+    # a(x)[n(x)(1+f_n) + p(x)f_p] = n(x)f_n + p(x)f_p
+    # a(x)n(x)(1+f_n) - n(x)f_n = p(x)f_p - a(x)p(x)f_p
+    # n(x)[a(x)(1+f_n) - f_n] = p(x)f_p[1 - a(x)]
+    # [a(x)/f_n + (a(x)-1)]/[1-a(x)] = (p(x)f_p)/(n(x)f_n) = r(x)
+    #p_pos = 1 / (1 + 1/r(x))
+    #      = [a(x)/f_n + (a(x)-1)]/[a(x)/f_n + (a(x)-1) + (1-a(x))]
+    #      = [a(x)/f_n + a(x)-1]/[a(x)/f_n]
+    #      = [a(x) + f_n(a(x)-1)]/a(x)
+    #      = 1 + f_n(a(x)-1)/a(x)
+    #      = 1 + f_n(1 - 1/a(x))
+    #If solving for p_pos=0, we have -1/(1 - 1/a(x)) = f_n
+    #As f_n --> 100%, p_pos --> 2 - 1/a(x); this assumes max(a(x)) = 0.5
+    return np.minimum(np.maximum(1 + frac_neg*(1 - (1/irval)), 0.0), 1.0)
+
+
 class SavableIsotonicRegression(object):
 
-    def __init__(self, origvals, nullvals, increasing):
+    def __init__(self, origvals, nullvals, increasing, min_frac_neg=0.99):
         self.origvals = origvals 
         self.nullvals = nullvals
         self.increasing = increasing
-        self.ir = IsotonicRegression(out_of_bounds='clip').fit(
+        self.min_frac_neg = min_frac_neg
+        self.ir = IsotonicRegression(out_of_bounds='clip',
+                                     increasing=increasing).fit(
             X=np.concatenate([self.origvals, self.nullvals], axis=0),
             y=([1.0 for x in self.origvals] + [0.0 for x in self.nullvals]),
             sample_weight=([1.0 for x in self.origvals]
                            +[float(len(self.origvals))/len(self.nullvals)
                              for x in self.nullvals]))
-    
+        #Infer frac_pos based on the minimum value of the ir probs
+        #See derivation in irval_to_probpos function
+        min_prec_x = self.ir.X_min_ if self.increasing else self.ir.X_max_ 
+        min_precision = self.ir.transform([min_prec_x])[0]
+        implied_frac_neg = -1/(1-(1/min_precision))
+        print("For increasing =",increasing,", the minimum IR precision was",
+              min_precision,"occurring at",min_prec_x,
+              "implying a frac_neg",
+              "of",implied_frac_neg)
+        if (implied_frac_neg > 1.0 or implied_frac_neg < self.min_frac_neg):
+            implied_frac_neg = max(min(1.0,implied_frac_neg),
+                                   self.min_frac_neg)
+            print("Adjusted frac neg is",implied_frac_neg)
+        self.implied_frac_neg = implied_frac_neg 
+         
     def transform(self, vals):
-        return self.ir.transform(vals) 
+        return irval_to_probpos(self.ir.transform(vals),
+                                frac_neg=self.implied_frac_neg)
 
     def save_hdf5(self, grp):
         grp.attrs['increasing'] = self.increasing
+        grp.attrs['min_frac_neg'] = self.min_frac_neg
         grp.create_dataset('origvals', data=self.origvals)
         grp.create_dataset('nullvals', data=self.nullvals)
 
     @classmethod
     def from_hdf5(cls, grp):
         increasing = grp.attrs['increasing']
+        min_frac_neg = grp.attrs['min_frac_neg']
         origvals = np.array(grp['origvals'])
         nullvals = np.array(grp['nullvals'])
-        return cls(origvals=origvals, nullvals=nullvals, increasing=increasing) 
+        return cls(origvals=origvals, nullvals=nullvals,
+                   increasing=increasing, min_frac_neg=min_frac_neg) 
 
 
 def get_isotonic_regression_classifier(orig_vals, null_vals):
@@ -428,12 +471,12 @@ def get_isotonic_regression_classifier(orig_vals, null_vals):
                 nullvals=pos_null_vals, increasing=True) 
 
     if (len(neg_orig_vals) > 0):
-        neg_ir = SavableIsotonicRegression(origvals=pos_orig_vals,
-                    nullvals=pos_null_vals, increasing=False)
+        neg_ir = SavableIsotonicRegression(origvals=neg_orig_vals,
+                    nullvals=neg_null_vals, increasing=False)
     else:
         neg_ir = None
 
-    return pos_ir, neg_ir, orig_vals
+    return pos_ir, neg_ir, orig_vals, null_vals
 
 
 #sliding in this case would be a list of values
@@ -520,14 +563,23 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
             sys.stdout.flush()
 
             orig_vals = np.concatenate(window_sums_rows, axis=0)
-            from matplotlib import pyplot as plt
-            plt.hist(orig_vals, bins=100, density=True, alpha=0.5)
-            plt.hist(null_vals, bins=100, density=True, alpha=0.5)
-            plt.show()
 
-            pos_ir, neg_ir, _ = get_isotonic_regression_classifier(
+            pos_ir, neg_ir, subsampled_orig_vals, subsampled_null_vals =\
+                get_isotonic_regression_classifier(
                     orig_vals=np.concatenate(window_sums_rows, axis=0),
                     null_vals=null_vals)
+
+
+            make_nulldist_figure(orig_vals=subsampled_orig_vals,
+                                 null_vals=subsampled_null_vals,
+                                 pos_ir=pos_ir, neg_ir=neg_ir,
+                                 pos_threshold=None,
+                                 neg_threshold=None)
+            show_or_savefig(plot_save_dir=self.plot_save_dir,
+                           filename="scoredist_window"
+                                 +str(sliding_window_size)+"_"
+                                 +str(VariableWindowAroundChunks.count)+".png")
+
             pos_irs.append(pos_ir)
             neg_irs.append(neg_ir)
         return pos_irs, neg_irs
@@ -551,7 +603,9 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
 
             from matplotlib import pyplot as plt
             plt.hist(subsampled_prec_vals, bins=50)
-            plt.show()
+            show_or_savefig(plot_save_dir=self.plot_save_dir,
+                           filename="final_prec_vals_dist"
+                                 +str(VariableWindowAroundChunks.count)+".png")
 
             #Pick a threshold according the the precisiontransformed score track
             pos_threshold = (1-self.target_fdr)
@@ -598,6 +652,8 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
             other_info_tracks={'best_window_idx':
              [x[left_padding_to_remove:-right_padding_to_remove] for x in
               precisiontransformed_bestwindowsizeidxs]})
+
+        VariableWindowAroundChunks.count += 1
         
         return CoordProducerResults(
                     coords=coords,
@@ -694,6 +750,12 @@ def refine_thresholds_based_on_frac_passing(
               neg_threshold," and ",pos_threshold,
               "with frac passing", frac_passing_windows)
 
+    pos_vals = [x for x in vals if x >= 0]
+    neg_vals = [x for x in vals if x < 0]
+    #deal with edge case of len < 0
+    pos_vals = [0] if len(pos_vals)==0 else pos_vals
+    neg_vals = [0] if len(neg_vals)==0 else neg_vals
+
     #adjust the thresholds if the fall outside the min/max
     # windows frac
     if (frac_passing_windows < min_passing_windows_frac):
@@ -703,10 +765,10 @@ def refine_thresholds_based_on_frac_passing(
                   min_passing_windows_frac,"; adjusting")
         if (separate_pos_neg_thresholds):
             pos_threshold = np.percentile(
-                a=[x for x in vals if x > 0],
+                a=pos_vals,
                 q=100*(1-min_passing_windows_frac))
             neg_threshold = np.percentile(
-                a=[x for x in vals if x < 0],
+                a=neg_vals,
                 q=100*(min_passing_windows_frac))
         else:
             pos_threshold = np.percentile(
@@ -721,10 +783,10 @@ def refine_thresholds_based_on_frac_passing(
                   max_passing_windows_frac,"; adjusting")
         if (separate_pos_neg_thresholds):
             pos_threshold = np.percentile(
-                a=[x for x in vals if x > 0],
+                a=pos_vals,
                 q=100*(1-max_passing_windows_frac))
             neg_threshold = np.percentile(
-                a=[x for x in vals if x < 0],
+                a=neg_vals,
                 q=100*(max_passing_windows_frac))
         else:
             pos_threshold = np.percentile(
@@ -733,7 +795,48 @@ def refine_thresholds_based_on_frac_passing(
             neg_threshold = -pos_threshold
 
     return pos_threshold, neg_threshold
-                    
+
+
+def show_or_savefig(plot_save_dir, filename):
+    from matplotlib import pyplot as plt
+    if plt.isinteractive():
+        plt.show()
+    else:
+        import os, errno
+        try:
+            os.makedirs(plot_save_dir)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+        fname = (plot_save_dir+"/"+filename)
+        plt.savefig(fname)
+        print("saving plot to " + fname)
+
+
+def make_nulldist_figure(orig_vals, null_vals, pos_ir, neg_ir,
+                         pos_threshold, neg_threshold):
+    from matplotlib import pyplot as plt
+    fig,ax1 = plt.subplots()
+
+    orig_vals = np.array(sorted(orig_vals))
+
+    ax1.hist(orig_vals, bins=100, density=True, alpha=0.5) 
+    ax1.hist(null_vals, bins=100, density=True, alpha=0.5) 
+    ax1.set_ylabel("Probability density\n(blue=foreground, orange=null)")
+
+    precisions = pos_ir.transform(orig_vals)
+    if (neg_ir is not None):
+        precisions = np.maximum(precisions, neg_ir.transform(orig_vals))
+
+    ax2 = ax1.twinx() 
+    ax2.plot(orig_vals, precisions)
+    if (pos_threshold is not None):
+        ax2.plot([pos_threshold, pos_threshold], [0.0, 1.0], color="red")
+    if (neg_threshold is not None):
+        ax2.plot([neg_threshold, neg_threshold], [0.0, 1.0], color="red")
+    ax2.set_ylabel("Estimated foreground precision")
+    ax2.set_ylim(0.0, 1.02)
+                
 
 class FixedWindowAroundChunks(AbstractCoordProducer):
     count = 0
@@ -830,7 +933,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                 np.concatenate(original_summed_score_track, axis=0))
 
             #Note that orig_vals may have been subsampled at this point
-            pos_ir, neg_ir, subsampled_orig_vals =\
+            pos_ir, neg_ir, subsampled_orig_vals, subsampled_null_vals =\
                 get_isotonic_regression_classifier(
                     orig_vals=orig_vals,
                     null_vals=null_vals)
@@ -883,54 +986,16 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                       val_transformer(neg_threshold)," and ",
                       val_transformer(pos_threshold))
 
-            from matplotlib import pyplot as plt
+            make_nulldist_figure(orig_vals=subsampled_orig_vals,
+                                 null_vals=subsampled_null_vals,
+                                 pos_ir=pos_ir, neg_ir=neg_ir,
+                                 pos_threshold=pos_threshold,
+                                 neg_threshold=neg_threshold)
 
-            plt.figure()
-            np.random.shuffle(orig_vals)
-            hist, histbins, _ = plt.hist(orig_vals[:min(len(orig_vals),
-                                                        len(null_vals))],
-                                         bins=100, alpha=0.5)
-            np.random.shuffle(null_vals)
-            _, _, _ = plt.hist(null_vals[:min(len(orig_vals),
-                                              len(null_vals))],
-                               bins=histbins, alpha=0.5)
-
-            bincenters = 0.5*(histbins[1:]+histbins[:-1])
-            poshistvals,posbins = zip(*[x for x in zip(hist,bincenters)
-                                         if x[1] > 0])
-            posbin_precisions = pos_ir.transform(posbins) 
-            plt.plot([pos_threshold, pos_threshold], [0, np.max(hist)],
-                     color="red")
-
-            if (len(subsampled_neg_orig_vals) > 0):
-                neghistvals, negbins = zip(*[x for x in zip(hist,bincenters)
-                                             if x[1] < 0])
-                negbin_precisions = neg_ir.transform(negbins) 
-                plt.plot(list(negbins)+list(posbins),
-                     (list(np.minimum(neghistvals,
-                                     neghistvals*(1-negbin_precisions)/
-                                                 (negbin_precisions+1E-7)))+
-                      list(np.minimum(poshistvals,
-                                      poshistvals*(1-posbin_precisions)/
-                                                 (posbin_precisions+1E-7)))),
-                         color="purple")
-                plt.plot([neg_threshold, neg_threshold], [0, np.max(hist)],
-                         color="red")
-
-            if plt.isinteractive():
-                plt.show()
-            else:
-                import os, errno
-                try:
-                    os.makedirs(self.plot_save_dir)
-                except OSError as e:
-                    if e.errno != errno.EEXIST:
-                        raise
-                fname = (self.plot_save_dir+"/scoredist_" +
-                         str(FixedWindowAroundChunks.count) + ".png")
-                plt.savefig(fname)
-                print("saving plot to " + fname)
-                FixedWindowAroundChunks.count += 1
+            show_or_savefig(plot_save_dir=self.plot_save_dir,
+                           filename="scoredist_"
+                                    +str(FixedWindowAroundChunks.count)+".png")
+            FixedWindowAroundChunks.count += 1
 
             tnt_results = FWACTransformAndThresholdResults(
                 neg_threshold=neg_threshold,

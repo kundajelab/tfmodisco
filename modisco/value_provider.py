@@ -101,7 +101,7 @@ class AbstractValTransformer(object):
 def valatmaxabs(arrs):
     idxs = np.argmax(np.abs(arrs), axis=0)
     return arrs[idxs, np.arange(len(arrs[0]))], idxs
-
+    
 
 class PrecisionValTransformer(AbstractValTransformer):
 
@@ -136,7 +136,7 @@ class PrecisionValTransformer(AbstractValTransformer):
                 neg_val_indices = np.nonzero(window_sums_row < 0)[0]
                 if (len(neg_val_indices) > 0 and neg_ir is not None):
                     neg_vals = window_sums_row[neg_val_indices]
-                    transformed_neg_vals = neg_ir.transform(neg_vals) 
+                    transformed_neg_vals = neg_ir.transform(neg_vals)
                     transformed_row[neg_val_indices] = -transformed_neg_vals
 
                 #add padding to make up for entries lost due to the sliding
