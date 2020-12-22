@@ -10,6 +10,7 @@ from .. import util
 from .. import visualization
 from matplotlib import pyplot as plt
 import sklearn
+from joblib import Parallel, delayed
 
 
 def flatten_seqlet_impscore_features(seqlet_impscores):
@@ -32,20 +33,21 @@ def compute_continjacc_sims_1vmany(vec1, vecs2, vecs2_weighting):
     sign_vec1, signs_vecs2 = np.sign(vec1), np.sign(vecs2)
     abs_vec1, abs_vecs2 = np.abs(vec1), np.abs(vecs2)
     intersection = np.sum((np.minimum(abs_vec1[None,:], abs_vecs2[:,:])
-                           *sign_vec1[None,:]*signs_vecs2[:,:])*vecs2_weighting, axis=-1)
-    union = np.sum(np.maximum(abs_vec1[None,:], abs_vecs2[:,:])*vecs2_weighting, axis=-1)
+                 *sign_vec1[None,:]*signs_vecs2[:,:])*vecs2_weighting, axis=-1)
+    union = np.sum(np.maximum(abs_vec1[None,:],
+                   abs_vecs2[:,:])*vecs2_weighting, axis=-1)
     return intersection/union
 
 
-def compute_pairwise_continjacc_sims(vecs1, vecs2, vecs2_weighting=None):
+def compute_pairwise_continjacc_sims(vecs1, vecs2, n_jobs,
+                                     vecs2_weighting=None):
     #normalize vecs2_weighting to sum to 1
     if (vecs2_weighting is None):
         vecs2_weighting = np.ones_like(vecs2)
     assert np.min(vecs2_weighting) >= 0
-    return np.array([compute_continjacc_sims_1vmany(
-                         vec1=vec1, vecs2=vecs2,
-                         vecs2_weighting=vecs2_weighting)
-                     for vec1 in vecs1])
+    return np.array(Parallel(n_jobs=n_jobs, verbose=True)(
+            delayed(compute_continjacc_sims_1vmany)(
+                     vec1, vecs2, vecs2_weighting) for vec1 in vecs1))
   
 
 def make_aggregated_seqlet(seqlets):
@@ -59,7 +61,7 @@ def make_aggregated_seqlet(seqlets):
     
 def get_exemplar_motifs(seqlets, pattern_comparison_settings,
                             seqlets_per_exemplar, max_exemplars,
-                            affmat_min_frac_of_median):
+                            affmat_min_frac_of_median, n_jobs):
     """This identifies the exemplars among seqlets
 
     Args:
@@ -75,6 +77,7 @@ def get_exemplar_motifs(seqlets, pattern_comparison_settings,
         affmat_min_frac_of_median: Kick out seqlets that have poor
             within-cluster similarity relative to the median within-cluster
             similarity.
+        n_jobs: number of jobs to launch when computing similarities
 
     Returns
         motifs: Exemplar motifs, sorted by number of seqlets (only exemplars
@@ -99,7 +102,9 @@ def get_exemplar_motifs(seqlets, pattern_comparison_settings,
     fwd_seqlet_data_vectors = flatten_seqlet_impscore_features(fwd_seqlet_data)
     #compute the affinity matrix
     orig_affmat = compute_pairwise_continjacc_sims(
-        vecs1=fwd_seqlet_data_vectors, vecs2=fwd_seqlet_data_vectors)
+        vecs1=fwd_seqlet_data_vectors,
+        vecs2=fwd_seqlet_data_vectors,
+        n_jobs=n_jobs)
     #Let's kick out seqlets for which the sum of the affmat across all
     # neighbors is less than affmat_min_frac_of_median
     sum_orig_affmat = np.sum(orig_affmat, axis=-1)
@@ -141,7 +146,7 @@ def get_exemplar_motifs(seqlets, pattern_comparison_settings,
 
 def get_exemplar_motifs_for_all_patterns(
     patterns, pattern_comparison_settings,
-    affmat_min_frac_of_median):
+    affmat_min_frac_of_median, n_jobs):
 
     print("Getting the exemplar motifs")
     #Take each pattern
@@ -159,7 +164,8 @@ def get_exemplar_motifs_for_all_patterns(
           pattern_comparison_settings=pattern_comparison_settings,
           seqlets_per_exemplar=30,
           max_exemplars=10,
-          affmat_min_frac_of_median=affmat_min_frac_of_median)
+          affmat_min_frac_of_median=affmat_min_frac_of_median,
+          n_jobs=n_jobs)
         exemplarmotifs_foreach_pattern.append(exemplarmotifs)
         exemplarmotifs_indices.append(len(exemplarmotifs_foreach_pattern))
         withinpattern_affmats.append(patternaffmat)
@@ -233,11 +239,12 @@ def get_coordinates_and_labels(shift_fraction, patterns, track_set):
 class FeaturesProducer(object):
 
     def __init__(self, motifs, pattern_comparison_settings,
-                       onehot_track_name, bg_freq):
+                       onehot_track_name, bg_freq, n_jobs):
         self.motifs = motifs
         self.pattern_comparison_settings = pattern_comparison_settings
         self.onehot_track_name = onehot_track_name
         self.bg_freq = bg_freq
+        self.n_jobs = n_jobs
 
         #Get imp scores data
         (allexemplarmotifs_impscoresdata_fwd,
@@ -287,7 +294,8 @@ class FeaturesProducer(object):
         features_matrix_fwd = compute_pairwise_continjacc_sims(
             vecs1=impscoresdata_fwd,
             vecs2=self.allexemplarmotifs_impscoresdata_fwd,
-            vecs2_weighting=self.per_position_ic_allexemplarmotifs_fwd)
+            vecs2_weighting=self.per_position_ic_allexemplarmotifs_fwd,
+            n_jobs=self.n_jobs)
         print("Took",time.time()-start,"s")
 
         #We ignore the rc because we want to annotate seqlets as
@@ -300,14 +308,23 @@ class InstanceScorer(object):
     def __init__(self, features_producer, classifier):
         self.features_producer = features_producer
         self.classifier = classifier
-   
-    def __call__(self, coordinates, track_set):
+
+    def _call_batch(self, coordinates, track_set):
         features_matrix = self.features_producer(coordinates=coordinates,
                                                  track_set=track_set) 
         if (hasattr(self.classifier, 'predict_proba')):
             return self.classifier.predict_proba(features_matrix)
         else:
             return self.classifier.predict(features_matrix)
+   
+    def __call__(self, coordinates, track_set, batch_size=None):
+        if (batch_size is None):
+            batch_size = len(coordinates)
+        to_return = []
+        for idx in range(0,len(coordinates), batch_size):
+           to_return.extend(self._call_batch(
+            coordinates=coordinates[idx:idx+batch_size], track_set=track_set))
+        return np.array(to_return)
 
     def compute_precrecthres_list(self, coordinates, track_set, labels):
         """
@@ -345,7 +362,8 @@ def prepare_instance_scorer(
                 n_jobs=10,
                 max_iter=3000)),
     shift_fraction=0.3,
-    min_overlap=0.7):
+    min_overlap=0.7,
+    n_jobs=10):
 
     onehot_track_name = "sequence"
     score_track_names = ([task_name+"_hypothetical_contribs"
@@ -370,7 +388,8 @@ def prepare_instance_scorer(
      filt_trimmed_patterns) = get_exemplar_motifs_for_all_patterns(
             patterns=prefilt_trimmed_patterns,
             pattern_comparison_settings=pattern_comparison_settings,
-            affmat_min_frac_of_median=affmat_min_frac_of_median)
+            affmat_min_frac_of_median=affmat_min_frac_of_median,
+            n_jobs=n_jobs)
 
 
     #get the flattened list of exemplar motifs and make FeaturesProducer
@@ -381,7 +400,8 @@ def prepare_instance_scorer(
         motifs=all_exemplarmotifs,
         pattern_comparison_settings=pattern_comparison_settings,
         onehot_track_name=onehot_track_name,
-        bg_freq=bg_freq)
+        bg_freq=bg_freq,
+        n_jobs=n_jobs)
 
     #get coordinates, labels and their features
     all_coordinates, labels = get_coordinates_and_labels(
@@ -400,3 +420,72 @@ def prepare_instance_scorer(
                                               track_set=track_set,
                                               labels=labels)
     return instance_scorer
+
+
+def get_windows_to_be_scanned(scanning_window_width, contrib_scores,
+                              val_transformer, cutoff_value, plot_save_dir="."):
+    sliding_window_sizes = val_transformer.sliding_window_sizes
+    transformed_scoretrack, transformed_scoretrack_bestwindowwidth =(
+        val_transformer.transform_score_track(np.sum(contrib_scores, axis=-1)))
+    #scores cdf
+    scores_cdf = np.sort(np.concatenate(transformed_scoretrack, axis=0))
+    values_above_cutoff = [x >= cutoff_value for x in transformed_scoretrack]
+    frac_vals_above_cutoff =\
+        np.sum(np.concatenate(values_above_cutoff, axis=0))/sum(
+        [len(x) for x in values_above_cutoff])
+    print("Fraction of values above cutoff:", frac_vals_above_cutoff)    
+    #prepare the coordinates for the windows to be scanned
+    coordinates_to_be_scanned = []
+    for rowidx, row in enumerate(values_above_cutoff):
+        #a mask of which positions are start positions (given
+        # window length scanning_window_width)
+        window_start_mask = np.zeros(len(row)-(scanning_window_width-1)).astype(bool)   
+        colindices = np.nonzero(row)[0]
+        bestslidingwindowwidths =\
+            transformed_scoretrack_bestwindowwidth[rowidx][colindices]
+        bestslidingwindow_startindices = (
+            colindices-(((bestslidingwindowwidths-1)/2.0).astype(int)))
+        for slidingwindowstart, slidingwindowwidth in zip(bestslidingwindow_startindices,
+                                                          bestslidingwindowwidths):
+            scanning_window_begin_startrange = max((slidingwindowstart
+                - max(scanning_window_width-slidingwindowwidth,0)),0)
+            scanning_window_begin_endrange = min((slidingwindowstart
+                + max(slidingwindowwidth-scanning_window_width,0)),
+                len(window_start_mask)-1)
+            window_start_mask[scanning_window_begin_startrange:
+                              scanning_window_begin_endrange] = True
+        coordinates_to_be_scanned.extend([
+            core.SeqletCoordinates(
+                example_idx=rowidx, start=start_idx,
+                end=start_idx+scanning_window_width,
+                is_revcomp=is_revcomp)
+            for start_idx in np.nonzero(window_start_mask)[0]
+            for is_revcomp in [True, False]
+        ])     
+    return coordinates_to_be_scanned, transformed_scoretrack
+
+
+def collect_coordinates_by_regionidx(coordinates):
+    regionidx_to_motifmatchandcoords = defaultdict(list)
+    for coordinate in coordinates:
+        regionidx_to_motifmatchandcoords[
+            coordinate.example_idx].append(coordinate)
+    return regionidx_to_motifmatchandcoords
+
+
+def scan_and_process_results(instance_scorer, track_set, coordinates):
+    scan_results = instance_scorer(coordinates, track_set=track_set)    
+    matching_motifidx = np.argmax(scan_results, axis=-1)
+    #get motifmatch to coordinates
+    motifmatch_to_coordinates = defaultdict(list)
+    for motifidx,coordinate in zip(matching_motifidx,coordinates):
+        if (motifidx < scan_results.shape[-1]):
+            motifmatch_to_coordinates[motifidx].append(coordinate)
+    motifmatch_to_coordinatesbyregionidx = {}
+    for motifmatch in motifmatch_to_coordinates:
+        motifmatch_to_coordinatesbyregionidx[motifmatch] =\
+            collect_coordinates_by_regionidx(
+                motifmatch_to_coordinates[motifmatch])
+    
+    return (motifmatch_to_coordinates,
+            motifmatch_to_coordinatesbyregionidx)

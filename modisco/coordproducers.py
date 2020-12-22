@@ -575,7 +575,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                                  pos_ir=pos_ir, neg_ir=neg_ir,
                                  pos_threshold=None,
                                  neg_threshold=None)
-            show_or_savefig(plot_save_dir=self.plot_save_dir,
+            util.show_or_savefig(plot_save_dir=self.plot_save_dir,
                            filename="scoredist_window"
                                  +str(sliding_window_size)+"_"
                                  +str(VariableWindowAroundChunks.count)+".png")
@@ -602,9 +602,13 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                 np.concatenate(precisiontransformed_score_track, axis=0)) 
 
             from matplotlib import pyplot as plt
-            plt.hist(subsampled_prec_vals, bins=50)
-            show_or_savefig(plot_save_dir=self.plot_save_dir,
-                           filename="final_prec_vals_dist"
+            plt.plot((np.arange(len(subsampled_prec_vals))/
+                      len(subsampled_prec_vals)),
+                     sorted(subsampled_prec_vals)) 
+            plt.xlabel("Tranformed IR precision value")
+            plt.ylabel("CDF")
+            util.show_or_savefig(plot_save_dir=self.plot_save_dir,
+                           filename="final_prec_vals_cdf_dist"
                                  +str(VariableWindowAroundChunks.count)+".png")
 
             #Pick a threshold according the the precisiontransformed score track
@@ -797,22 +801,6 @@ def refine_thresholds_based_on_frac_passing(
     return pos_threshold, neg_threshold
 
 
-def show_or_savefig(plot_save_dir, filename):
-    from matplotlib import pyplot as plt
-    if plt.isinteractive():
-        plt.show()
-    else:
-        import os, errno
-        try:
-            os.makedirs(plot_save_dir)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
-        fname = (plot_save_dir+"/"+filename)
-        plt.savefig(fname)
-        print("saving plot to " + fname)
-
-
 def make_nulldist_figure(orig_vals, null_vals, pos_ir, neg_ir,
                          pos_threshold, neg_threshold):
     from matplotlib import pyplot as plt
@@ -823,6 +811,7 @@ def make_nulldist_figure(orig_vals, null_vals, pos_ir, neg_ir,
     ax1.hist(orig_vals, bins=100, density=True, alpha=0.5) 
     ax1.hist(null_vals, bins=100, density=True, alpha=0.5) 
     ax1.set_ylabel("Probability density\n(blue=foreground, orange=null)")
+    ax1.set_xlabel("Total importance in window")
 
     precisions = pos_ir.transform(orig_vals)
     if (neg_ir is not None):
@@ -992,7 +981,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                                  pos_threshold=pos_threshold,
                                  neg_threshold=neg_threshold)
 
-            show_or_savefig(plot_save_dir=self.plot_save_dir,
+            util.show_or_savefig(plot_save_dir=self.plot_save_dir,
                            filename="scoredist_"
                                     +str(FixedWindowAroundChunks.count)+".png")
             FixedWindowAroundChunks.count += 1

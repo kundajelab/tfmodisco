@@ -186,12 +186,13 @@ class PrecisionValTransformer(AbstractValTransformer):
     @classmethod
     def from_hdf5(cls, grp):
         from .coordproducers import SavableIsotonicRegression
+        sliding_window_sizes =\
+            np.array(grp["sliding_window_sizes"]).astype("int")
+        print("Loaded sliding window sizes:",sliding_window_sizes)
         pos_irs = util.load_list_of_objects(
             grp=grp["pos_irs"], obj_class=SavableIsotonicRegression)
         neg_irs = util.load_list_of_objects(
             grp=grp["neg_irs"], obj_class=SavableIsotonicRegression)
-        sliding_window_sizes =\
-            np.array(grp["sliding_window_sizes"]).astype("int")
         return cls(pos_irs=pos_irs, neg_irs=neg_irs,
                    sliding_window_sizes=sliding_window_sizes)
 

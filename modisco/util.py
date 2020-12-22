@@ -613,3 +613,19 @@ def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_p
     
     os.system('rm ' + fname)
     return r
+
+
+def show_or_savefig(plot_save_dir, filename):
+    from matplotlib import pyplot as plt
+    if plt.isinteractive():
+        plt.show()
+    else:
+        import os, errno
+        try:
+            os.makedirs(plot_save_dir)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+        fname = (plot_save_dir+"/"+filename)
+        plt.savefig(fname)
+        print("saving plot to " + fname)
