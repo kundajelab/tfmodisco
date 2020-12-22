@@ -405,12 +405,13 @@ def irval_to_probpos(irval, frac_neg):
     #      = 1 + f_n(1 - 1/a(x))
     #If solving for p_pos=0, we have -1/(1 - 1/a(x)) = f_n
     #As f_n --> 100%, p_pos --> 2 - 1/a(x); this assumes max(a(x)) = 0.5
-    return np.minimum(np.maximum(1 + frac_neg*(1 - (1/irval)), 0.0), 1.0)
+    return np.minimum(np.maximum(1 + frac_neg*(
+                1 - (1/np.maximum(irval,1e-7))), 0.0), 1.0)
 
 
 class SavableIsotonicRegression(object):
 
-    def __init__(self, origvals, nullvals, increasing, min_frac_neg=0.99):
+    def __init__(self, origvals, nullvals, increasing, min_frac_neg=0.95):
         self.origvals = origvals 
         self.nullvals = nullvals
         self.increasing = increasing
@@ -434,7 +435,7 @@ class SavableIsotonicRegression(object):
         if (implied_frac_neg > 1.0 or implied_frac_neg < self.min_frac_neg):
             implied_frac_neg = max(min(1.0,implied_frac_neg),
                                    self.min_frac_neg)
-            print("Adjusted frac neg is",implied_frac_neg)
+            print("To be conservative, adjusted frac neg is",implied_frac_neg)
         self.implied_frac_neg = implied_frac_neg 
          
     def transform(self, vals):
@@ -602,9 +603,9 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                 np.concatenate(precisiontransformed_score_track, axis=0)) 
 
             from matplotlib import pyplot as plt
-            plt.plot((np.arange(len(subsampled_prec_vals))/
-                      len(subsampled_prec_vals)),
-                     sorted(subsampled_prec_vals)) 
+            plt.plot(sorted(subsampled_prec_vals),
+                     (np.arange(len(subsampled_prec_vals))/
+                      len(subsampled_prec_vals))) 
             plt.xlabel("Tranformed IR precision value")
             plt.ylabel("CDF")
             util.show_or_savefig(plot_save_dir=self.plot_save_dir,

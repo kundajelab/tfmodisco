@@ -422,13 +422,11 @@ def prepare_instance_scorer(
     return instance_scorer
 
 
-def get_windows_to_be_scanned(scanning_window_width, contrib_scores,
-                              val_transformer, cutoff_value, plot_save_dir="."):
+def get_windows_to_be_scanned_interior(
+    transformed_scoretrack, transformed_scoretrack_bestwindowwidth,
+    val_transformer, scanning_window_width, cutoff_value, plot_save_dir="."):
     sliding_window_sizes = val_transformer.sliding_window_sizes
-    transformed_scoretrack, transformed_scoretrack_bestwindowwidth =(
-        val_transformer.transform_score_track(np.sum(contrib_scores, axis=-1)))
     #scores cdf
-    scores_cdf = np.sort(np.concatenate(transformed_scoretrack, axis=0))
     values_above_cutoff = [x >= cutoff_value for x in transformed_scoretrack]
     frac_vals_above_cutoff =\
         np.sum(np.concatenate(values_above_cutoff, axis=0))/sum(
@@ -463,6 +461,22 @@ def get_windows_to_be_scanned(scanning_window_width, contrib_scores,
             for is_revcomp in [True, False]
         ])     
     return coordinates_to_be_scanned, transformed_scoretrack
+    
+
+def get_windows_to_be_scanned(contrib_scores, val_transformer,
+                              scanning_window_width,
+                              cutoff_value, plot_save_dir="."):
+    print("computing the transformed score track")
+    transformed_scoretrack, transformed_scoretrack_bestwindowwidth =(
+        val_transformer.transform_score_track(np.sum(contrib_scores, axis=-1)))
+    print("done computing the transformed score track")
+    return get_windows_to_be_scanned_interior(
+     transformed_scoretrack=transformed_scoretrack,
+     transformed_scoretrack_bestwindowwidth=
+       transformed_scoretrack_bestwindowwidth,
+     val_transformer=val_transformer,
+     scanning_window_width=scanning_window_width,
+     cutoff_value=cutoff_value, plot_save_dir=plot_save_dir)
 
 
 def collect_coordinates_by_regionidx(coordinates):
@@ -473,8 +487,10 @@ def collect_coordinates_by_regionidx(coordinates):
     return regionidx_to_motifmatchandcoords
 
 
-def scan_and_process_results(instance_scorer, track_set, coordinates):
-    scan_results = instance_scorer(coordinates, track_set=track_set)    
+def scan_and_process_results(instance_scorer, track_set, coordinates,
+                             batch_size=None):
+    scan_results = instance_scorer(coordinates, track_set=track_set,
+                                   batch_size=batch_size)    
     matching_motifidx = np.argmax(scan_results, axis=-1)
     #get motifmatch to coordinates
     motifmatch_to_coordinates = defaultdict(list)
@@ -488,4 +504,5 @@ def scan_and_process_results(instance_scorer, track_set, coordinates):
                 motifmatch_to_coordinates[motifmatch])
     
     return (motifmatch_to_coordinates,
-            motifmatch_to_coordinatesbyregionidx)
+            motifmatch_to_coordinatesbyregionidx,
+            scan_results)
