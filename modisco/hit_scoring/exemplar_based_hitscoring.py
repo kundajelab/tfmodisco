@@ -1,8 +1,9 @@
 from __future__ import division, print_function
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, namedtuple
 import numpy as np
 import time
 from sklearn.metrics import average_precision_score, precision_recall_curve
+from sklearn.isotonic import IsotonicRegression
 from .. import affinitymat
 from .. import aggregator
 from .. import core
@@ -11,6 +12,11 @@ from .. import visualization
 from matplotlib import pyplot as plt
 import sklearn
 from joblib import Parallel, delayed
+
+
+MotifHitAndCoord = namedtuple("MotifHitAndCoord",
+                    ["motif_idx", "motif_score", "precision_at_motif_score",
+                     "example_idx", "start", "end", "is_revcomp"]) 
 
 
 def flatten_seqlet_impscore_features(seqlet_impscores):
@@ -188,14 +194,15 @@ def get_shifts(seqlet_coordinate, shift_fraction, max_seq_len):
                             seqlet_coordinate.start)*shift_fraction)
     coordinates_to_return = []
     for shift_size in range(-shift_size_in_bp,shift_size_in_bp+1):
-        new_start = seqlet_coordinate.start + shift_size
-        new_end = seqlet_coordinate.end + shift_size
-        if (new_start >= 0 and new_end <= max_seq_len):
-            coordinates_to_return.append(core.SeqletCoordinates(
-                example_idx=seqlet_coordinate.example_idx,
-                start=new_start,
-                end=new_end,
-                is_revcomp=seqlet_coordinate.is_revcomp))
+        for is_revcomp in [True, False]:
+            new_start = seqlet_coordinate.start + shift_size
+            new_end = seqlet_coordinate.end + shift_size
+            if (new_start >= 0 and new_end <= max_seq_len):
+                coordinates_to_return.append(core.SeqletCoordinates(
+                    example_idx=seqlet_coordinate.example_idx,
+                    start=new_start,
+                    end=new_end,
+                    is_revcomp=is_revcomp))
     return coordinates_to_return
 
 
@@ -212,7 +219,8 @@ def get_coordinates_and_labels(shift_fraction, patterns, track_set):
         for coor in get_shifts(
             seqlet_coordinate=seqlet.coor,
             shift_fraction=shift_fraction,
-            max_seq_len=track_set.get_example_idx_len(seqlet.coor.example_idx))
+            max_seq_len=track_set.get_example_idx_len(seqlet.coor.example_idx),
+            )
     ]
 
     patternidx_to_positivecoordinates = OrderedDict([
@@ -326,6 +334,12 @@ class InstanceScorer(object):
             coordinates=coordinates[idx:idx+batch_size], track_set=track_set))
         return np.array(to_return)
 
+    def get_prec_for_threshold(self, motif_idx, threshold):
+        if (hasattr(threshold, '__iter__')==False):
+            return self.prec_ir_list[motif_idx].transform([threshold])[0]
+        else:
+            return self.prec_ir_list[motif_idx].transform(threshold)
+
     def compute_precrecthres_list(self, coordinates, track_set, labels):
         """
         Prepare the attribute self.precrecthres_list which, for each
@@ -336,14 +350,28 @@ class InstanceScorer(object):
             corresponds to the "no pattern" class.
         """
         preds = self(coordinates=coordinates, track_set=track_set)
-        precrecthres_list = []
+        assert np.min(preds) >= 0 #relevant when assuming min threshold is 0
+        prec_ir_list = []
+        precision_list = []
+        recall_list = []
+        thresholds_list = []
         for pattern_idx in range(labels.shape[1]):
+            ir = IsotonicRegression(out_of_bounds='clip').fit(
+                X=preds[:,pattern_idx], y=labels[:,pattern_idx])
+            prec_ir_list.append(ir)
             precision, recall, thresholds = precision_recall_curve(
                     y_true=labels[:,pattern_idx],
                     probas_pred=preds[:,pattern_idx]) 
-            precrecthres_list.append((precision, recall, thresholds))
-        self.precrecthres_list = precrecthres_list
-        return precrecthres_list
+            precision_list.append(precision)
+            recall_list.append(recall)
+            thresholds_list.append(thresholds)
+
+        self.prec_ir_list = prec_ir_list
+        self.precision_list = precision_list
+        self.recall_list = recall_list
+        self.thresholds_list = thresholds_list
+
+        return (precision_list, recall_list, thresholds_list)
 
 
 def prepare_instance_scorer(
@@ -426,19 +454,20 @@ def get_windows_to_be_scanned_interior(
     transformed_scoretrack, transformed_scoretrack_bestwindowwidth,
     val_transformer, scanning_window_width, cutoff_value, plot_save_dir="."):
     sliding_window_sizes = val_transformer.sliding_window_sizes
-    #scores cdf
-    values_above_cutoff = [x >= cutoff_value for x in transformed_scoretrack]
+    #boolean arrays containing which values are above the cutoff
+    values_above_cutoff = [(x >= cutoff_value) for x in transformed_scoretrack]
     frac_vals_above_cutoff =\
         np.sum(np.concatenate(values_above_cutoff, axis=0))/sum(
         [len(x) for x in values_above_cutoff])
     print("Fraction of values above cutoff:", frac_vals_above_cutoff)    
     #prepare the coordinates for the windows to be scanned
     coordinates_to_be_scanned = []
-    for rowidx, row in enumerate(values_above_cutoff):
+    for rowidx, above_cutoff_mask in enumerate(values_above_cutoff):
         #a mask of which positions are start positions (given
         # window length scanning_window_width)
-        window_start_mask = np.zeros(len(row)-(scanning_window_width-1)).astype(bool)   
-        colindices = np.nonzero(row)[0]
+        window_start_mask = np.zeros(len(above_cutoff_mask)
+            -(scanning_window_width-1)).astype(bool)   
+        colindices = np.nonzero(above_cutoff_mask)[0]
         bestslidingwindowwidths =\
             transformed_scoretrack_bestwindowwidth[rowidx][colindices]
         bestslidingwindow_startindices = (
@@ -490,13 +519,67 @@ def collect_coordinates_by_regionidx(coordinates):
 def scan_and_process_results(instance_scorer, track_set, coordinates,
                              batch_size=None):
     scan_results = instance_scorer(coordinates, track_set=track_set,
-                                   batch_size=batch_size)    
-    matching_motifidx = np.argmax(scan_results, axis=-1)
+                                   batch_size=batch_size)
+    #convert scan_results into a tracks that have dimensions of
+    # num_regions x num_motifs x region_len. Nan in locations that aren't hits.
+    # Four such tracks for: score, prec, recall, pos_strand
+    #In each case, take the max score over all scores mapping to that strand
+
+    #for now, we are assuming windowlen is the same for all the motifs
+    windowlens = (set([x.end-x.start for x in coordinates]))
+    assert len(windowlens)==1
+    windowlen = list(windowlens)[0]
+    del windowlens
+
+    def initialize_return_track():
+        return [np.full([track_set.get_example_idx_len(i)-(windowlen-1),
+                         scan_results.shape[1]-1],
+                        0.0)
+                for i in range(track_set.num_examples)] 
+
+    motif_scores = initialize_return_track()
+    motif_precisions = initialize_return_track()
+    besthit_isrevcomp = initialize_return_track()
+    for coordinate,row_of_scan_results in zip(coordinates,scan_results):
+        row_of_scan_results = row_of_scan_results[:-1]
+        precs = np.array([instance_scorer.get_prec_for_threshold(
+                            motif_idx=motifidx,
+                            threshold=row_of_scan_results[motifidx])
+                          for motifidx in range(scan_results.shape[1]-1)])
+        precs = np.array(precs)
+        is_revcomp = coordinate.is_revcomp
+        existing_scores = motif_scores[coordinate.example_idx][
+                                       coordinate.start] 
+        new_score_is_better = row_of_scan_results > existing_scores
+        motif_scores[coordinate.example_idx][
+                     coordinate.start][new_score_is_better] =(
+                    row_of_scan_results[new_score_is_better])
+        motif_precisions[coordinate.example_idx][
+                     coordinate.start][new_score_is_better] = (
+                    precs[new_score_is_better])
+        besthit_isrevcomp[coordinate.example_idx][
+                     coordinate.start][new_score_is_better] = is_revcomp
+
+    ###
     #get motifmatch to coordinates
     motifmatch_to_coordinates = defaultdict(list)
-    for motifidx,coordinate in zip(matching_motifidx,coordinates):
+    matching_motifidx = np.argmax(scan_results, axis=-1)
+    for motifidx,coordinate,row_of_scan_results in zip(
+            matching_motifidx,coordinates,scan_results):
         if (motifidx < scan_results.shape[-1]):
-            motifmatch_to_coordinates[motifidx].append(coordinate)
+            motif_score = row_of_scan_results[motifidx]
+            prec = instance_scorer.get_prec_for_threshold(
+                        motif_idx=motifidx, threshold=motif_score)
+            motifmatch_to_coordinates[motifidx].append(
+                MotifHitAndCoord(
+                    motif_idx=motifidx,
+                    motif_score=motif_score,
+                    precision_at_motif_score=prec,
+                    example_idx=coordinate.example_idx,
+                    start=coordinate.start,
+                    end=coordinate.end,
+                    is_revcomp=coordinate.is_revcomp)
+            )
     motifmatch_to_coordinatesbyregionidx = {}
     for motifmatch in motifmatch_to_coordinates:
         motifmatch_to_coordinatesbyregionidx[motifmatch] =\
@@ -505,4 +588,5 @@ def scan_and_process_results(instance_scorer, track_set, coordinates,
     
     return (motifmatch_to_coordinates,
             motifmatch_to_coordinatesbyregionidx,
-            scan_results)
+            motif_scores, motif_precisions,
+            besthit_isrevcomp)
