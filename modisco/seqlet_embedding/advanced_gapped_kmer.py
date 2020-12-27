@@ -153,9 +153,10 @@ def prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat(
         take_fwd=take_fwd, onehot_track_name=onehot_track_name,
         toscore_track_names_and_signs=toscore_track_names_and_signs)
 
-    return map_agkm_embedding_to_sparsevec(
-             gapped_kmer_to_totalseqimp=gapped_kmer_to_totalseqimp,
-             template_to_startidx=template_to_startidx)
+    return list(gapped_kmer_to_totalseqimp.items())
+    #return map_agkm_embedding_to_sparsevec(
+    #         gapped_kmer_to_totalseqimp=gapped_kmer_to_totalseqimp,
+    #         template_to_startidx=template_to_startidx)
 
 
 class AdvancedGappedKmerEmbedderFactory(object):
