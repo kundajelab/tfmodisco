@@ -154,7 +154,7 @@ def prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat(
         toscore_track_names_and_signs=toscore_track_names_and_signs)
 
     return map_agkm_embedding_to_sparsevec(
-             agkm_embeddings=gapped_kmer_to_totalseqimp,
+             gapped_kmer_to_totalseqimp=gapped_kmer_to_totalseqimp,
              template_to_startidx=template_to_startidx)
 
 
