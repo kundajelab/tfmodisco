@@ -231,7 +231,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         ) 
 
         sparse_agkm_embeddings_rev_dataandcols = (
-            blocks=Parallel(n_jobs=self.n_jobs, verbose=True)(
+            Parallel(n_jobs=self.n_jobs, verbose=True)(
               delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat)(
                   seqlets[i],
                   self.topn, self.min_k,
