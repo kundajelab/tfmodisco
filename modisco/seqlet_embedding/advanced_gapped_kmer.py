@@ -143,6 +143,22 @@ def prepare_gapped_kmer_from_seqlet(seqlet, topn, min_k,
             max_k=max_k, max_gap=max_gap, max_len=max_len) 
 
 
+def prepare_gapped_kmer_from_seqlet_and_make_sparse_mat(
+    seqlet, topn, min_k, max_k, max_gap, max_len, take_fwd, onehot_track_name,
+    toscore_track_names_and_signs, template_to_startidx, embedding_size):
+    
+    gapped_kmer_to_totalseqimp = prepare_gapped_kmer_from_seqlet(
+        seqlet=seqlet, topn=topn, min_k=min_k,
+        max_k=max_k, max_gap=max_gap, max_len=max_len,
+        take_fwd=take_fwd, onehot_track_name=onehot_track_name,
+        toscore_track_names_and_signs=toscore_track_names_and_signs)
+
+    return get_sparse_mat_from_agkm_embeddings(
+             agkm_embeddings=[gapped_kmer_to_totalseqimp],
+             template_to_startidx=template_to_startidx,
+             embedding_size=embedding_size)
+
+
 class AdvancedGappedKmerEmbedderFactory(object):
 
     def __init__(self, topn=20, min_k=4, max_k=6, max_gap=15, max_len=15, 
@@ -195,40 +211,69 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         self.toscore_track_names_and_signs = toscore_track_names_and_signs
 
     def __call__(self, seqlets):
-        advanced_gappedkmer_embeddings_fwd =\
-            Parallel(n_jobs=self.n_jobs, verbose=True)(
-                delayed(prepare_gapped_kmer_from_seqlet)(
-                    seqlets[i],
-                    self.topn, self.min_k,
-                    self.max_k, self.max_gap,
-                    self.max_len, True,
-                    self.onehot_track_name,
-                    self.toscore_track_names_and_signs)
-                   for i in range(len(seqlets)))
-        advanced_gappedkmer_embeddings_rev =\
-            Parallel(n_jobs=self.n_jobs, verbose=True)(
-                delayed(prepare_gapped_kmer_from_seqlet)(
-                    seqlets[i],
-                    self.topn, self.min_k,
-                    self.max_k, self.max_gap,
-                    self.max_len, False,
-                    self.onehot_track_name,
-                    self.toscore_track_names_and_signs)
-                   for i in range(len(seqlets))) 
 
         template_to_startidx, embedding_size =\
             get_template_to_startidx_and_embedding_size(
                 max_len=self.max_len, min_k=self.min_k,
                 max_k=self.max_k, alphabet_size=self.alphabet_size)
 
-        sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
-            agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
-            template_to_startidx=template_to_startidx,
-            embedding_size=embedding_size)
-        sparse_agkm_embeddings_rev = get_sparse_mat_from_agkm_embeddings(
-            agkm_embeddings=advanced_gappedkmer_embeddings_rev,
-            template_to_startidx=template_to_startidx,
-            embedding_size=embedding_size)
+        sparse_agkm_embeddings_fwd = scipy.sparse.vstack(
+            blocks=Parallel(n_jobs=self.n_jobs, verbose=True)(
+                delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_mat)(
+                    seqlets[i],
+                    self.topn, self.min_k,
+                    self.max_k, self.max_gap,
+                    self.max_len, True,
+                    self.onehot_track_name,
+                    self.toscore_track_names_and_signs,
+                    template_to_startidx,
+                    embedding_size)
+                   for i in range(len(seqlets)))
+        ) 
+
+        sparse_agkm_embeddings_rev = scipy.sparse.vstack(
+            blocks=Parallel(n_jobs=self.n_jobs, verbose=True)(
+                delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_mat)(
+                    seqlets[i],
+                    self.topn, self.min_k,
+                    self.max_k, self.max_gap,
+                    self.max_len, False, #'False' determines doing rc
+                    self.onehot_track_name,
+                    self.toscore_track_names_and_signs,
+                    template_to_startidx,
+                    embedding_size)
+                   for i in range(len(seqlets)))
+        ) 
+
+        #advanced_gappedkmer_embeddings_fwd =\
+        #    Parallel(n_jobs=self.n_jobs, verbose=True)(
+        #        delayed(prepare_gapped_kmer_from_seqlet)(
+        #            seqlets[i],
+        #            self.topn, self.min_k,
+        #            self.max_k, self.max_gap,
+        #            self.max_len, True,
+        #            self.onehot_track_name,
+        #            self.toscore_track_names_and_signs)
+        #           for i in range(len(seqlets)))
+        #advanced_gappedkmer_embeddings_rev =\
+        #    Parallel(n_jobs=self.n_jobs, verbose=True)(
+        #        delayed(prepare_gapped_kmer_from_seqlet)(
+        #            seqlets[i],
+        #            self.topn, self.min_k,
+        #            self.max_k, self.max_gap,
+        #            self.max_len, False,
+        #            self.onehot_track_name,
+        #            self.toscore_track_names_and_signs)
+        #           for i in range(len(seqlets))) 
+
+        #sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
+        #    agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
+        #    template_to_startidx=template_to_startidx,
+        #    embedding_size=embedding_size)
+        #sparse_agkm_embeddings_rev = get_sparse_mat_from_agkm_embeddings(
+        #    agkm_embeddings=advanced_gappedkmer_embeddings_rev,
+        #    template_to_startidx=template_to_startidx,
+        #    embedding_size=embedding_size)
 
         return sparse_agkm_embeddings_fwd, sparse_agkm_embeddings_rev
 
@@ -288,8 +333,8 @@ def get_sparse_mat_from_agkm_embeddings(agkm_embeddings,
     row_ind = []
     data = []
     col_ind = []
-    for (this_row_idx,
-         (single_agkm_data, single_agkm_cols)) in enumerate(all_agkm_data_and_cols):
+    for (this_row_idx, (single_agkm_data, single_agkm_cols)) in enumerate(
+                                                       all_agkm_data_and_cols):
         data.extend(single_agkm_data)
         col_ind.extend(single_agkm_cols)
         row_ind.extend([this_row_idx for x in single_agkm_data])
