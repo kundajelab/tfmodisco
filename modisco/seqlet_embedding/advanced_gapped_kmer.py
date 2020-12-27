@@ -225,8 +225,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                   self.max_len, True,
                   self.onehot_track_name,
                   self.toscore_track_names_and_signs,
-                  template_to_startidx,
-                  embedding_size)
+                  template_to_startidx)
                  for i in range(len(seqlets)))
         ) 
 
@@ -239,8 +238,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                   self.max_len, False, #'False' determines doing rc
                   self.onehot_track_name,
                   self.toscore_track_names_and_signs,
-                  template_to_startidx,
-                  embedding_size)
+                  template_to_startidx)
                  for i in range(len(seqlets)))
         ) 
 
