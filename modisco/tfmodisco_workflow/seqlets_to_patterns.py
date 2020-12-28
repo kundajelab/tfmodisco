@@ -64,6 +64,7 @@ def legacy_tfmodiscoseqletstopatternsfactory(current_constructor):
             assert 'embedder_factory' not in kwargs,\
                 ("Cannot both specify embedder_factory and "
                  +str(gapped_kmer_kwargs))
+            from modisco.seqlet_embedding import gapped_kmer
             kwargs['embedder_factory'] = (
                   seqlet_embedding.gapped_kmer
                   .GappedKmerEmbedderFactory(**gapped_kmer_kwargs))
@@ -85,8 +86,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        initclusterer_factory=None,                       
 
                        embedder_factory=(
-                        seqlet_embedding.gapped_kmer
-                                        .GappedKmerEmbedderFactory()),
+                        seqlet_embedding.advanced_gapped_kmer
+                                        .AdvancedGappedKmerEmbedderFactory()),
 
                        nn_n_jobs=4,
                        nearest_neighbors_to_compute=500,
@@ -95,15 +96,15 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        filter_beyond_first_round=False,
                        skip_fine_grained=False,
 
-                       tsne_perplexity = 10,
+                       tsne_perplexity=10,
                        use_louvain=False,
                        louvain_initclusters_weight=1.0,
                        n_leiden_iterations_r1=-1,
                        n_leiden_iterations_r2=-1,
                        louvain_num_runs_and_levels_r1=[(200,-1)],
                        louvain_num_runs_and_levels_r2=[(200,-1)], 
-                       contin_runs_r1 = 50,
-                       contin_runs_r2 = 50,
+                       contin_runs_r1=50,
+                       contin_runs_r2=50,
                        final_louvain_level_to_return=1,
 
                        frac_support_to_trim_to=0.2,

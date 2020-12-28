@@ -1,6 +1,5 @@
 from __future__ import division, print_function, absolute_import
 from ..affinitymat.core import MeanNormalizer
-from .. import backend as B
 from .core import (AbstractSeqletsToOnedEmbedder,
                    AbstractSeqletsToOnedEmbedderFactory)
 from .. import core as modiscocore

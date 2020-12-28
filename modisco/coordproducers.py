@@ -4,7 +4,6 @@ from modisco import util
 import numpy as np
 from collections import defaultdict, Counter, OrderedDict
 import itertools
-from sklearn.neighbors.kde import KernelDensity
 import sys
 import time
 from .value_provider import (
