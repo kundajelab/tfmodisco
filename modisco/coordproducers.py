@@ -427,7 +427,7 @@ class SavableIsotonicRegression(object):
         #See derivation in irval_to_probpos function
         min_prec_x = self.ir.X_min_ if self.increasing else self.ir.X_max_ 
         min_precision = self.ir.transform([min_prec_x])[0]
-        implied_frac_neg = -1/(1-(1/min_precision))
+        implied_frac_neg = -1/(1-(1/max(min_precision,1e-7)))
         print("For increasing =",increasing,", the minimum IR precision was",
               min_precision,"occurring at",min_prec_x,
               "implying a frac_neg",
