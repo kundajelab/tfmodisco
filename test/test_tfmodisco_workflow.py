@@ -97,7 +97,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
         self.task_to_scores = task_to_scores
         self.task_to_hyp_scores = task_to_hyp_scores
 
-    skip
+    #@skip
     def test_base_workflow(self): 
 
         onehot_data = self.onehot_data
@@ -129,7 +129,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
              null_per_pos_scores = null_per_pos_scores,
              plot_save_dir="plot_save_directory"))
 
-    skip
+    #@skip
     def test_memeinit_workflow(self): 
 
         onehot_data = self.onehot_data
@@ -166,7 +166,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
              null_per_pos_scores = null_per_pos_scores,
              plot_save_dir="plot_save_directory"))
 
-    skip
+    #@skip
     def test_norevcomp_memeinit_workflow(self): 
 
         onehot_data = self.onehot_data
@@ -204,7 +204,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
              plot_save_dir="plot_save_directory",
              revcomp=False))
 
-    @skip
+    #@skip
     def test_varseqlen_agkm_workflow(self): 
 
         onehot_data = self.onehot_data
