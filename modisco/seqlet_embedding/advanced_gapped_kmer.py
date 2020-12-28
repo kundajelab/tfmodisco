@@ -95,7 +95,8 @@ def unravel_fast_recursively_get_gappedkmersandimp(posbaseimptuples, **kwargs):
 
 
 def prepare_gapped_kmer_from_contribs(contrib_scores, topn, min_k,
-                                      max_k, max_gap, max_len):
+                                      max_k, max_gap, max_len,
+                                      max_entries):
     #get the top n positiosn
     per_pos_imp = np.sum(contrib_scores, axis=-1)
     per_pos_bases = np.argmax(contrib_scores, axis=-1)
@@ -122,12 +123,15 @@ def prepare_gapped_kmer_from_contribs(contrib_scores, topn, min_k,
         if (len(gapped_kmer_rep) >= min_k):
             gapped_kmer_to_totalseqimp[gapped_kmer_rep] = (
                 gapped_kmer_to_totalseqimp.get(gapped_kmer_rep, 0)
-                + gapped_kmer_imp)
-    return gapped_kmer_to_totalseqimp
+                + gapped_kmer_imp/len(gapped_kmer_rep)
+                )
+    #only retain the top max_entries entries
+    return sorted(gapped_kmer_to_totalseqimp.items(),
+                  key=lambda x: -abs(x[1]))[:max_entries]
 
 
 def prepare_gapped_kmer_from_seqlet(seqlet, topn, min_k,
-                                    max_k, max_gap, max_len,
+                                    max_k, max_gap, max_len, max_entries,
                                     take_fwd,
                                     onehot_track_name,
                                     toscore_track_names_and_signs):
@@ -140,20 +144,24 @@ def prepare_gapped_kmer_from_seqlet(seqlet, topn, min_k,
             for track_name, sign in toscore_track_names_and_signs ], axis=0)
     return prepare_gapped_kmer_from_contribs(
             contrib_scores=contrib_scores, topn=topn, min_k=min_k,
-            max_k=max_k, max_gap=max_gap, max_len=max_len) 
+            max_k=max_k, max_gap=max_gap, max_len=max_len,
+            max_entries=max_entries) 
 
 
 def prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat(
-    seqlet, topn, min_k, max_k, max_gap, max_len, take_fwd, onehot_track_name,
+    seqlet, topn, min_k, max_k, max_gap, max_len, max_entries,
+    take_fwd, onehot_track_name,
     toscore_track_names_and_signs, template_to_startidx):
     
     gapped_kmer_to_totalseqimp = prepare_gapped_kmer_from_seqlet(
         seqlet=seqlet, topn=topn, min_k=min_k,
         max_k=max_k, max_gap=max_gap, max_len=max_len,
+        max_entries=max_entries,
         take_fwd=take_fwd, onehot_track_name=onehot_track_name,
         toscore_track_names_and_signs=toscore_track_names_and_signs)
 
-    return list(gapped_kmer_to_totalseqimp.items())
+    return gapped_kmer_to_totalseqimp
+    #return list(gapped_kmer_to_totalseqimp.items())
     #return map_agkm_embedding_to_sparsevec(
     #         gapped_kmer_to_totalseqimp=gapped_kmer_to_totalseqimp,
     #         template_to_startidx=template_to_startidx)
@@ -162,13 +170,14 @@ def prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat(
 class AdvancedGappedKmerEmbedderFactory(object):
 
     def __init__(self, topn=20, min_k=4, max_k=6, max_gap=15, max_len=15, 
-                       alphabet_size=4, n_jobs=10,
-                       num_filters_to_retain=None):
+                       max_entries=500,
+                       alphabet_size=4, n_jobs=10):
         self.topn = topn
         self.min_k = min_k
         self.max_k = max_k
         self.max_gap = max_gap
         self.max_len = max_len
+        self.max_entries = max_entries
         self.alphabet_size = alphabet_size
         self.n_jobs = n_jobs
 
@@ -179,6 +188,7 @@ class AdvancedGappedKmerEmbedderFactory(object):
                 ('max_k', self.max_k),
                 ('max_gap', self.max_gap),
                 ('max_len', self.max_len)
+                ('max_entries', self.max_entries)
                 ('alphabet_size', self.alphabet_size)
                 ('n_jobs', self.n_jobs)
                 ])
@@ -187,6 +197,7 @@ class AdvancedGappedKmerEmbedderFactory(object):
         return AdvancedGappedKmerEmbedder(
                 topn=self.topn, min_k=self.min_k, max_k=self.max_k,
                 max_gap=self.max_gap, max_len=self.max_len,
+                max_entries=self.max_entries,
                 alphabet_size=self.alphabet_size,
                 n_jobs=self.n_jobs,
                 onehot_track_name=onehot_track_name,
@@ -195,7 +206,7 @@ class AdvancedGappedKmerEmbedderFactory(object):
 
 class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
     
-    def __init__(self, topn, min_k, max_k, max_gap, max_len, 
+    def __init__(self, topn, min_k, max_k, max_gap, max_len, max_entries,
                        alphabet_size,
                        n_jobs,
                        onehot_track_name,
@@ -205,6 +216,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
         self.max_k = max_k
         self.max_gap = max_gap
         self.max_len = max_len
+        self.max_entries = max_entries
         self.alphabet_size = alphabet_size
         self.n_jobs = n_jobs
         self.onehot_track_name = onehot_track_name
@@ -217,63 +229,70 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                 max_len=self.max_len, min_k=self.min_k,
                 max_k=self.max_k, alphabet_size=self.alphabet_size)
 
-        sparse_agkm_embeddings_fwd_dataandcols = (
-            Parallel(n_jobs=self.n_jobs, verbose=True)(
-              delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat)(
-                  seqlets[i],
-                  self.topn, self.min_k,
-                  self.max_k, self.max_gap,
-                  self.max_len, True,
-                  self.onehot_track_name,
-                  self.toscore_track_names_and_signs,
-                  template_to_startidx)
-                 for i in range(len(seqlets)))
-        ) 
-
-        sparse_agkm_embeddings_rev_dataandcols = (
-            Parallel(n_jobs=self.n_jobs, verbose=True)(
-              delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat)(
-                  seqlets[i],
-                  self.topn, self.min_k,
-                  self.max_k, self.max_gap,
-                  self.max_len, False, #'False' determines doing rc
-                  self.onehot_track_name,
-                  self.toscore_track_names_and_signs,
-                  template_to_startidx)
-                 for i in range(len(seqlets)))
-        ) 
-
-        assert False
-
-        #advanced_gappedkmer_embeddings_fwd =\
+        #sparse_agkm_embeddings_fwd_dataandcols = (
         #    Parallel(n_jobs=self.n_jobs, verbose=True)(
-        #        delayed(prepare_gapped_kmer_from_seqlet)(
-        #            seqlets[i],
-        #            self.topn, self.min_k,
-        #            self.max_k, self.max_gap,
-        #            self.max_len, True,
-        #            self.onehot_track_name,
-        #            self.toscore_track_names_and_signs)
-        #           for i in range(len(seqlets)))
-        #advanced_gappedkmer_embeddings_rev =\
-        #    Parallel(n_jobs=self.n_jobs, verbose=True)(
-        #        delayed(prepare_gapped_kmer_from_seqlet)(
-        #            seqlets[i],
-        #            self.topn, self.min_k,
-        #            self.max_k, self.max_gap,
-        #            self.max_len, False,
-        #            self.onehot_track_name,
-        #            self.toscore_track_names_and_signs)
-        #           for i in range(len(seqlets))) 
+        #      delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat)(
+        #          seqlets[i],
+        #          self.topn, self.min_k,
+        #          self.max_k, self.max_gap,
+        #          self.max_len, True,
+        #          self.onehot_track_name,
+        #          self.toscore_track_names_and_signs,
+        #          template_to_startidx)
+        #         for i in range(len(seqlets)))
+        #) 
 
-        #sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
-        #    agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
-        #    template_to_startidx=template_to_startidx,
-        #    embedding_size=embedding_size)
-        #sparse_agkm_embeddings_rev = get_sparse_mat_from_agkm_embeddings(
-        #    agkm_embeddings=advanced_gappedkmer_embeddings_rev,
-        #    template_to_startidx=template_to_startidx,
-        #    embedding_size=embedding_size)
+        #sparse_agkm_embeddings_rev_dataandcols = (
+        #    Parallel(n_jobs=self.n_jobs, verbose=True)(
+        #      delayed(prepare_gapped_kmer_from_seqlet_and_make_sparse_vec_dat)(
+        #          seqlets[i],
+        #          self.topn, self.min_k,
+        #          self.max_k, self.max_gap,
+        #          self.max_len, False, #'False' determines doing rc
+        #          self.onehot_track_name,
+        #          self.toscore_track_names_and_signs,
+        #          template_to_startidx)
+        #         for i in range(len(seqlets)))
+        #) 
+
+        advanced_gappedkmer_embeddings_fwd =\
+            Parallel(n_jobs=self.n_jobs, verbose=True)(
+                delayed(prepare_gapped_kmer_from_seqlet)(
+                    seqlets[i],
+                    self.topn, self.min_k,
+                    self.max_k, self.max_gap,
+                    self.max_len,
+                    self.max_entries,
+                    True,
+                    self.onehot_track_name,
+                    self.toscore_track_names_and_signs)
+                   for i in range(len(seqlets)))
+
+        #from matplotlib import pyplot as plt
+        #plt.hist([len(x) for x in advanced_gappedkmer_embeddings_fwd], bins=20)
+        #plt.show()
+        #assert False
+        advanced_gappedkmer_embeddings_rev =\
+            Parallel(n_jobs=self.n_jobs, verbose=True)(
+                delayed(prepare_gapped_kmer_from_seqlet)(
+                    seqlets[i],
+                    self.topn, self.min_k,
+                    self.max_k, self.max_gap,
+                    self.max_len,
+                    self.max_entries,
+                    False,
+                    self.onehot_track_name,
+                    self.toscore_track_names_and_signs)
+                   for i in range(len(seqlets))) 
+
+        sparse_agkm_embeddings_fwd = get_sparse_mat_from_agkm_embeddings(
+            agkm_embeddings=advanced_gappedkmer_embeddings_fwd,
+            template_to_startidx=template_to_startidx,
+            embedding_size=embedding_size)
+        sparse_agkm_embeddings_rev = get_sparse_mat_from_agkm_embeddings(
+            agkm_embeddings=advanced_gappedkmer_embeddings_rev,
+            template_to_startidx=template_to_startidx,
+            embedding_size=embedding_size)
 
         return sparse_agkm_embeddings_fwd, sparse_agkm_embeddings_rev
 
@@ -310,7 +329,7 @@ def map_agkm_embedding_to_sparsevec(gapped_kmer_to_totalseqimp,
                                     template_to_startidx):
     data = []
     cols = []
-    for gkmer, totalimp in gapped_kmer_to_totalseqimp.items():
+    for gkmer, totalimp in gapped_kmer_to_totalseqimp:
         template,offset = get_template_and_offset_from_gkmer(gkmer)
         gkmeridx = template_to_startidx[template] + offset
         data.append(totalimp)
