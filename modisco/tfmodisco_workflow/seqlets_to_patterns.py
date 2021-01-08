@@ -594,8 +594,8 @@ class SeqletsToPatternsResults(object):
 
     def save_hdf5(self, grp):
         grp.attrs["success"] = self.success
-        grp.attrs["total_time_taken"] = self.total_time_taken
         if (self.success):
+            grp.attrs["total_time_taken"] = self.total_time_taken
             if (self.each_round_initcluster_motifs is not None):
                 self.save_each_round_initcluster_motifs(
                     grp=grp.create_group("each_round_initcluster_motifs"))
