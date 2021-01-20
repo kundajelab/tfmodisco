@@ -5,7 +5,6 @@ import subprocess
 import numpy as np
 import h5py
 import traceback
-from sklearn.neighbors.kde import KernelDensity
 
 
 def load_patterns(grp, track_set):
@@ -53,6 +52,20 @@ def save_seqlet_coords(seqlets, dset_name, grp):
                      dset_name=dset_name, grp=grp)
 
 
+def save_list_of_objects(grp, list_of_objects):
+    grp.attrs["num_objects"] = len(list_of_objects) 
+    for idx,obj in enumerate(list_of_objects):
+        obj.save_hdf5(grp=grp.create_group("obj"+str(idx)))
+
+
+def load_list_of_objects(grp, obj_class):
+    num_objects = grp.attrs["num_objects"]
+    list_of_objects = []
+    for idx in range(num_objects):
+        list_of_objects.append(obj_class.from_hdf5(grp=grp["obj"+str(idx)]))
+    return list_of_objects
+
+
 def factorial(val):
     to_return = 1
     for i in range(1,val+1):
@@ -61,6 +74,7 @@ def factorial(val):
 
 
 def first_curvature_max(values, bins, bandwidth):
+    from sklearn.neighbors.kde import KernelDensity
     kde = KernelDensity(kernel="gaussian", bandwidth=bandwidth).fit(
                 [[x,0] for x in values])
     midpoints = np.min(values)+((np.arange(bins)+0.5)
@@ -377,9 +391,11 @@ def get_betas_from_tsne_conditional_probs(conditional_probs,
 
 def convert_to_percentiles(vals):
     to_return = np.zeros(len(vals))
-    sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
-    for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
-        to_return[orig_idx] = sort_idx/float(len(vals))
+    argsort = np.argsort(vals)
+    to_return[argsort] = np.arange(len(vals))/float(len(vals))
+    #sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
+    #for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
+    #    to_return[orig_idx] = sort_idx/float(len(vals))
     return to_return
 
 
@@ -473,6 +489,11 @@ def rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+def sliding_window_max(a, window):
+    rolling_windows_a = rolling_window(a, window)
+    return np.max(rolling_windows_a, axis=-1) 
 
 
 def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat): 
@@ -592,3 +613,19 @@ def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_p
     
     os.system('rm ' + fname)
     return r
+
+
+def show_or_savefig(plot_save_dir, filename):
+    from matplotlib import pyplot as plt
+    if plt.isinteractive():
+        plt.show()
+    else:
+        import os, errno
+        try:
+            os.makedirs(plot_save_dir)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+        fname = (plot_save_dir+"/"+filename)
+        plt.savefig(fname)
+        print("saving plot to " + fname)

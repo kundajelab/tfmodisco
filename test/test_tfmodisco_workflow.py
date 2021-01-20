@@ -97,6 +97,7 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
         self.task_to_scores = task_to_scores
         self.task_to_hyp_scores = task_to_hyp_scores
 
+    #@skip
     def test_base_workflow(self): 
 
         onehot_data = self.onehot_data
@@ -202,3 +203,35 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
              null_per_pos_scores = null_per_pos_scores,
              plot_save_dir="plot_save_directory",
              revcomp=False))
+
+    #@skip
+    def test_varseqlen_agkm_workflow(self): 
+
+        onehot_data = self.onehot_data
+        task_to_scores = self.task_to_scores
+        task_to_hyp_scores = self.task_to_hyp_scores
+
+        import modisco
+        null_per_pos_scores = (modisco.coordproducers
+                               .LaplaceNullDist(num_to_samp=5000))
+        tfmodisco_results = (modisco.tfmodisco_workflow
+                                    .workflow.TfModiscoWorkflow(
+             #Slight modifications from the default settings
+             sliding_window_size=[5,9,13,17],
+             flank_size=5,
+             target_seqlet_fdr=0.15,
+             seqlets_to_patterns_factory=
+              modisco.tfmodisco_workflow
+               .seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(
+                 trim_to_window_size=15,
+                 initial_flank_to_add=5,
+                 embedder_factory=(modisco.seqlet_embedding
+                  .advanced_gapped_kmer.AdvancedGappedKmerEmbedderFactory()),
+                 final_min_cluster_size=60)
+            )(
+             task_names=["task0", "task1", "task2"],
+             contrib_scores=task_to_scores,
+             hypothetical_contribs=task_to_hyp_scores,
+             one_hot=onehot_data,
+             null_per_pos_scores = null_per_pos_scores,
+             plot_save_dir="plot_save_directory"))

@@ -132,6 +132,11 @@ class TrackSet(object):
                     list(self.track_name_to_data_track.keys())[0]]
                     .fwd_tracks[example_idx])
 
+    @property
+    def num_examples(self):
+        return len(self.track_name_to_data_track[
+                    list(self.track_name_to_data_track.keys())[0]].fwd_tracks)
+
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
         if len(self.track_name_to_data_track)==0:

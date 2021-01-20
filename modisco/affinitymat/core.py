@@ -1,5 +1,4 @@
 from __future__ import division, print_function, absolute_import
-from .. import backend as B
 import numpy as np
 from .. import util as modiscoutil
 from .. import core as modiscocore
@@ -629,6 +628,7 @@ class CrossCorrMetricGPU(AbstractCrossMetric):
         self.progress_update = progress_update
 
     def __call__(self, filters, things_to_scan, min_overlap):
+        from .. import backend as B
         return B.max_cross_corrs(
                 filters=filters,
                 things_to_scan=things_to_scan,
