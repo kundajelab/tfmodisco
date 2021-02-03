@@ -678,9 +678,12 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
     # coordinates are identified
     cp_score_track = [np.array(x) for x in score_track]
     #if a position is less than the threshold, set it to -np.inf
+    #Note that the threshold comparisons need to be >= and not just > for
+    # cases where there are lots of ties at the high end (e.g. with an IR
+    # tranformation that gives a lot of values that have a precision of 1.0)
     cp_score_track = [
-        np.array([np.abs(y) if (y > pos_threshold
-                        or y < neg_threshold)
+        np.array([np.abs(y) if (y >= pos_threshold
+                        or y <= neg_threshold)
                        else -np.inf for y in x])
         for x in cp_score_track]
 
@@ -712,8 +715,8 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
                     other_info = dict([
                      (track_name, track[example_idx][argmax])
                      for (track_name, track) in other_info_tracks.items()])) 
-                assert (coord.score > pos_threshold
-                        or coord.score < neg_threshold)
+                assert (coord.score >= pos_threshold
+                        or coord.score <= neg_threshold)
                 coords.append(coord)
             else:
                 assert False,\
@@ -797,6 +800,8 @@ def refine_thresholds_based_on_frac_passing(
                 a=np.abs(vals),
                 q=100*(1-max_passing_windows_frac)) 
             neg_threshold = -pos_threshold
+        if (verbose):
+            print("New thresholds are",pos_threshold,"and",neg_threshold)
 
     return pos_threshold, neg_threshold
 
