@@ -797,6 +797,8 @@ def refine_thresholds_based_on_frac_passing(
                 a=np.abs(vals),
                 q=100*(1-max_passing_windows_frac)) 
             neg_threshold = -pos_threshold
+        if (verbose):
+            print("New thresholds are",pos_threshold,"and",neg_threshold)
 
     return pos_threshold, neg_threshold
 

@@ -474,7 +474,7 @@ def compute_per_position_ic(ppm, background, pseudocount):
     assert len(ppm.shape)==2
     assert ppm.shape[1]==len(background),\
             "Make sure the letter axis is the second axis"
-    if (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-5):
+    if (not np.allclose(np.sum(ppm, axis=1), 1.0, atol=1.0e-5)):
         print("WARNING: Probabilities don't sum to 1 in all the rows; this can"
               +" be caused by zero-padding. Will renormalize. PPM:\n"
               +str(ppm)
