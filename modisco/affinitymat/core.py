@@ -127,10 +127,17 @@ def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
     fwd_vecs_slice = fwd_vecs[slice_start:slice_end]
     initclusters_slice = (None if initclusters is None
                           else initclusters[slice_start:slice_end])
-    k = min(k, len(fwd_vecs))
-    fwd_dot = np.matmul(fwd_vecs_slice,fwd_vecs.T) 
+    k = min(k, fwd_vecs.shape[0])
+    if (scipy.sparse.issparse(fwd_vecs_slice)):
+        fwd_dot = np.array(fwd_vecs_slice.dot(fwd_vecs.transpose()).todense())
+    else:
+        fwd_dot = np.matmul(fwd_vecs_slice,fwd_vecs.T) 
     if (rev_vecs is not None):
-        rev_dot = np.matmul(fwd_vecs_slice, rev_vecs.T)
+        if (scipy.sparse.issparse(fwd_vecs_slice)):
+            rev_dot = np.array(fwd_vecs_slice.dot(rev_vecs.transpose())
+                                             .todense())
+        else:
+            rev_dot = np.matmul(fwd_vecs_slice, rev_vecs.T)
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
@@ -190,14 +197,14 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         # to use given the memory cap
         memory_cap_gb = (self.memory_cap_gb if rev_vecs
                          is None else self.memory_cap_gb/2.0)
-        batch_size = int(memory_cap_gb*(2**30)/(len(fwd_vecs)*8))
-        batch_size = min(max(1,batch_size),len(fwd_vecs))
+        batch_size = int(memory_cap_gb*(2**30)/(fwd_vecs.shape[0]*8))
+        batch_size = min(max(1,batch_size),fwd_vecs.shape[0])
         if (self.verbose):
             print("Batching in slices of size",batch_size)
             sys.stdout.flush()
 
         neighbors, sims = [], []
-        for i in tqdm(range(0,len(fwd_vecs),batch_size)):
+        for i in tqdm(range(0,fwd_vecs.shape[0],batch_size)):
             neighbors_batch, sims_batch = top_k_fwdandrev_dot_prod(fwd_vecs,
                                          rev_vecs,
                                          slice_start=i,
