@@ -12,8 +12,11 @@ import time
 import re
 import os
 import sys
-from collections import defaultdict
+from collections import defaultdict, Counter
 from joblib import Parallel, delayed
+import itertools
+from tqdm import tqdm
+from ...util import print_memory_use
 
 
 def find_neighbors(data, k=30, metric='minkowski', p=2, method='brute', n_jobs=-1):
@@ -158,10 +161,12 @@ def graph2binary(filename, graph):
     :param graph:
     :return None: graph is written to filename.bin
     """
+    assert sp.issparse(graph) #expecting a coo matrix
     tic = time.time()
     # Unpack values in graph
     i, j = graph.nonzero()
     s = graph.data
+    assert len(graph.data)==len(i)
     # place i and j in single array as edge list
     ij = np.hstack((i[:, np.newaxis], j[:, np.newaxis]))
     # add dummy self-edges for vertices at the END of the list with no neighbors
@@ -183,6 +188,8 @@ def graph2binary(filename, graph):
             f.write(ij[idx])
             f.write( s[idx])
     print("Wrote graph to binary file in {} seconds".format(time.time() - tic))
+    print_memory_use()
+    sys.stdout.flush()
 
 
 def get_modularity(msg):
@@ -407,12 +414,36 @@ def runlouvain_average_runs(filename, n_runs,
               +str(len(communities_list))+" louvain runs"
               +" worked, out of "+str(n_runs), file=sys.stderr)
         sys.stderr.flush()
-    coocc_count = np.zeros((len(communities_list[0]),
-                            len(communities_list[0])))
-    for communities in communities_list:
-        coocc_count += (communities[:,None] == communities[None,:])
+
     print("Louvain completed {} runs in {} seconds".format(
           n_runs, time.time() - tic))
     sys.stdout.flush()
 
-    return coocc_count.astype("float32")/float(len(communities_list))
+    print_memory_use()
+    sys.stdout.flush()
+
+    print("Preparing sparse coo_matrix")
+    sparse_coo_start = time.time()
+    #rewrite to be a sparse matrix
+    cooc_count = sp.coo_matrix((len(communities_list[0]),
+                                len(communities_list[0])),
+                               dtype="float32").tocsr()
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    for communities_idx,communities in tqdm(enumerate(communities_list)):
+        cooc_mat = communities[:,None]==communities[None,:]
+        csr_to_add = sp.csr_matrix(cooc_mat)
+        cooc_count = (cooc_count + csr_to_add)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    cooc_count.multiply(1.0/len(communities_list))
+    cooc_count = cooc_count.tocoo()
+
+    print("Prepared sparse coo_matrix in ",time.time()-sparse_coo_start,"s")
+    print_memory_use()
+    sys.stdout.flush()
+
+    return cooc_count

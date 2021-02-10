@@ -7,6 +7,13 @@ import h5py
 import traceback
 
 
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
+
+
 def load_patterns(grp, track_set):
     from modisco.core import AggregatedSeqlet
     all_pattern_names = load_string_list(dset_name="all_pattern_names",
