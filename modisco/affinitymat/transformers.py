@@ -260,9 +260,9 @@ class AbstractNNTsneProbs(AbstractAffMatTransformer):
         affinity_mat = np.array([list(row)+[-np.inf for x in
                                  range(max_neighbors-len(row))]
                                  for row in affinity_mat])
-        seqlet_neighbors = [list(row)+[np.nan for x in
-                            range(max_neighbors-len(row))]
-                            for row in nearest_neighbors]
+        nearest_neighbors = [list(row)+[np.nan for x in
+                             range(max_neighbors-len(row))]
+                             for row in nearest_neighbors]
 
         #assert that affinity_mat as the same dims as nearest_neighbors
         assert affinity_mat.shape==(len(nearest_neighbors),
