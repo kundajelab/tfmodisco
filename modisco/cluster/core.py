@@ -1,5 +1,6 @@
 from __future__ import division, print_function, absolute_import
 import sklearn
+import scipy
 from . import phenograph as ph
 import numpy as np
 import time
@@ -91,12 +92,12 @@ class LeidenCluster(AbstractAffinityMatClusterer):
         if scipy.sparse.issparse(orig_affinity_mat):
             assert np.sum(np.isnan(orig_affinity_mat.data))==0
             #assert that the min affinity is >= 0
-            assert np.min(sparse_affinity_mat.data) >= 0,\
-                    np.min(sparse_affinity_mat.data)
+            assert np.min(orig_affinity_mat.data) >= 0,\
+                    np.min(orig_affinity_mat.data)
         else:
             assert np.sum(np.isnan(orig_affinity_mat))==0
-            assert np.min(sparse_affinity_mat) >= 0,\
-                    np.min(sparse_affinity_mat)
+            assert np.min(orig_affinity_mat) >= 0,\
+                    np.min(orig_affinity_mat)
 
 
         if (self.verbose):

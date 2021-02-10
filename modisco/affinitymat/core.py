@@ -122,7 +122,8 @@ def sparse_cosine_similarity(sparse_mat_1, sparse_mat_2):
 # the top k
 def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
                              initclusters):
-    assert len(initclusters)==len(fwd_vecs)
+    if (initclusters is not None):
+        assert len(initclusters)==len(fwd_vecs)
     fwd_vecs_slice = fwd_vecs[slice_start:slice_end]
     initclusters_slice = (None if initclusters is None
                           else initclusters[slice_start:slice_end])
@@ -150,7 +151,8 @@ def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
                 y for y in ([x for x in argsort_row 
                     if initclusters_slice[x]==initclusters_slice[row_idx]][:k]) 
                 if y not in neighbor_set_topnn]) 
-        sorted_topk_indices.append(combined_neighbor_row) 
+        sorted_topk_indices.append(
+            np.array(combined_neighbor_row).astype("int")) 
         sorted_topk_sims.append(dotprod[row_idx][combined_neighbor_row])
     ##get the top k indices
     #top_k_indices = np.argpartition(dotprod, -k, axis=1)[:,-k:]
@@ -194,17 +196,16 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
             print("Batching in slices of size",batch_size)
             sys.stdout.flush()
 
-        topk_cosine_sim_results = []
+        neighbors, sims = [], []
         for i in tqdm(range(0,len(fwd_vecs),batch_size)):
-            topk_cosine_sim_results.append(
-                top_k_fwdandrev_dot_prod(fwd_vecs,
+            neighbors_batch, sims_batch = top_k_fwdandrev_dot_prod(fwd_vecs,
                                          rev_vecs,
                                          slice_start=i,
-                                         slice_end=(i+batch_size)
+                                         slice_end=(i+batch_size),
                                          k=self.n_neighbors+1,
-                                         initclusters=initclusters))
-        neighbors = [[x[0] for x in topk_cosine_sim_results]]
-        sims = [[x[1] for x in topk_cosine_sim_results]]
+                                         initclusters=initclusters)
+            neighbors.extend(neighbors_batch)
+            sims.extend(sims_batch)
 
         return sims, neighbors
 
@@ -589,7 +590,8 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         if (neighbors_of_things_to_scan is None):
             neighbors_of_things_to_scan = [list(range(len(filters)))
                                            for x in things_to_scan] 
-        assert len(neighbors_of_things_to_scan) == things_to_scan.shape[0]
+        assert (len(neighbors_of_things_to_scan) == things_to_scan.shape[0]),\
+               (len(neighbors_of_things_to_scan), things_to_scan.shape[0]) 
         assert np.max([np.max(x) for x in neighbors_of_things_to_scan])\
                 < filters.shape[0]
         assert len(things_to_scan.shape)==3

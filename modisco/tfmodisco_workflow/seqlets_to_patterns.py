@@ -818,15 +818,15 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
 
                 #reorder fine_affmat_nn, coarse_affmat_nn and seqlet_neighbors
                 # according to reorderings
-                fine_affmat_nn = np.array([finesimsinrow[rowreordering]
+                fine_affmat_nn = [finesimsinrow[rowreordering]
                                       for (finesimsinrow, rowreordering)
-                                      in zip(fine_affmat_nn, reorderings)])
-                coarse_affmat_nn = np.array([coarsesimsinrow[rowreordering]
+                                      in zip(fine_affmat_nn, reorderings)]
+                coarse_affmat_nn = [coarsesimsinrow[rowreordering]
                                       for (coarsesimsinrow, rowreordering)
-                                      in zip(coarse_affmat_nn, reorderings)])
-                seqlet_neighbors = np.array([nnrow[rowreordering]
+                                      in zip(coarse_affmat_nn, reorderings)]
+                seqlet_neighbors = [nnrow[rowreordering]
                                       for (nnrow, rowreordering)
-                                      in zip(seqlet_neighbors, reorderings)])
+                                      in zip(seqlet_neighbors, reorderings)]
 
                 del reorderings
                 gc.collect()
@@ -941,7 +941,8 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             #                            initclusters=filtered_initclusters)
             #del density_adapted_affmat
             #cluster_results_sets.append(cluster_results)
-            cluster_results = clusterer(coo_density_adapted_affmat)
+            cluster_results = clusterer(coo_density_adapted_affmat,
+                                        initclusters=filtered_initclusters)
             del coo_density_adapted_affmat
 
             num_clusters = max(cluster_results.cluster_indices+1)
