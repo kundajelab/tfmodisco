@@ -123,7 +123,7 @@ def sparse_cosine_similarity(sparse_mat_1, sparse_mat_2):
 def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
                              initclusters):
     if (initclusters is not None):
-        assert len(initclusters)==len(fwd_vecs)
+        assert len(initclusters)==fwd_vecs.shape[0]
     fwd_vecs_slice = fwd_vecs[slice_start:slice_end]
     initclusters_slice = (None if initclusters is None
                           else initclusters[slice_start:slice_end])
@@ -188,7 +188,10 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
 
         #normalize the vectors 
         fwd_vecs = magnitude_norm_sparsemat(sparse_mat=fwd_vecs)
-        rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
+        if (rev_vecs is not None):
+            rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
+        else:
+            rev_vecs = None
 
         #fwd_sims = fwd_vecs.dot(fwd_vecs.transpose())
         #rev_sims = fwd_vecs.dot(rev_vecs.transpose())
