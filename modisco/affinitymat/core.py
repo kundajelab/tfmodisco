@@ -7,6 +7,7 @@ import sys
 import time
 import itertools
 import scipy.stats
+from scipy.sparse import coo_matrix
 import gc
 import sklearn
 from joblib import Parallel, delayed
@@ -94,6 +95,11 @@ class AbstractAffinityMatrixFromSeqlets(object):
         raise NotImplementedError()
 
 
+class AbstractSparseAffmatFromFwdAndRevOneDVecs(object):
+    def __call__(self, fwd_vecs, rev_vecs):
+        raise NotImplementedError()
+
+
 class AbstractAffinityMatrixFromOneD(object):
 
     def __call__(self, vecs1, vecs2):
@@ -111,7 +117,65 @@ def sparse_cosine_similarity(sparse_mat_1, sparse_mat_2):
     return normed_sparse_mat_1.dot(normed_sparse_mat_2.transpose())
 
 
-class SparseNumpyCosineSimFromFwdAndRevOneDVecs():
+#take the dot product of fwd_vecs with
+# fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
+# the top k
+def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
+                             initclusters):
+    if (initclusters is not None):
+        assert len(initclusters)==fwd_vecs.shape[0]
+    fwd_vecs_slice = fwd_vecs[slice_start:slice_end]
+    initclusters_slice = (None if initclusters is None
+                          else initclusters[slice_start:slice_end])
+    k = min(k, fwd_vecs.shape[0])
+    if (scipy.sparse.issparse(fwd_vecs_slice)):
+        fwd_dot = np.array(fwd_vecs_slice.dot(fwd_vecs.transpose()).todense())
+    else:
+        fwd_dot = np.matmul(fwd_vecs_slice,fwd_vecs.T) 
+    if (rev_vecs is not None):
+        if (scipy.sparse.issparse(fwd_vecs_slice)):
+            rev_dot = np.array(fwd_vecs_slice.dot(rev_vecs.transpose())
+                                             .todense())
+        else:
+            rev_dot = np.matmul(fwd_vecs_slice, rev_vecs.T)
+        dotprod = np.maximum(fwd_dot, rev_dot)
+    else:
+        dotprod = fwd_dot
+
+    #dotprod has shape batchsize X num_seqlets
+    dotprod_argsort = np.argsort(-dotprod, axis=-1) 
+    sorted_topk_indices = [] 
+    sorted_topk_sims = []
+    for row_idx,argsort_row in enumerate(dotprod_argsort): 
+        combined_neighbor_row = [] 
+        neighbor_row_topnn = argsort_row[:k] 
+        neighbor_set_topnn = set(neighbor_row_topnn) 
+        #combined_neighbor_row ends up being the union of the standard nearest  
+        # neighbors plus the nearest neighbors if focusing on the initclusters 
+        combined_neighbor_row.extend(neighbor_row_topnn) 
+        if (initclusters_slice is not None): 
+            combined_neighbor_row.extend([ 
+                y for y in ([x for x in argsort_row 
+                    if initclusters_slice[x]==initclusters_slice[row_idx]][:k]) 
+                if y not in neighbor_set_topnn]) 
+        sorted_topk_indices.append(
+            np.array(combined_neighbor_row).astype("int")) 
+        sorted_topk_sims.append(dotprod[row_idx][combined_neighbor_row])
+    ##get the top k indices
+    #top_k_indices = np.argpartition(dotprod, -k, axis=1)[:,-k:]
+    #sims = np.take_along_axis(arr=dotprod, indices=top_k_indices, axis=1)
+
+    ##sort by similarity
+    #sims_argsort_result = np.argsort(sims, axis=-1)
+    #sorted_topk_sims = np.take_along_axis(arr=sims,
+    #                                      indices=sims_argsort_result, axis=1)
+    #sorted_topk_indices = np.take_along_axis(arr=top_k_indices,
+    #                                       indices=sims_argsort_result, axis=1)
+    return (sorted_topk_indices, sorted_topk_sims)
+
+
+class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
+        AbstractSparseAffmatFromFwdAndRevOneDVecs):
 
     def __init__(self, n_neighbors, verbose, nn_n_jobs,
                        memory_cap_gb=1.0):
@@ -120,11 +184,14 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs():
         self.verbose = verbose
         self.memory_cap_gb = memory_cap_gb
 
-    def __call__(self, fwd_vecs, rev_vecs):
+    def __call__(self, fwd_vecs, rev_vecs, initclusters):
 
         #normalize the vectors 
         fwd_vecs = magnitude_norm_sparsemat(sparse_mat=fwd_vecs)
-        rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
+        if (rev_vecs is not None):
+            rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
+        else:
+            rev_vecs = None
 
         #fwd_sims = fwd_vecs.dot(fwd_vecs.transpose())
         #rev_sims = fwd_vecs.dot(rev_vecs.transpose())
@@ -133,21 +200,22 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs():
         # to use given the memory cap
         memory_cap_gb = (self.memory_cap_gb if rev_vecs
                          is None else self.memory_cap_gb/2.0)
-        batch_size = int(memory_cap_gb*(2**30)/(len(fwd_vecs)*8))
-        batch_size = min(max(1,batch_size),len(fwd_vecs))
+        batch_size = int(memory_cap_gb*(2**30)/(fwd_vecs.shape[0]*8))
+        batch_size = min(max(1,batch_size),fwd_vecs.shape[0])
         if (self.verbose):
             print("Batching in slices of size",batch_size)
             sys.stdout.flush()
 
-        topk_cosine_sim_results = []
-        for i in tqdm(range(0,len(fwd_vecs),batch_size)):
-            topk_cosine_sim_results.append(
-                top_k_fwdandrev_dot_prod(fwd_vecs[i:i+batch_size],
+        neighbors, sims = [], []
+        for i in tqdm(range(0,fwd_vecs.shape[0],batch_size)):
+            neighbors_batch, sims_batch = top_k_fwdandrev_dot_prod(fwd_vecs,
                                          rev_vecs,
-                                         fwd_vecs, self.n_neighbors+1))
-        neighbors = np.concatenate(
-                     [x[0] for x in topk_cosine_sim_results], axis=0)
-        sims = np.concatenate([x[1] for x in topk_cosine_sim_results], axis=0) 
+                                         slice_start=i,
+                                         slice_end=(i+batch_size),
+                                         k=self.n_neighbors+1,
+                                         initclusters=initclusters)
+            neighbors.extend(neighbors_batch)
+            sims.extend(sims_batch)
 
         return sims, neighbors
 
@@ -308,6 +376,54 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
                 else np.array(affinity_mat_fwd))
 
 
+class SparseAffmatFromFwdAndRevSeqletEmbeddings(
+        AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, seqlets_to_1d_embedder,
+                       sparse_affmat_from_fwdnrev1dvecs, verbose):
+        self.seqlets_to_1d_embedder = seqlets_to_1d_embedder
+        self.sparse_affmat_from_fwdnrev1dvecs =\
+            sparse_affmat_from_fwdnrev1dvecs
+        self.verbose = verbose
+
+    def __call__(self, seqlets, initclusters):
+
+        cp1_time = time.time()
+        if (self.verbose):
+            print("Beginning embedding computation")
+            print_memory_use()
+            sys.stdout.flush()
+
+        embedding_fwd, embedding_rev = self.seqlets_to_1d_embedder(seqlets)
+        gc.collect()
+
+        cp2_time = time.time()
+        if (self.verbose):
+            print("Finished embedding computation in",
+                  round(cp2_time-cp1_time,2),"s")
+            print_memory_use()
+            sys.stdout.flush()
+
+        if (self.verbose):
+            print("Starting affinity matrix computations")
+            print_memory_use()
+            sys.stdout.flush()
+
+        sparse_affmat, neighbors = self.sparse_affmat_from_fwdnrev1dvecs(
+                                        fwd_vecs=embedding_fwd,
+                                        rev_vecs=embedding_rev,
+                                        initclusters=initclusters)
+
+        cp3_time = time.time()
+
+        if (self.verbose):
+            print("Finished affinity matrix computations in",
+                  round(cp3_time-cp2_time,2),"s")
+            print_memory_use()
+            sys.stdout.flush()
+        return sparse_affmat, neighbors
+
+
 class MaxCrossMetricAffinityMatrixFromSeqlets(
         AbstractAffinityMatrixFromSeqlets):
 
@@ -439,7 +555,7 @@ class AffmatFromSeqletsWithNNpairs(object):
                           (affmat_rev is not None) else np.array(affmat_fwd))
         else:
             if (len(affmat_fwd[0].shape)==2):
-                #dims are N x N x 2, where first entry of last idx is sim,
+                #dims are N x neighbs x 2, where first entry of last idx is sim,
                 # and the second entry is the alignment.
                 if (affmat_rev is None):
                     affmat = affmat_fwd
@@ -484,7 +600,8 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         if (neighbors_of_things_to_scan is None):
             neighbors_of_things_to_scan = [list(range(len(filters)))
                                            for x in things_to_scan] 
-        assert len(neighbors_of_things_to_scan) == things_to_scan.shape[0]
+        assert (len(neighbors_of_things_to_scan) == things_to_scan.shape[0]),\
+               (len(neighbors_of_things_to_scan), things_to_scan.shape[0]) 
         assert np.max([np.max(x) for x in neighbors_of_things_to_scan])\
                 < filters.shape[0]
         assert len(things_to_scan.shape)==3

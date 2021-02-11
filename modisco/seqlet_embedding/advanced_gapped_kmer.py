@@ -186,9 +186,9 @@ class AdvancedGappedKmerEmbedderFactory(object):
                 ('min_k', self.min_k),
                 ('max_k', self.max_k),
                 ('max_gap', self.max_gap),
-                ('max_len', self.max_len)
-                ('max_entries', self.max_entries)
-                ('alphabet_size', self.alphabet_size)
+                ('max_len', self.max_len),
+                ('max_entries', self.max_entries),
+                ('alphabet_size', self.alphabet_size),
                 ('n_jobs', self.n_jobs)
                 ])
 

@@ -1,5 +1,6 @@
 from __future__ import division, print_function, absolute_import
 import sklearn
+import scipy
 from . import phenograph as ph
 import numpy as np
 import time
@@ -85,9 +86,19 @@ class LeidenCluster(AbstractAffinityMatClusterer):
         self.verbose = verbose
 
     def __call__(self, orig_affinity_mat, initclusters):
-        #replace nan values with zeros
-        orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
-        assert np.min(orig_affinity_mat) >= 0, np.min(orig_affinity_mat)
+
+        #assert there are no nan values in data
+        #assert that the min affinity is >= 0
+        if scipy.sparse.issparse(orig_affinity_mat):
+            assert np.sum(np.isnan(orig_affinity_mat.data))==0
+            #assert that the min affinity is >= 0
+            assert np.min(orig_affinity_mat.data) >= 0,\
+                    np.min(orig_affinity_mat.data)
+        else:
+            assert np.sum(np.isnan(orig_affinity_mat))==0
+            assert np.min(orig_affinity_mat) >= 0,\
+                    np.min(orig_affinity_mat)
+
 
         if (self.verbose):
             print("Beginning preprocessing + Leiden")
@@ -132,6 +143,67 @@ class LeidenCluster(AbstractAffinityMatClusterer):
                         sys.stdout.flush()
         return ClusterResults(cluster_indices=best_clustering,
                               quality=best_quality)
+
+
+#class LeidenCluster(AbstractAffinityMatClusterer):
+#
+#    def __init__(self, contin_runs=10, n_leiden_iterations=-1,
+#                 partitiontype=leidenalg.ModularityVertexPartition,
+#                 affmat_transformer=None, verbose=True): 
+#        self.contin_runs = contin_runs
+#        self.n_leiden_iterations = n_leiden_iterations
+#        self.partitiontype = partitiontype
+#        self.affmat_transformer = affmat_transformer
+#        self.verbose = verbose
+#
+#    def __call__(self, orig_affinity_mat, initclusters):
+#        #replace nan values with zeros
+#        orig_affinity_mat = np.nan_to_num(orig_affinity_mat)
+#        assert np.min(orig_affinity_mat) >= 0, np.min(orig_affinity_mat)
+#
+#        if (self.verbose):
+#            print("Beginning preprocessing + Leiden")
+#            sys.stdout.flush()
+#        all_start = time.time()
+#        if (self.affmat_transformer is not None):
+#            affinity_mat = self.affmat_transformer(orig_affinity_mat)
+#        else:
+#            affinity_mat = orig_affinity_mat
+#
+#        the_graph = get_igraph_from_adjacency(adjacency=affinity_mat)
+#        best_clustering = None
+#        best_quality = None
+#
+#        if (self.verbose):
+#            toiterover = tqdm(range(self.contin_runs))
+#        else:
+#            toiterover = range(self.contin_runs)
+#
+#        #if an initclustering is specified, we would want to try the Leiden
+#        # both with and without that initialization and take the one that
+#        # gets the best modularity
+#        initclusters_to_try_list = [None]
+#        if (initclusters is not None):
+#            initclusters_to_try_list.append(initclusters)
+#
+#        for seed in toiterover:
+#            for initclusters_to_try in initclusters_to_try_list:
+#                partition = leidenalg.find_partition(
+#                    the_graph, self.partitiontype,
+#                    weights=(np.array(the_graph.es['weight'])
+#                             .astype(np.float64)),
+#                    n_iterations=self.n_leiden_iterations,
+#                    initial_membership=initclusters_to_try,
+#                    seed=seed*100)
+#                quality = partition.quality()
+#                if ((best_quality is None) or (quality > best_quality)):
+#                    best_quality = quality
+#                    best_clustering = np.array(partition.membership)
+#                    if (self.verbose):
+#                        print("Quality:",best_quality)
+#                        sys.stdout.flush()
+#        return ClusterResults(cluster_indices=best_clustering,
+#                              quality=best_quality)
 
 
 #From: https://github.com/theislab/scanpy/blob/8131b05b7a8729eae3d3a5e146292f377dd736f7/scanpy/_utils.py#L159
