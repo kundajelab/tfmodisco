@@ -19,10 +19,6 @@ MotifHitAndCoord = namedtuple("MotifHitAndCoord",
                      "example_idx", "start", "end", "is_revcomp"]) 
 
 
-def flatten_seqlet_impscore_features(seqlet_impscores):
-    return np.reshape(seqlet_impscores, (len(seqlet_impscores), -1))
-
-
 def facility_locator(distmat, num_exemplars):
     exemplars = [] 
     current_bestrep = np.inf*np.ones(distmat.shape[0])
@@ -105,7 +101,8 @@ def get_exemplar_motifs(seqlets, pattern_comparison_settings,
          pattern_comparison_settings.track_transformer)
     #flatten the fwd_seqlet_data (they are aligned so it's ok to flatten
     # them before doing comparisons)
-    fwd_seqlet_data_vectors = flatten_seqlet_impscore_features(fwd_seqlet_data)
+    fwd_seqlet_data_vectors = util.flatten_seqlet_impscore_features(
+                                        fwd_seqlet_data)
     #compute the affinity matrix
     orig_affmat = compute_pairwise_continjacc_sims(
         vecs1=fwd_seqlet_data_vectors,
@@ -124,13 +121,13 @@ def get_exemplar_motifs(seqlets, pattern_comparison_settings,
                if is_passing]
     filtered_orig_motif = make_aggregated_seqlet(seqlets)
     
-    
     #convert to distance matrix
     distmat = 1/( np.maximum(affmat,1e-7) )
     #get exemplars
     seqlet_exemplar_indices = facility_locator(
         distmat=distmat,
-        num_exemplars=min(max_exemplars, int(np.ceil(len(seqlets)/seqlets_per_exemplar)) ))
+        num_exemplars=min(max_exemplars,
+                          int(np.ceil(len(seqlets)/seqlets_per_exemplar)) ))
     #aggregate over the similar ones, return the aggseqlets
     representive_exemplars = np.argmax(affmat[:, seqlet_exemplar_indices],
                                          axis=-1)
@@ -263,7 +260,7 @@ class FeaturesProducer(object):
                 track_transformer=pattern_comparison_settings.track_transformer)
         #Flatten the importance score data into vectors
         self.allexemplarmotifs_impscoresdata_fwd = (
-            flatten_seqlet_impscore_features(
+            util.flatten_seqlet_impscore_features(
                 allexemplarmotifs_impscoresdata_fwd))
 
         #Do the same for per-position IC (for weighting exemplar sim
@@ -276,7 +273,7 @@ class FeaturesProducer(object):
         #compute the per-position IC, then tile (for ACGT) and flatten to
         # get it into vector form.
         self.per_position_ic_allexemplarmotifs_fwd =\
-            np.maximum(flatten_seqlet_impscore_features(np.array([
+            np.maximum(util.flatten_seqlet_impscore_features(np.array([
                 np.tile(util.compute_per_position_ic(
                     ppm=x,
                     background=bg_freq,
@@ -294,7 +291,7 @@ class FeaturesProducer(object):
                track_transformer=
                 self.pattern_comparison_settings.track_transformer)
         #Flatten the importance score data into vectors
-        impscoresdata_fwd = (flatten_seqlet_impscore_features(
+        impscoresdata_fwd = (util.flatten_seqlet_impscore_features(
                              impscoresdata_fwd))
 
         start = time.time()

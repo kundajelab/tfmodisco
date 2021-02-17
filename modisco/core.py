@@ -3,12 +3,14 @@ from collections import OrderedDict
 from collections import namedtuple
 from collections import defaultdict
 import numpy as np
+import sklearn.manifold
 import scipy
 import scipy.signal
 import itertools
 import sys
 from . import util
 from .value_provider import AbstractValueProvider
+from joblib import Parallel, delayed
 
 
 class Snippet(object):
@@ -642,6 +644,27 @@ class SeqletsAndAlignments(object):
         return the_copy
 
 
+def compute_continjacc_sims_1vmany_nneighbs(vec1, vecs2, n_neighb):
+    sign_vec1, signs_vecs2 = np.sign(vec1), np.sign(vecs2)
+    abs_vec1, abs_vecs2 = np.abs(vec1), np.abs(vecs2)
+    intersection = np.sum((np.minimum(abs_vec1[None,:], abs_vecs2[:,:])
+                 *sign_vec1[None,:]*signs_vecs2[:,:]), axis=-1)
+    union = np.sum(np.maximum(abs_vec1[None,:],
+                   abs_vecs2[:,:]), axis=-1)
+    sims = intersection/union
+    argsort_sims = np.argsort(-sims) #largest sims first
+    neighbs = argsort_sims[:n_neighb] 
+    return sims[neighbs], neighbs
+
+
+def compute_nneigh_sims_via_continjacc(vecs1, vecs2, n_neighb, n_jobs):
+    sims_and_neighbs = np.array(Parallel(n_jobs=n_jobs, verbose=True)(
+            delayed(compute_continjacc_sims_1vmany_nneighbs)(
+                     vec1, vecs2, n_neighb) for vec1 in vecs1))
+    return (np.array([x[0] for x in sims_and_neighbs]),
+            np.array([x[1] for x in sims_and_neighbs]))
+
+
 class AggregatedSeqlet(Pattern):
 
     def __init__(self, seqlets_and_alnmts_arr):
@@ -653,7 +676,10 @@ class AggregatedSeqlet(Pattern):
             seqlets_and_alnmts_arr = [SeqletAndAlignment(seqlet=x.seqlet,
                 alnmt=x.alnmt-start_idx) for x in seqlets_and_alnmts_arr] 
             self._set_length(seqlets_and_alnmts_arr)
-            self._compute_aggregation(seqlets_and_alnmts_arr) 
+            self._compute_aggregation(seqlets_and_alnmts_arr)
+        self.subclusters = None
+        self.twod_embedding = None
+        self.subcluster_to_subpattern = None
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
@@ -664,13 +690,133 @@ class AggregatedSeqlet(Pattern):
         seqlets_and_alnmts_arr = [
             SeqletAndAlignment(seqlet=seqlet, alnmt=alnmt)
             for seqlet,alnmt in zip(seqlets, alnmts)]
-        return AggregatedSeqlet(seqlets_and_alnmts_arr=seqlets_and_alnmts_arr) 
+        to_return = AggregatedSeqlet(
+                        seqlets_and_alnmts_arr=seqlets_and_alnmts_arr)
+        if ("subclusters") in grp:
+            subclusters = np.array(grp["subclusters"]) 
+            twod_embedding = np.array(grp["twod_embedding"])
+            #load subcluster_to_subpattern
+            subcluster_to_subpattern = OrderedDict()
+            subcluster_to_subpattern_grp = grp["subcluster_to_subpattern"] 
+            subcluster_names = subcluster_to_subpattern_grp["subcluster_names"]
+            for subcluster_name in subcluster_names:
+                subpattern_grp = subcluster_to_subpattern_grp[subcluster_name]
+                subpattern = AggregatedSeqlet.from_hdf5(grp=subpattern_grp,
+                                                      track_set=track_set) 
+                subcluster_to_subpattern[int(
+                    subcluster_name.decode("utf-8").split("_")[1])] =\
+                     subpattern
+            to_return.subclusters = subclusters
+            to_return.twod_embedding = twod_embedding
+            to_return.subcluster_to_subpattern = subcluster_to_subpattern
+        return to_return 
 
     def save_hdf5(self, grp):
         for track_name,snippet in self.track_name_to_snippet.items():
             snippet.save_hdf5(grp.create_group(track_name))
         self._seqlets_and_alnmts.save_hdf5(
              grp.create_group("seqlets_and_alnmts"))
+        if (self.subclusters is not None):
+            grp.create_dataset("subclusters", data=self.subclusters)
+            #assume the other two things are also not none
+            grp.create_dataset("twod_embedding", data=self.twod_embedding)
+            #save subcluster_to_subpattern
+            subcluster_to_subpattern_grp =\
+                grp.create_group("subcluster_to_subpattern")
+            util.save_string_list(
+                ["subcluster_"+str(x) for x in self.subcluster_to_subpattern.keys()],
+                dset_name="subcluster_names", grp=subcluster_to_subpattern_grp)
+            for subcluster,subpattern in self.subcluster_to_subpattern.items():
+                subpattern_grp = subcluster_to_subpattern_grp.create_group(
+                                "subcluster_"+str(subcluster)) 
+                subpattern.save_hdf5(subpattern_grp)
+
+    def compute_subclusters_and_embedding(self, pattern_comparison_settings,
+                                          perplexity, n_jobs, verbose=True):
+
+        from . import affinitymat
+        from . import cluster
+
+        #this method assumes all the seqlets have been expanded so they
+        # all start at 0
+        fwd_seqlet_data, _ = get_2d_data_from_patterns(
+            patterns=self.seqlets,
+            track_names=pattern_comparison_settings.track_names,
+            track_transformer=
+             pattern_comparison_settings.track_transformer)
+        fwd_seqlet_data_vectors = (
+            util.flatten_seqlet_impscore_features(fwd_seqlet_data))
+
+        #to keep the affmat sparse in the case of very large motifs,
+        # we'll only retain the top k
+        affmat_nn, seqlet_neighbors = compute_nneigh_sims_via_continjacc(
+            vecs1=fwd_seqlet_data_vectors,
+            vecs2=fwd_seqlet_data_vectors,
+            #it's perplexity*30 + 2 because in
+            # transformers.AbstractNNTsneProbs
+            # it looks for more than int(3. * self.perplexity + 1) neighbors
+            # (the nearest neighbor is the point itself)
+            n_neighb=min(int(perplexity*3 + 2),
+                         len(fwd_seqlet_data_vectors)), 
+            n_jobs=n_jobs)
+
+        aff_to_dist_mat = affinitymat.transformers.AffToDistViaInvLogistic() 
+
+        #Got the nearest-neighbor distances, now need to put in sparse matrix
+        # format
+        distmat_nn = aff_to_dist_mat(affinity_mat=affmat_nn) 
+        distmat_sp = util.coo_matrix_from_neighborsformat(
+            entries=distmat_nn, neighbors=seqlet_neighbors,
+            ncols=len(distmat_nn))
+        #convert to csr and sort by indices to (try to) get rid of efficiency warning
+        distmat_sp = distmat_sp.tocsr()
+        distmat_sp.sort_indices()
+
+        twod_embedding = sklearn.manifold.TSNE(
+            perplexity=perplexity,
+            metric='precomputed', verbose=3).fit_transform(distmat_sp) 
+        self.twod_embedding = twod_embedding
+
+        #do density adaptation
+        density_adapted_affmat_transformer =\
+            affinitymat.transformers.NNTsneConditionalProbs(
+                perplexity=perplexity,
+                aff_to_dist_mat=aff_to_dist_mat)
+        sp_density_adapted_affmat = density_adapted_affmat_transformer(
+                                        affmat_nn, seqlet_neighbors)
+
+        #Do Leiden clustering
+        clusterer = cluster.core.LeidenCluster(
+                affmat_transformer=
+                    affinitymat.transformers.SymmetrizeByAddition(
+                                                   probability_normalize=True),
+                contin_runs=50,
+                n_leiden_iterations=-1,
+                verbose=verbose)
+        cluster_results = clusterer(sp_density_adapted_affmat,
+                                    initclusters=None)
+
+        self.subclusters = cluster_results.cluster_indices
+        self.update_exemplarmotifs_from_subclusters()
+
+    def update_exemplarmotifs_from_subclusters(self):
+        #this method assumes all the seqlets have been expanded so they
+        # all start at 0
+        subcluster_to_seqletsandalignments = OrderedDict()
+        for seqlet, subcluster in zip(self.seqlets, self.subclusters):
+            if (subcluster not in subcluster_to_seqletsandalignments):
+                subcluster_to_seqletsandalignments[subcluster] = []
+            subcluster_to_seqletsandalignments[subcluster].append(
+                SeqletAndAlignment(seqlet=seqlet, alnmt=0) )
+        subcluster_to_subpattern = OrderedDict([
+            (subcluster, AggregatedSeqlet(seqletsandalignments))
+            for subcluster,seqletsandalignments in
+            subcluster_to_seqletsandalignments.items()])
+        #resort subcluster_to_subpattern so that the subclusters with the
+        # most seqlets come first
+        self.subcluster_to_subpattern = OrderedDict(
+            sorted(subcluster_to_subpattern.items(),
+                   key=lambda x: -len(x[1].seqlets)))
 
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=

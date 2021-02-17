@@ -5,6 +5,7 @@ import subprocess
 import numpy as np
 import h5py
 import traceback
+import scipy.sparse
 
 
 def print_memory_use():
@@ -35,6 +36,20 @@ def save_patterns(patterns, grp):
         pattern.save_hdf5(pattern_grp)
     save_string_list(all_pattern_names, dset_name="all_pattern_names",
                      grp=grp)
+
+
+def flatten_seqlet_impscore_features(seqlet_impscores):
+    return np.reshape(seqlet_impscores, (len(seqlet_impscores), -1))
+
+
+def coo_matrix_from_neighborsformat(entries, neighbors, ncols):
+    coo_mat = scipy.sparse.coo_matrix(
+            (np.concatenate(entries, axis=0),
+             (np.array([i for i in range(len(neighbors))
+                           for j in neighbors[i]]).astype("int"),
+              np.concatenate(neighbors, axis=0)) ),
+            shape=(len(entries), ncols)) 
+    return coo_mat
 
 
 def load_string_list(dset_name, grp):
