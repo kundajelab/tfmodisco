@@ -123,6 +123,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        final_min_cluster_size=30,
 
                        final_flank_to_add=10,
+                       final_subcluster_perplexity=30,
+
                        verbose=True, seed=1234):
 
         self.initclusterer_factory = initclusterer_factory
@@ -181,6 +183,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         #final postprocessor settings
         self.final_flank_to_add=final_flank_to_add
+        self.final_subcluster_perplexity=final_subcluster_perplexity
 
         #other settings
         self.verbose = verbose
@@ -229,7 +232,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 ('min_similarity_for_seqlet_assignment',
                  self.min_similarity_for_seqlet_assignment),
                 ('final_min_cluster_size', self.final_min_cluster_size),
-                ('final_flank_to_add', self.final_flank_to_add)]) 
+                ('final_flank_to_add', self.final_flank_to_add),
+                ('final_subcluster_perplexity',
+                 self.final_subcluster_perplexity)
+                ]) 
         return to_return
 
     def __call__(self, track_set, onehot_track_name,
@@ -490,6 +496,12 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                         track_set=track_set,
                                         flank_to_add=self.final_flank_to_add) 
 
+        final_subcluster_settings = {
+            "pattern_comparison_settings": pattern_comparison_settings,
+            "perplexity": self.final_subcluster_perplexity,
+            "n_jobs": self.n_cores,
+        }
+
         return TfModiscoSeqletsToPatterns(
                 seqlets_sorter=seqlets_sorter,
                 initclusterer_factory=initclusterer_factory,
@@ -509,6 +521,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 similar_patterns_collapser=similar_patterns_collapser,
                 seqlet_reassigner=seqlet_reassigner,
                 final_postprocessor=final_postprocessor,
+                final_subcluster_settings=final_subcluster_settings,
                 verbose=self.verbose)
 
     def save_hdf5(self, grp):
@@ -643,6 +656,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        similar_patterns_collapser,
                        seqlet_reassigner,
                        final_postprocessor,
+                       final_subcluster_settings,
                        verbose=True):
 
         self.seqlets_sorter = seqlets_sorter
@@ -666,7 +680,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         self.final_postprocessor = final_postprocessor
 
         self.verbose = verbose
-
+        self.final_subcluster_settings = final_subcluster_settings
 
     def get_cluster_to_aggregate_motif(self, seqlets, cluster_indices,
                                        sign_consistency_check,
@@ -1030,6 +1044,14 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                   +str(total_time_taken)+"s")
             print_memory_use()
             sys.stdout.flush()
+
+        #apply subclustering procedure on the final patterns
+        print("Applying subclustering to the final motifs")
+        for patternidx, pattern in enumerate(final_patterns):
+            print("On pattern",patternidx)
+            pattern.compute_subclusters_and_embedding(
+                verbose=self.verbose,
+                **self.final_subcluster_settings)
 
         results = SeqletsToPatternsResults(
             each_round_initcluster_motifs=each_round_initcluster_motifs,             
