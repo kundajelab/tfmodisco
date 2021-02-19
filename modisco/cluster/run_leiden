@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 import igraph as ig
 import leidenalg
+import sys
 
 
 #based on https://github.com/theislab/scanpy/blob/8131b05b7a8729eae3d3a5e146292f377dd736f7/scanpy/_utils.py#L159
@@ -14,8 +15,8 @@ def get_igraph(sources_idxs_file, targets_idxs_file, weights_file, n_vertices):
     g = ig.Graph(directed=None) 
     g.add_vertices(n_vertices) # this adds adjacency.shap[0] vertices
     g.add_edges(list(zip(sources, targets))) 
-    g.es['weight'] = weights                                                
-    if g.vcount() != adjacency.shape[0]: 
+    g.es['weight'] = weights       
+    if g.vcount() != n_vertices: 
         print('WARNING: The constructed graph has only ' 
               +str(g.vcount())+' nodes. ' 
              'Your adjacency matrix contained redundant nodes.') 
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     parser.add_argument("--weights_file", required=True)    
     parser.add_argument("--n_vertices", type=int, required=True) 
     parser.add_argument("--partition_type", required=True) 
-    parser.add_argument("--n_leiden_iterations", type=int, required=True) 
+    parser.add_argument("--n_iterations", type=int, required=True) 
     parser.add_argument("--initial_membership_file", default=None,
                         required=False) 
     parser.add_argument("--seed", type=int, required=True) 
@@ -49,7 +50,7 @@ if __name__ == "__main__":
     seed = args.seed
 
     partition = leidenalg.find_partition(
-        the_graph=the_graph,
+        graph=the_graph,
         partition_type=partition_type,
         weights=(np.array(the_graph.es['weight']).astype(np.float64)),                              
         n_iterations=n_iterations,                      
@@ -60,4 +61,5 @@ if __name__ == "__main__":
     print("########################")
     print("Quality:",quality)
     print("Membership:")
-    print(",".join[str(x) for x in partition.membership]) 
+    print("\n".join(str(x) for x in partition.membership))
+    sys.stdout.flush() 

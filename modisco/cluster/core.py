@@ -10,6 +10,7 @@ from tqdm import tqdm
 import uuid
 import os, re
 import subprocess
+from joblib import Parallel, delayed
 
 
 class ClusterResults(object):
@@ -79,10 +80,10 @@ class PhenographCluster(AbstractAffinityMatClusterer):
 
 class LeidenCluster(AbstractAffinityMatClusterer):
 
-    def __init__(self, contin_runs=10, n_leiden_iterations=-1,
+    def __init__(self, numseedstotry=10, n_leiden_iterations=-1,
                  partitiontype=leidenalg.ModularityVertexPartition,
                  affmat_transformer=None, verbose=True): 
-        self.contin_runs = contin_runs
+        self.numseedstotry = numseedstotry
         self.n_leiden_iterations = n_leiden_iterations
         self.partitiontype = partitiontype
         self.affmat_transformer = affmat_transformer
@@ -116,9 +117,9 @@ class LeidenCluster(AbstractAffinityMatClusterer):
         best_quality = None
 
         if (self.verbose):
-            toiterover = tqdm(range(self.contin_runs))
+            toiterover = tqdm(range(self.numseedstotry))
         else:
-            toiterover = range(self.contin_runs)
+            toiterover = range(self.numseedstotry)
 
         #if an initclustering is specified, we would want to try the Leiden
         # both with and without that initialization and take the one that
@@ -147,7 +148,7 @@ class LeidenCluster(AbstractAffinityMatClusterer):
                               quality=best_quality)
 
 
-def run_leiden(affinitymat, use_initclusters,
+def run_leiden(fileprefix, use_initclusters, n_vertices,
                partitiontype, n_leiden_iterations, seed):
 
     lpath = os.path.join(os.path.dirname(__file__), "run_leiden")
@@ -155,11 +156,11 @@ def run_leiden(affinitymat, use_initclusters,
     args = [lpath,
             "--sources_idxs_file", fileprefix+"_sources.npy",
             "--targets_idxs_file", fileprefix+"_targets.npy",
-            "--weights_idxs_file", fileprefix+"_weights.npy",
-            "--n_vertices", str(affinity_mat.shape[0]),
+            "--weights_file", fileprefix+"_weights.npy",
+            "--n_vertices", str(n_vertices),
             "--partition_type", partitiontype.__name__, 
-            "--n_leiden_iterations", str(n_leiden_iterations),
-            "--seed", int(seed)]
+            "--n_iterations", str(n_leiden_iterations),
+            "--seed", str(seed)]
     if (use_initclusters):
         args = args + ["--initial_membership_file",
                        fileprefix+"_initclusters.npy"]
@@ -167,26 +168,26 @@ def run_leiden(affinitymat, use_initclusters,
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = p.communicate()
 
-    parse_membership==False
+    parse_membership = False
     membership = []
     for i, line in enumerate(out.decode().splitlines()):
-        if line.startswith("Quality:"):
-            quality = float(line.split(" ")[1])
-        if line.startswith("Membership:")
-            parse_membership=True 
         if (parse_membership):
             membership.append(int(line))
+        if line.startswith("Quality:"):
+            quality = float(line.split(" ")[1])
+        if line.startswith("Membership:"):
+            parse_membership = True 
 
     return quality, np.array(membership)
 
 
 class LeidenClusterParallel(AbstractAffinityMatClusterer):
 
-    def __init__(self, contin_runs=10, n_leiden_iterations=-1,
+    def __init__(self, n_jobs,
+                 numseedstotry=10, n_leiden_iterations=-1,
                  partitiontype=leidenalg.ModularityVertexPartition,
-                 n_jobs,
                  affmat_transformer=None, verbose=True): 
-        self.contin_runs = contin_runs
+        self.numseedstotry = numseedstotry 
         self.n_leiden_iterations = n_leiden_iterations
         self.partitiontype = partitiontype
         self.n_jobs = n_jobs
@@ -220,17 +221,14 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
         best_clustering = None
         best_quality = None
 
-        if (self.verbose):
-            toiterover = tqdm(range(self.contin_runs))
-        else:
-            toiterover = range(self.contin_runs)
+        toiterover = range(self.numseedstotry)
 
         #if an initclustering is specified, we would want to try the Leiden
         # both with and without that initialization and take the one that
         # gets the best modularity
-        initclusters_to_try_list = [None]
+        initclusters_to_try_list = [False]
         if (initclusters is not None):
-            initclusters_to_try_list.append(initclusters)
+            initclusters_to_try_list.append(True)
 
 
         #write out the contents of affinity_mat and initclusters if applicable
@@ -241,15 +239,19 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
 
         np.save(uid+"_sources.npy", sources)
         np.save(uid+"_targets.npy", targets)
-        np.save(uid+"_weights.npy", weights)
+        np.save(uid+"_weights.npy", weights.A1) #A1 is the same as ravel()
 
         if (initclusters is not None):
             np.save(uid+"_initclusters.npy", initclusters)
 
-        for use_initclusters in [False, True]:
+        for use_initclusters in initclusters_to_try_list:
 
-            parallel_leiden_results = (Parallel(n_jobs=n_jobs, verbose=50)(
-                 delayed(run_leiden)(uid, use_initclusters, self.partitiontype,
+            parallel_leiden_results = (
+                Parallel(n_jobs=self.n_jobs,
+                         verbose=self.verbose)(
+                 delayed(run_leiden)(uid, use_initclusters,
+                                     affinity_mat.shape[0],
+                                     self.partitiontype,
                                      self.n_leiden_iterations, seed*100)
                  for seed in toiterover)) 
 

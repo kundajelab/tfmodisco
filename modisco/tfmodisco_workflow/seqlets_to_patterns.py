@@ -278,15 +278,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 zip(hypothetical_contribs_track_names,
                     [np.sign(x) for x in track_signs])))
 
-        ##affinity matrix from embeddings
-        #coarse_affmat_computer =\
-        #    affinitymat.core.AffmatFromSeqletEmbeddings(
-        #        seqlets_to_1d_embedder=seqlets_to_1d_embedder,
-        #        affinity_mat_from_1d=\
-        #            affinitymat.core.NumpyCosineSimilarity(
-        #                verbose=self.verbose),
-        #        verbose=self.verbose)
-
         #affinity matrix from embeddings
         coarse_affmat_computer =\
             affinitymat.core.SparseAffmatFromFwdAndRevSeqletEmbeddings(
@@ -335,9 +326,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 contin_runs=self.contin_runs_r1,
                 verbose=self.verbose, seed=self.seed)
         else:
-            clusterer_r1 = cluster.core.LeidenCluster(
+            clusterer_r1 = cluster.core.LeidenClusterParallel(
+                n_jobs=self.n_cores, 
                 affmat_transformer=affmat_transformer_r1,
-                contin_runs=self.contin_runs_r1,
+                numseedstotry=self.contin_runs_r1,
                 n_leiden_iterations=self.n_leiden_iterations_r1,
                 verbose=self.verbose)
 
@@ -357,9 +349,10 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 verbose=self.verbose, seed=self.seed,
                 initclusters_weight=self.louvain_initclusters_weight)
         else:
-            clusterer_r2 = cluster.core.LeidenCluster(
+            clusterer_r2 = cluster.core.LeidenClusterParallel(
+                n_jobs=self.n_cores, 
                 affmat_transformer=affmat_transformer_r2,
-                contin_runs=self.contin_runs_r2,
+                numseedstotry=self.contin_runs_r2,
                 n_leiden_iterations=self.n_leiden_iterations_r2,
                 verbose=self.verbose)
         
