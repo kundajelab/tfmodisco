@@ -774,7 +774,8 @@ class AggregatedSeqlet(Pattern):
 
         twod_embedding = sklearn.manifold.TSNE(
             perplexity=perplexity,
-            metric='precomputed', verbose=3).fit_transform(distmat_sp) 
+            metric='precomputed',
+            verbose=3, random_state=1234).fit_transform(distmat_sp) 
         self.twod_embedding = twod_embedding
 
         #do density adaptation
@@ -786,11 +787,12 @@ class AggregatedSeqlet(Pattern):
                                         affmat_nn, seqlet_neighbors)
 
         #Do Leiden clustering
-        clusterer = cluster.core.LeidenCluster(
+        clusterer = cluster.core.LeidenClusterParallel(
+                n_jobs=n_jobs,
                 affmat_transformer=
                     affinitymat.transformers.SymmetrizeByAddition(
                                                    probability_normalize=True),
-                contin_runs=50,
+                numseedstotry=50,
                 n_leiden_iterations=-1,
                 verbose=verbose)
         cluster_results = clusterer(sp_density_adapted_affmat,
