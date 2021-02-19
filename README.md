@@ -7,7 +7,7 @@
 Installation:
 At the time of writing, the latest version on pypi is version 0.5.6.5 and can be installed using `pip install modisco`. To install from this source code, clone the repo and then run `pip install --editable /path/to/cloned/repo`.
 
-A technical note describing version 0.5.1.1 is available at [https://arxiv.org/abs/1811.00416](https://arxiv.org/abs/1811.00416).
+A technical note describing version 0.5.6.5 is available at [https://arxiv.org/abs/1811.00416](https://arxiv.org/abs/1811.00416).
 Video of talk at NIPS MLCB: https://www.youtube.com/watch?v=fXPGVJg956E
 
 Please see the following example notebooks:
