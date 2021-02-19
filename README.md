@@ -4,6 +4,8 @@
 
 **NOTE: we are still refining the multi-task version of TF-MoDISco. If you encounter difficulties running TF-MoDISco with multiple tasks, our recommendation is to run it on one task at a time.**
 
+**NOTE: although in the GkmExplain paper, TF-MoDISco was only run on importance scores computed on the testing set, this is NOT a requirement of TF-MoDISco; the TF-MoDISco algorithm can just as easily be run on importance scores derived from the full dataset, if the user feels that will increase the sensitivity of the results**
+
 Installation:
 At the time of writing, the latest version on pypi is version 0.5.13.0 and can be installed using `pip install modisco`. To install from this source code, clone the repo and then run `pip install --editable /path/to/cloned/repo`.
 
