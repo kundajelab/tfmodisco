@@ -3,16 +3,21 @@ from collections import OrderedDict
 from collections import namedtuple
 from collections import defaultdict
 import numpy as np
+import sklearn.manifold
 import scipy
+import scipy.signal
 import itertools
 import sys
 from . import util
+from .value_provider import AbstractValueProvider
+from joblib import Parallel, delayed
 
 
 class Snippet(object):
 
     def __init__(self, fwd, rev, has_pos_axis):
-        assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
+        if (rev is not None):
+            assert len(fwd)==len(rev),str(len(fwd))+" "+str(len(rev))
         self.fwd = fwd
         self.rev = rev
         self.has_pos_axis = has_pos_axis
@@ -21,20 +26,22 @@ class Snippet(object):
         assert end_idx <= len(self)
         assert start_idx >= 0
         new_fwd = self.fwd[start_idx:end_idx]
-        new_rev = self.rev[len(self)-end_idx:len(self)-start_idx]
+        new_rev = (self.rev[len(self)-end_idx:len(self)-start_idx]
+                   if self.rev is not None else None)
         return Snippet(fwd=new_fwd, rev=new_rev,
                        has_pos_axis=self.has_pos_axis)
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
         fwd = np.array(grp["fwd"]) 
-        rev = np.array(grp["rev"])
+        rev = (np.array(grp["rev"]) if "rev" in grp else None)
         has_pos_axis = grp.attrs["has_pos_axis"]
         return cls(fwd=fwd, rev=rev, has_pos_axis=has_pos_axis)
 
     def save_hdf5(self, grp):
         grp.create_dataset("fwd", data=self.fwd)  
-        grp.create_dataset("rev", data=self.rev)
+        if (self.rev is not None):
+            grp.create_dataset("rev", data=self.rev)
         grp.attrs["has_pos_axis"] = self.has_pos_axis
 
     def __len__(self):
@@ -53,9 +60,10 @@ class DataTrack(object):
     """
     def __init__(self, name, fwd_tracks, rev_tracks, has_pos_axis):
         self.name = name
-        assert len(fwd_tracks)==len(rev_tracks)
-        for fwd,rev in zip(fwd_tracks, rev_tracks):
-            assert len(fwd)==len(rev)
+        assert (rev_tracks is None) or (len(fwd_tracks)==len(rev_tracks))
+        if (rev_tracks is not None):
+            for fwd,rev in zip(fwd_tracks, rev_tracks):
+                assert len(fwd)==len(rev)
         self.fwd_tracks = fwd_tracks
         self.rev_tracks = rev_tracks
         self.has_pos_axis = has_pos_axis
@@ -67,17 +75,43 @@ class DataTrack(object):
         if (self.has_pos_axis==False):
             snippet = Snippet(
                     fwd=self.fwd_tracks[coor.example_idx],
-                    rev=self.rev_tracks[coor.example_idx],
+                    rev=(self.rev_tracks[coor.example_idx]
+                         if self.rev_tracks is not None else None),
                     has_pos_axis=self.has_pos_axis)
         else:
-            assert coor.start >= 0
-            assert len(self.fwd_tracks[coor.example_idx]) >= coor.end
+            #assert coor.start >= 0
+            #assert len(self.fwd_tracks[coor.example_idx]) >= coor.end, coor.end
+
+            right_pad_needed = max((
+                 coor.end - len(self.fwd_tracks[coor.example_idx])),0)
+            left_pad_needed = max(-coor.start, 0)
+
+            fwd = self.fwd_tracks[coor.example_idx][max(coor.start,0):coor.end]
+            rev = (self.rev_tracks[
+                        coor.example_idx][
+                        max(len(self.rev_tracks[coor.example_idx])-coor.end,0):
+                        (len(self.rev_tracks[coor.example_idx])-coor.start)]
+                        if self.rev_tracks is not None else None)
+
+            if (left_pad_needed > 0 or right_pad_needed > 0):
+                print("Applying left/right pad of",left_pad_needed,"and",
+                      right_pad_needed,"for",
+                      (coor.example_idx, coor.start, coor.end),
+                      "with total sequence length",
+                      len(self.fwd_tracks[coor.example_idx]))
+                fwd = np.pad(array=fwd,
+                             pad_width=((left_pad_needed, right_pad_needed),
+                                        (0,0)),
+                             mode="constant")
+                if (self.rev_tracks is not None):
+                    rev = np.pad(array=rev,
+                                 pad_width=(
+                                  (right_pad_needed, left_pad_needed),
+                                  (0,0)),
+                                 mode="constant")
             snippet = Snippet(
-                    fwd=self.fwd_tracks[coor.example_idx][coor.start:coor.end],
-                    rev=self.rev_tracks[
-                         coor.example_idx][
-                         (len(self.rev_tracks[coor.example_idx])-coor.end):
-                         (len(self.rev_tracks[coor.example_idx])-coor.start)],
+                    fwd=fwd,
+                    rev=rev,
                     has_pos_axis=self.has_pos_axis)
         if (coor.is_revcomp):
             snippet = snippet.revcomp()
@@ -99,6 +133,11 @@ class TrackSet(object):
         return len(self.track_name_to_data_track[
                     list(self.track_name_to_data_track.keys())[0]]
                     .fwd_tracks[example_idx])
+
+    @property
+    def num_examples(self):
+        return len(self.track_name_to_data_track[
+                    list(self.track_name_to_data_track.keys())[0]].fwd_tracks)
 
     def add_track(self, data_track):
         assert type(data_track).__name__=="DataTrack"
@@ -145,6 +184,14 @@ class CoordOverlapDetector(object):
     def __init__(self, min_overlap_fraction):
         self.min_overlap_fraction = min_overlap_fraction
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        min_overlap_fraction = grp.attrs["min_overlap_fraction"]
+        return cls(min_overlap_fraction=min_overlap_fraction)
+
+    def save_hdf5(self, grp):
+        grp.attrs["min_overlap_fraction"] = self.min_overlap_fraction
+
     def __call__(self, coord1, coord2):
         if (coord1.example_idx != coord2.example_idx):
             return False
@@ -158,6 +205,14 @@ class SeqletComparator(object):
 
     def __init__(self, value_provider):
         self.value_provider = value_provider
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        value_provider = AbstractValueProvider.from_hdf5(grp["value_provider"]) 
+        return cls(value_provider=value_provider)
+
+    def save_hdf5(self, grp):
+        self.value_provider.save_hdf5(grp.create_group("value_provider")) 
 
     def get_larger(self, seqlet1, seqlet2):
         return (seqlet1 if (self.value_provider(seqlet1) >=
@@ -174,6 +229,19 @@ class SeqletsOverlapResolver(object):
                        seqlet_comparator):
         self.overlap_detector = overlap_detector
         self.seqlet_comparator = seqlet_comparator
+
+    @classmethod
+    def from_hdf5(cls, grp):
+        overlap_detector = CoordOverlapDetector.from_hdf5(
+                            grp["overlap_detector"])  
+        seqlet_comparator = SeqletComparator.from_hdf5(
+                             grp["seqlet_comparator"]) 
+        return cls(overlap_detector=overlap_detector,
+                   seqlet_comparator=seqlet_comparator)
+
+    def save_hdf5(self, grp):
+        self.overlap_detector.save_hdf5(grp.create_group("overlap_detector"))
+        self.seqlet_comparator.save_hdf5(grp.create_group("seqlet_comparator"))
 
     def __call__(self, all_seqlets):
         example_idx_to_seqlets = OrderedDict() 
@@ -199,81 +267,47 @@ class SeqletsOverlapResolver(object):
         return list(itertools.chain(*example_idx_to_seqlets.values())) 
 
 
-class AbstractAttributeProvider(object):
-
-    def __init__(self, name):
-        self.name = name
-
-    def annotate(self, seqlets):
-        for seqlet in seqlets:
-            seqlet.set_attribute(self)
-
-    def __call__(self, seqlet):
-        raise NotImplementedError()
-
-
-class AbstractScoreTransformer(AbstractAttributeProvider):
-
-    def __init__(self, name):
-        super(AbstractScoreTransformer, self).__init__(name=name)
-        self.fit_called = False
-
-    def get_val(self, seqlet):
-        raise NotImplementedError()
-
-    def fit(self, coord_producer_results):
-        raise NotImplementedError()
-
-    def transform_val(self, val):
-        raise NotImplementedError()
-
-    def __call__(self, seqlet):
-        return self.transform_val(self.get_val(seqlet))
-
-
-class LaplaceCdf(AbstractScoreTransformer):
-
-    def __init__(self, name, track_name, flank_to_ignore):
-        super(LaplaceCdf, self).__init__(name=name)
-        self.track_name = track_name
-        self.flank_to_ignore = flank_to_ignore
-
-    def get_val(self, seqlet):
-        track_values = seqlet[self.track_name]\
-                        .fwd[self.flank_to_ignore:-self.flank_to_ignore]
-        return np.sum(track_values)
-            
-    def fit(self, coord_producer_results):
-        self.neg_laplace_b =\
-            coord_producer_results.thresholding_results.neg_b
-        self.pos_laplace_b =\
-            coord_producer_results.thresholding_results.pos_b
-
-    def transform_val(self, val):
-        if (val < 0):
-            return -(1-np.exp(val/self.neg_laplace_b))
-        else:
-            return (1-np.exp(-val/self.pos_laplace_b))
-
-
 class MultiTaskSeqletCreationResults(object):
 
-    def __init__(self, final_seqlets, task_name_to_coord_producer_results): 
+    def __init__(self, multitask_seqlet_creator, 
+                       final_seqlets,
+                       task_name_to_coord_producer_results): 
+        self.multitask_seqlet_creator = multitask_seqlet_creator
         self.final_seqlets = final_seqlets
         self.task_name_to_coord_producer_results =\
             task_name_to_coord_producer_results
 
+    @property
+    def task_name_to_tnt_results(self):
+        return OrderedDict([
+                (x, y.tnt_results) for x,y
+                in self.task_name_to_coord_producer_results.items()]) 
+
     @classmethod
-    def from_hdf5(self, grp, track_set):
+    def from_hdf5(cls, grp, track_set):
+        from . import coordproducers
+        multitask_seqlet_creator =\
+            MultiTaskSeqletCreator.from_hdf5(grp["multitask_seqlet_creator"])
         seqlet_coords = util.load_seqlet_coords(dset_name="final_seqlets",
                                                 grp=grp) 
         seqlets = track_set.create_seqlets(coords=seqlet_coords)
-        return MultiTaskSeqletCreationResults(
+        task_names = util.load_string_list(dset_name="task_names",grp=grp)
+        tntcpr = OrderedDict()
+        tntcpr_grp = grp["task_name_to_coord_producer_results"]
+        for task_name in task_names:
+            tntcpr[task_name] = coordproducers.CoordProducerResults.from_hdf5(
+                                                tntcpr_grp[task_name])
+        return cls(
+                multitask_seqlet_creator=multitask_seqlet_creator,
                 final_seqlets=seqlets,
-                task_name_to_coord_producer_results=None)
-          
+                task_name_to_coord_producer_results=tntcpr)
 
     def save_hdf5(self, grp):
+        util.save_string_list(
+          string_list=list(self.task_name_to_coord_producer_results.keys()),
+          dset_name="task_names",grp=grp)
+        self.multitask_seqlet_creator.save_hdf5(
+            grp.create_group("multitask_seqlet_creator"))
         util.save_seqlet_coords(seqlets=self.final_seqlets,
                                 dset_name="final_seqlets", grp=grp)  
         tntcpg = grp.create_group("task_name_to_coord_producer_results")
@@ -282,40 +316,68 @@ class MultiTaskSeqletCreationResults(object):
             coord_producer_results.save_hdf5(tntcpg.create_group(task_name))
 
 
-class MultiTaskSeqletCreation(object):
+class MultiTaskSeqletCreator(object):
 
     def __init__(self, coord_producer,
-                       track_set,
                        overlap_resolver, verbose=True):
         self.coord_producer = coord_producer
-        self.track_set = track_set
         self.overlap_resolver = overlap_resolver
         self.verbose = verbose
 
+    @classmethod
+    def from_hdf5(cls, grp):
+        from . import coordproducers
+        coord_producer = coordproducers.AbstractCoordProducer.from_hdf5(
+                          grp["coord_producer"])
+        overlap_resolver = SeqletsOverlapResolver.from_hdf5(
+                            grp["overlap_resolver"])
+        verbose = grp.attrs["verbose"]  
+        return cls(coord_producer=coord_producer,
+                   overlap_resolver=overlap_resolver,
+                   verbose=verbose)
+
+    def save_hdf5(self, grp):
+        self.coord_producer.save_hdf5(grp.create_group("coord_producer"))
+        self.overlap_resolver.save_hdf5(grp.create_group("overlap_resolver"))
+        grp.attrs["verbose"] = self.verbose
+
     def __call__(self, task_name_to_score_track,
-                       task_name_to_threshold_transformer):
+                       null_tracks,
+                       track_set, task_name_to_tnt_results=None):
         task_name_to_coord_producer_results = OrderedDict()
         task_name_to_seqlets = OrderedDict()
         for task_name in task_name_to_score_track:
             print("On task",task_name)
             score_track = task_name_to_score_track[task_name]
-            coord_producer_results =\
-                self.coord_producer(score_track=score_track)
+            if (hasattr(null_tracks, '__call__')):
+                #if a function, then just pass the function on
+                null_track = null_tracks
+            else:
+                null_track = null_tracks[task_name]
+            if (task_name_to_tnt_results is None):
+                coord_producer_results =\
+                    self.coord_producer(
+                        score_track=score_track,
+                        null_track = null_track)
+            else:
+                coord_producer_results =\
+                    self.coord_producer(
+                     score_track=score_track,
+                     null_track = null_track,
+                     tnt_results=
+                      task_name_to_tnt_results[task_name])
             task_name_to_coord_producer_results[task_name] =\
                 coord_producer_results
-            seqlets = self.track_set.create_seqlets(
+            seqlets = track_set.create_seqlets(
                         coords=coord_producer_results.coords) 
-            task_name_to_threshold_transformer[task_name].\
-                      fit(coord_producer_results)
             task_name_to_seqlets[task_name] = seqlets
         final_seqlets = self.overlap_resolver(
             itertools.chain(*task_name_to_seqlets.values()))
         if (self.verbose):
             print("After resolving overlaps, got "
                   +str(len(final_seqlets))+" seqlets")
-        for score_transformer in task_name_to_threshold_transformer.values():
-            score_transformer.annotate(final_seqlets)
         return MultiTaskSeqletCreationResults(
+                multitask_seqlet_creator=self,
                 final_seqlets=final_seqlets,
                 task_name_to_coord_producer_results=
                  task_name_to_coord_producer_results)
@@ -335,6 +397,12 @@ class SeqletCoordinates(object):
                 start=self.start, end=self.end,
                 is_revcomp=(self.is_revcomp==False))
 
+    def shift(self, shift_amt):
+        return SeqletCoordinates(
+                example_idx=self.example_idx,
+                start=self.start+shift_amt, end=self.end+shift_amt,
+                is_revcomp=self.is_revcomp)
+
     def __len__(self):
         return self.end - self.start
 
@@ -344,7 +412,7 @@ class SeqletCoordinates(object):
         example_idx = int(example_info.split(":")[1])
         start = int(start_info.split(":")[1])
         end = int(end_info.split(":")[1])
-        rc = True if rc_info.split(":")[1] is "True" else False
+        rc = True if (rc_info.split(":")[1] == "True") else False
         return SeqletCoordinates(example_idx=example_idx, start=start,
                                  end=end, is_revcomp=rc)
 
@@ -448,15 +516,14 @@ class Seqlet(Pattern):
     def exidx_start_end_string(self):
         return (str(self.coor.example_idx)+"_"
                 +str(self.coor.start)+"_"+str(self.coor.end))
- 
-        
+
+
+#Using an object rather than namedtuple because alnmt is mutable
 class SeqletAndAlignment(object):
 
     def __init__(self, seqlet, alnmt):
         self.seqlet = seqlet
-        #alnmt is the position of the beginning of seqlet
-        #in the aggregated seqlet
-        self.alnmt = alnmt 
+        self.alnmt = alnmt
 
 
 class AbstractPatternAligner(object):
@@ -494,12 +561,16 @@ class CrossMetricPatternAligner(AbstractPatternAligner):
                 parent_matrix=fwd_data_parent,
                 child_matrix=fwd_data_child,
                 min_overlap=self.pattern_comparison_settings.min_overlap)  
-        best_crossmetric_rev, best_crossmetric_argmax_rev =\
-            self.metric(
-                parent_matrix=fwd_data_parent,
-                child_matrix=rev_data_child,
-                min_overlap=self.pattern_comparison_settings.min_overlap) 
-        if (best_crossmetric_rev > best_crossmetric):
+        if (rev_data_child is not None):
+            best_crossmetric_rev, best_crossmetric_argmax_rev =\
+                self.metric(
+                    parent_matrix=fwd_data_parent,
+                    child_matrix=rev_data_child,
+                    min_overlap=self.pattern_comparison_settings.min_overlap) 
+        else:
+            best_crossmetric_rev = None
+        if ((best_crossmetric_rev is not None) and
+             best_crossmetric_rev > best_crossmetric):
             return (best_crossmetric_argmax_rev, True, best_crossmetric_rev)
         else:
             return (best_crossmetric_argmax, False, best_crossmetric)
@@ -528,6 +599,13 @@ class SeqletsAndAlignments(object):
     def __init__(self):
         self.arr = []
         self.unique_seqlets = {} 
+
+    @classmethod
+    def create(cls, seqlets_and_alnmts):
+        obj = cls() 
+        for seqlet_and_alnmt in seqlets_and_alnmts:
+            obj.append(seqlet_and_alnmt)
+        return obj
 
     def __len__(self):
         return len(self.arr)
@@ -566,6 +644,27 @@ class SeqletsAndAlignments(object):
         return the_copy
 
 
+def compute_continjacc_sims_1vmany_nneighbs(vec1, vecs2, n_neighb):
+    sign_vec1, signs_vecs2 = np.sign(vec1), np.sign(vecs2)
+    abs_vec1, abs_vecs2 = np.abs(vec1), np.abs(vecs2)
+    intersection = np.sum((np.minimum(abs_vec1[None,:], abs_vecs2[:,:])
+                 *sign_vec1[None,:]*signs_vecs2[:,:]), axis=-1)
+    union = np.sum(np.maximum(abs_vec1[None,:],
+                   abs_vecs2[:,:]), axis=-1)
+    sims = intersection/union
+    argsort_sims = np.argsort(-sims) #largest sims first
+    neighbs = argsort_sims[:n_neighb] 
+    return sims[neighbs], neighbs
+
+
+def compute_nneigh_sims_via_continjacc(vecs1, vecs2, n_neighb, n_jobs):
+    sims_and_neighbs = np.array(Parallel(n_jobs=n_jobs, verbose=True)(
+            delayed(compute_continjacc_sims_1vmany_nneighbs)(
+                     vec1, vecs2, n_neighb) for vec1 in vecs1))
+    return (np.array([x[0] for x in sims_and_neighbs]),
+            np.array([x[1] for x in sims_and_neighbs]))
+
+
 class AggregatedSeqlet(Pattern):
 
     def __init__(self, seqlets_and_alnmts_arr):
@@ -577,7 +676,10 @@ class AggregatedSeqlet(Pattern):
             seqlets_and_alnmts_arr = [SeqletAndAlignment(seqlet=x.seqlet,
                 alnmt=x.alnmt-start_idx) for x in seqlets_and_alnmts_arr] 
             self._set_length(seqlets_and_alnmts_arr)
-            self._compute_aggregation(seqlets_and_alnmts_arr) 
+            self._compute_aggregation(seqlets_and_alnmts_arr)
+        self.subclusters = None
+        self.twod_embedding = None
+        self.subcluster_to_subpattern = None
 
     @classmethod
     def from_hdf5(cls, grp, track_set):
@@ -588,13 +690,135 @@ class AggregatedSeqlet(Pattern):
         seqlets_and_alnmts_arr = [
             SeqletAndAlignment(seqlet=seqlet, alnmt=alnmt)
             for seqlet,alnmt in zip(seqlets, alnmts)]
-        return AggregatedSeqlet(seqlets_and_alnmts_arr=seqlets_and_alnmts_arr) 
+        to_return = AggregatedSeqlet(
+                        seqlets_and_alnmts_arr=seqlets_and_alnmts_arr)
+        if ("subclusters") in grp:
+            subclusters = np.array(grp["subclusters"]) 
+            twod_embedding = np.array(grp["twod_embedding"])
+            #load subcluster_to_subpattern
+            subcluster_to_subpattern = OrderedDict()
+            subcluster_to_subpattern_grp = grp["subcluster_to_subpattern"] 
+            subcluster_names = subcluster_to_subpattern_grp["subcluster_names"]
+            for subcluster_name in subcluster_names:
+                subpattern_grp = subcluster_to_subpattern_grp[subcluster_name]
+                subpattern = AggregatedSeqlet.from_hdf5(grp=subpattern_grp,
+                                                      track_set=track_set) 
+                subcluster_to_subpattern[int(
+                    subcluster_name.decode("utf-8").split("_")[1])] =\
+                     subpattern
+            to_return.subclusters = subclusters
+            to_return.twod_embedding = twod_embedding
+            to_return.subcluster_to_subpattern = subcluster_to_subpattern
+        return to_return 
 
     def save_hdf5(self, grp):
         for track_name,snippet in self.track_name_to_snippet.items():
             snippet.save_hdf5(grp.create_group(track_name))
         self._seqlets_and_alnmts.save_hdf5(
              grp.create_group("seqlets_and_alnmts"))
+        if (self.subclusters is not None):
+            grp.create_dataset("subclusters", data=self.subclusters)
+            #assume the other two things are also not none
+            grp.create_dataset("twod_embedding", data=self.twod_embedding)
+            #save subcluster_to_subpattern
+            subcluster_to_subpattern_grp =\
+                grp.create_group("subcluster_to_subpattern")
+            util.save_string_list(
+                ["subcluster_"+str(x) for x in self.subcluster_to_subpattern.keys()],
+                dset_name="subcluster_names", grp=subcluster_to_subpattern_grp)
+            for subcluster,subpattern in self.subcluster_to_subpattern.items():
+                subpattern_grp = subcluster_to_subpattern_grp.create_group(
+                                "subcluster_"+str(subcluster)) 
+                subpattern.save_hdf5(subpattern_grp)
+
+    def compute_subclusters_and_embedding(self, pattern_comparison_settings,
+                                          perplexity, n_jobs, verbose=True):
+
+        from . import affinitymat
+        from . import cluster
+
+        #this method assumes all the seqlets have been expanded so they
+        # all start at 0
+        fwd_seqlet_data, _ = get_2d_data_from_patterns(
+            patterns=self.seqlets,
+            track_names=pattern_comparison_settings.track_names,
+            track_transformer=
+             pattern_comparison_settings.track_transformer)
+        fwd_seqlet_data_vectors = (
+            util.flatten_seqlet_impscore_features(fwd_seqlet_data))
+
+        #to keep the affmat sparse in the case of very large motifs,
+        # we'll only retain the top k
+        affmat_nn, seqlet_neighbors = compute_nneigh_sims_via_continjacc(
+            vecs1=fwd_seqlet_data_vectors,
+            vecs2=fwd_seqlet_data_vectors,
+            #it's perplexity*30 + 2 because in
+            # transformers.AbstractNNTsneProbs
+            # it looks for more than int(3. * self.perplexity + 1) neighbors
+            # (the nearest neighbor is the point itself)
+            n_neighb=min(int(perplexity*3 + 2),
+                         len(fwd_seqlet_data_vectors)), 
+            n_jobs=n_jobs)
+
+        aff_to_dist_mat = affinitymat.transformers.AffToDistViaInvLogistic() 
+
+        #Got the nearest-neighbor distances, now need to put in sparse matrix
+        # format
+        distmat_nn = aff_to_dist_mat(affinity_mat=affmat_nn) 
+        distmat_sp = util.coo_matrix_from_neighborsformat(
+            entries=distmat_nn, neighbors=seqlet_neighbors,
+            ncols=len(distmat_nn))
+        #convert to csr and sort by indices to (try to) get rid of efficiency warning
+        distmat_sp = distmat_sp.tocsr()
+        distmat_sp.sort_indices()
+
+        twod_embedding = sklearn.manifold.TSNE(
+            perplexity=perplexity,
+            metric='precomputed',
+            verbose=3, random_state=1234).fit_transform(distmat_sp) 
+        self.twod_embedding = twod_embedding
+
+        #do density adaptation
+        density_adapted_affmat_transformer =\
+            affinitymat.transformers.NNTsneConditionalProbs(
+                perplexity=perplexity,
+                aff_to_dist_mat=aff_to_dist_mat)
+        sp_density_adapted_affmat = density_adapted_affmat_transformer(
+                                        affmat_nn, seqlet_neighbors)
+
+        #Do Leiden clustering
+        clusterer = cluster.core.LeidenClusterParallel(
+                n_jobs=n_jobs,
+                affmat_transformer=
+                    affinitymat.transformers.SymmetrizeByAddition(
+                                                   probability_normalize=True),
+                numseedstotry=50,
+                n_leiden_iterations=-1,
+                verbose=verbose)
+        cluster_results = clusterer(sp_density_adapted_affmat,
+                                    initclusters=None)
+
+        self.subclusters = cluster_results.cluster_indices
+        self.update_exemplarmotifs_from_subclusters()
+
+    def update_exemplarmotifs_from_subclusters(self):
+        #this method assumes all the seqlets have been expanded so they
+        # all start at 0
+        subcluster_to_seqletsandalignments = OrderedDict()
+        for seqlet, subcluster in zip(self.seqlets, self.subclusters):
+            if (subcluster not in subcluster_to_seqletsandalignments):
+                subcluster_to_seqletsandalignments[subcluster] = []
+            subcluster_to_seqletsandalignments[subcluster].append(
+                SeqletAndAlignment(seqlet=seqlet, alnmt=0) )
+        subcluster_to_subpattern = OrderedDict([
+            (subcluster, AggregatedSeqlet(seqletsandalignments))
+            for subcluster,seqletsandalignments in
+            subcluster_to_seqletsandalignments.items()])
+        #resort subcluster_to_subpattern so that the subclusters with the
+        # most seqlets come first
+        self.subcluster_to_subpattern = OrderedDict(
+            sorted(subcluster_to_subpattern.items(),
+                   key=lambda x: -len(x[1].seqlets)))
 
     def copy(self):
         return AggregatedSeqlet(seqlets_and_alnmts_arr=
@@ -610,39 +834,40 @@ class AggregatedSeqlet(Pattern):
 
     def trim_to_positions_with_min_support(self,
             min_frac, min_num, verbose=True):
-        per_position_center_counts =\
-            self.get_per_position_seqlet_center_counts()
-        max_support = max(per_position_center_counts)
+        max_support = max(self.per_position_counts)
         num = min(min_num, max_support*min_frac)
         left_idx = 0
-        while per_position_center_counts[left_idx] < num:
+        while self.per_position_counts[left_idx] < num:
             left_idx += 1
-        right_idx = len(per_position_center_counts)
-        while per_position_center_counts[right_idx-1] < num:
+        right_idx = len(self.per_position_counts)
+        while self.per_position_counts[right_idx-1] < num:
             right_idx -= 1
+        return self.trim_to_start_and_end_idx(start_idx=left_idx,
+                                              end_idx=right_idx,
+                                              no_skip=False) 
 
-        retained_seqlets_and_alnmts = []
-        for seqlet_and_alnmt in self.seqlets_and_alnmts:
-            seqlet_center = (
-                seqlet_and_alnmt.alnmt+0.5*len(seqlet_and_alnmt.seqlet))
-            #if the seqlet will fit within the trimmed pattern
-            if ((seqlet_center >= left_idx) and
-                (seqlet_center <= right_idx)):
-                retained_seqlets_and_alnmts.append(seqlet_and_alnmt)
-        new_start_idx = min([x.alnmt for x in retained_seqlets_and_alnmts])
-        new_seqlets_and_alnmnts = [SeqletAndAlignment(seqlet=x.seqlet,
-                                    alnmt=x.alnmt-new_start_idx) for x in
-                                    retained_seqlets_and_alnmts] 
-        num_trimmed = self.num_seqlets - len(new_seqlets_and_alnmnts) 
-        if (verbose):
-            print("Trimmed",num_trimmed,"out of",self.num_seqlets)
-            sys.stdout.flush()
-        
-        return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts) 
+    def trim_by_ic(self, ppm_track_name, background, threshold,
+                         pseudocount=0.001):
+        """Trimming based on information content"""
+        ppm = self[ppm_track_name].fwd
+        (start_idx, end_idx) = util.get_ic_trimming_indices(
+            ppm=ppm, background=background,
+            threshold=threshold, pseudocount=pseudocount)
+        return self.trim_to_start_and_end_idx(start_idx=start_idx,
+                                              end_idx=end_idx)
 
-    def trim_to_start_and_end_idx(self, start_idx, end_idx):
+    def trim_by_sum_abs_score(self, track_name, threshold):
+        track_vals = np.sum(np.abs(self[track_name].fwd), axis=1)
+        passing_positions = np.where(track_vals >= threshold)
+        return self.trim_to_start_and_end_idx(
+                  start_idx=passing_positions[0][0],
+                  end_idx=passing_positions[0][-1]+1)
+
+    def trim_to_start_and_end_idx(self, start_idx, end_idx, no_skip=True):
         new_seqlets_and_alnmnts = [] 
+        skipped = 0
         for seqlet_and_alnmt in self._seqlets_and_alnmts:
+            #if the seqlet overlaps with the target region
             if (seqlet_and_alnmt.alnmt < end_idx and
                 ((seqlet_and_alnmt.alnmt + len(seqlet_and_alnmt.seqlet))
                   > start_idx)):
@@ -664,10 +889,16 @@ class AggregatedSeqlet(Pattern):
                     SeqletAndAlignment(seqlet=new_seqlet,
                                        alnmt=new_alnmt)) 
             else:
-                print(seqlet_and_alnmt.alnmt)
-                print(len(seqlet_and_alnmt.seqlet))
-                print(start_idx, end_idx)
-                assert False
+                skipped += 1
+                if (no_skip): 
+                    print("Error - there should be no seqlet skipping here")
+                    print(seqlet_and_alnmt.alnmt)
+                    print(len(seqlet_and_alnmt.seqlet))
+                    print(start_idx, end_idx)
+                    assert False
+        if (no_skip==False):
+            print("Trimming eliminated",skipped,"seqlets out of",
+                  len(self._seqlets_and_alnmts))
         return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts)
 
     def get_per_position_seqlet_center_counts(self):
@@ -720,11 +951,16 @@ class AggregatedSeqlet(Pattern):
         self._initialize_track_name_to_aggregation(
               sample_seqlet=seqlets_and_alnmts_arr[0].seqlet)
         self.per_position_counts = np.zeros((self.length,))
+        duplicates = 0
         for seqlet_and_alnmt in seqlets_and_alnmts_arr:
             if (seqlet_and_alnmt.seqlet not in self.seqlets_and_alnmts): 
                 self._add_pattern_with_valid_alnmt(
                         pattern=seqlet_and_alnmt.seqlet,
                         alnmt=seqlet_and_alnmt.alnmt)
+            else:
+               duplicates += 1 
+        if (duplicates > 0):
+            print("Removed",duplicates,"duplicate seqlets") 
 
     def _initialize_track_name_to_aggregation(self, sample_seqlet): 
         self._track_name_to_agg = OrderedDict() 
@@ -734,8 +970,11 @@ class AggregatedSeqlet(Pattern):
                            +list(sample_seqlet[track_name].fwd.shape[1:]))
             self._track_name_to_agg[track_name] =\
                 np.zeros(track_shape).astype("float") 
-            self._track_name_to_agg_revcomp[track_name] =\
-                np.zeros(track_shape).astype("float") 
+            if (sample_seqlet[track_name].rev is not None):
+                self._track_name_to_agg_revcomp[track_name] =\
+                    np.zeros(track_shape).astype("float") 
+            else:
+                self._track_name_to_agg_revcomp[track_name] = None
             self.track_name_to_snippet[track_name] = Snippet(
                 fwd=self._track_name_to_agg[track_name],
                 rev=self._track_name_to_agg_revcomp[track_name],
@@ -743,21 +982,26 @@ class AggregatedSeqlet(Pattern):
 
     def get_nonzero_average(self, track_name, pseudocount):
         fwd_nonzero_count = np.zeros_like(self[track_name].fwd)
-        rev_nonzero_count = np.zeros_like(self[track_name].rev)
+        if (self[track_name].rev is not None):
+            rev_nonzero_count = np.zeros_like(self[track_name].rev)
+        else:
+            rev_nonzero_count = None
         has_pos_axis = self[track_name].has_pos_axis
         for seqlet_and_alnmt in self.seqlets_and_alnmts:
             alnmt = seqlet_and_alnmt.alnmt
             seqlet_length = len(seqlet_and_alnmt.seqlet)
-            motif_length = len(rev_nonzero_count)
-            fwd_nonzero_count[alnmt:(alnmt+seqlet_length)] +=\
-                (np.abs(seqlet_and_alnmt.seqlet[track_name].fwd) > 0.0)
-            rev_nonzero_count[motif_length-(alnmt+seqlet_length):
-                              motif_length-alnmt] +=\
-                (np.abs(seqlet_and_alnmt.seqlet[track_name].rev) > 0.0)
+            motif_length = len(fwd_nonzero_count)
+            fwd_nonzero_count[alnmt:(alnmt+seqlet_length)] += (
+                (np.abs(seqlet_and_alnmt.seqlet[track_name].fwd) > 0.0))
+            if (rev_nonzero_count is not None):
+                rev_nonzero_count[motif_length-(alnmt+seqlet_length):
+                                  motif_length-alnmt] += (
+                 (np.abs(seqlet_and_alnmt.seqlet[track_name].rev) > 0.0))
         return Snippet(fwd=self._track_name_to_agg[track_name]
                            /(fwd_nonzero_count+pseudocount),
-                       rev=self._track_name_to_agg_revcomp[track_name]
-                           /(rev_nonzero_count+pseudocount),
+                       rev=((self._track_name_to_agg_revcomp[track_name]
+                            /(rev_nonzero_count+pseudocount))
+                            if (rev_nonzero_count is not None) else None) ,
                        has_pos_axis=has_pos_axis)
 
 
@@ -776,8 +1020,9 @@ class AggregatedSeqlet(Pattern):
                 padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
                 extended_track = np.concatenate(
                     [np.zeros(padding_shape), track], axis=0)
-                extended_rev_track = np.concatenate(
+                extended_rev_track = (np.concatenate(
                     [rev_track, np.zeros(padding_shape)], axis=0)
+                    if (rev_track is not None) else None)
                 self._track_name_to_agg[track_name] = extended_track
                 self._track_name_to_agg_revcomp[track_name] =\
                     extended_rev_track
@@ -795,8 +1040,9 @@ class AggregatedSeqlet(Pattern):
                 padding_shape = tuple([num_zeros]+list(track.shape[1:])) 
                 extended_track = np.concatenate(
                     [track, np.zeros(padding_shape)], axis=0)
-                extended_rev_track = np.concatenate(
+                extended_rev_track = (np.concatenate(
                     [np.zeros(padding_shape),rev_track], axis=0)
+                    if (rev_track is not None) else None)
                 self._track_name_to_agg[track_name] = extended_track
                 self._track_name_to_agg_revcomp[track_name] =\
                     extended_rev_track
@@ -843,20 +1089,27 @@ class AggregatedSeqlet(Pattern):
             if (self.track_name_to_snippet[track_name].has_pos_axis==False):
                 self._track_name_to_agg[track_name] +=\
                     pattern[track_name].fwd
-                self._track_name_to_agg_revcomp[track_name] +=\
-                    pattern[track_name].rev
+                if (self._track_name_to_agg_revcomp[track_name] is not None):
+                    self._track_name_to_agg_revcomp[track_name] +=\
+                        pattern[track_name].rev
             else:
                 self._track_name_to_agg[track_name][slice_obj] +=\
                     pattern[track_name].fwd 
-                self._track_name_to_agg_revcomp[track_name][rev_slice_obj]\
-                     += pattern[track_name].rev
+                if (self._track_name_to_agg_revcomp[track_name] is not None):
+                    self._track_name_to_agg_revcomp[track_name]\
+                         [rev_slice_obj] += pattern[track_name].rev
             self.track_name_to_snippet[track_name] =\
              Snippet(
               fwd=(self._track_name_to_agg[track_name]
-                   /self.per_position_counts[:,None]),
-              rev=(self._track_name_to_agg_revcomp[track_name]
-                   /self.per_position_counts[::-1,None]),
-              has_pos_axis=self.track_name_to_snippet[track_name].has_pos_axis) 
+                   /(self.per_position_counts[:,None]
+                     + 1E-7*(self.per_position_counts[:,None]==0))),
+              rev=((self._track_name_to_agg_revcomp[track_name]
+                   /(self.per_position_counts[::-1,None]
+                     + 1E-7*(self.per_position_counts[::-1,None]==0)))
+                   if (self._track_name_to_agg_revcomp[track_name]
+                       is not None) else None),
+              has_pos_axis=
+               self.track_name_to_snippet[track_name].has_pos_axis) 
 
     def __len__(self):
         return self.length
@@ -911,22 +1164,25 @@ def get_2d_data_from_patterns(patterns, track_names, track_transformer):
             pattern=pattern, track_names=track_names,
             track_transformer=track_transformer) 
         all_fwd_data.append(fwd_data)
-        all_rev_data.append(rev_data)
-    return (np.array(all_fwd_data),
-            np.array(all_rev_data))
+        if (rev_data is not None):
+            all_rev_data.append(rev_data)
+    if (len(all_rev_data)==0):
+        return (np.array(all_fwd_data), None)
+    else:
+        return (np.array(all_fwd_data), np.array(all_rev_data))
 
 
 def get_2d_data_from_pattern(pattern, track_names, track_transformer): 
-    snippets = [pattern[track_name]
-                 for track_name in track_names] 
+    snippets = [pattern[track_name] for track_name in track_names] 
     if (track_transformer is None):
         track_transformer = lambda x: x
     fwd_data = np.concatenate([track_transformer(
              np.reshape(snippet.fwd, (len(snippet.fwd), -1)))
             for snippet in snippets], axis=1)
-    rev_data = np.concatenate([track_transformer(
+    rev_data = (np.concatenate([track_transformer(
             np.reshape(snippet.rev, (len(snippet.rev), -1)))
             for snippet in snippets], axis=1)
+            if (snippets[0].rev is not None) else None)
     return fwd_data, rev_data
 
 
@@ -952,8 +1208,9 @@ def get_best_alignment_crosscorr(parent_matrix, child_matrix, min_overlap):
     return get_best_alignment_crossmetric(
                 parent_matrix=parent_matrix, child_matrix=child_matrix,
                 min_overlap=min_overlap,
-                metric=(lambda in1,in2: scipy.signal.correlate2d(
-                                         in1=in1, in2=in2, mode='valid')))
+                #metric=(lambda in1,in2: scipy.signal.correlate2d(
+                #                         in1=in1, in2=in2, mode='valid'))
+                metric=(lambda in1,in2: cross_corr(in1=in1, in2=in2) ))
 
 
 def get_best_alignment_crossabsdiff(parent_matrix, child_matrix, min_overlap):
@@ -984,11 +1241,19 @@ def cross_absdiff(in1, in2):
 
 
 def cross_continjaccard(in1, in2):
+    return cross_metric(in1=in1, in2=in2, metric=continjaccard)
+
+
+def cross_corr(in1, in2):
+    return cross_metric(in1=in1, in2=in2, metric=corr)
+
+
+def cross_metric(in1, in2, metric):
     len_result = (1+len(in1)-len(in2))
     to_return = np.zeros(len_result)
     for idx in range(len_result):
         snippet = in1[idx:idx+in2.shape[0]]
-        to_return[idx] = continjaccard(in1=snippet, in2=in2)
+        to_return[idx] = metric(in1=snippet, in2=in2)
     return to_return
 
 
@@ -999,7 +1264,10 @@ def continjaccard(in1, in2):
     union = np.sum(np.maximum(np.abs(in1),np.abs(in2)))
     intersection = np.minimum(np.abs(in1),np.abs(in2))
     signs = np.sign(in1)*np.sign(in2)
-    return np.sum(signs*intersection)/union
+    if (union==0.0):
+        return 0.0
+    else:
+        return np.sum(signs*intersection)/union
 
 
 def corr(in1, in2):

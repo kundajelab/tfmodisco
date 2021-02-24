@@ -8,3 +8,9 @@
 **/*.tree_*
 **/*.weights
 **/*DS_Store
+**/*.pkl
+**/*.gz
+**/*.json
+dist
+meme_out
+plot_save_directory

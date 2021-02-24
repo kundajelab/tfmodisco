@@ -1,13 +1,13 @@
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from .. import util
 
 
 def ic_scale(pwm,background):
-    odds_ratio = ((pwm+0.001)/(1.004))/(background[None,:])
-    ic = ((np.log((pwm+0.001)/(1.004))/np.log(2))*pwm -\
-            (np.log(background)*background/np.log(2))[None,:])
-    return pwm*(np.sum(ic,axis=1)[:,None])
+    per_position_ic = util.compute_per_position_ic(
+                       ppm=pwm, background=background, pseudocount=0.001)
+    return pwm*(per_position_ic[:,None])
 
 
 def plot_a(ax, base, left_edge, height, color):
@@ -68,12 +68,13 @@ def plot_t(ax, base, left_edge, height, color):
 default_colors = {0:'green', 1:'blue', 2:'orange', 3:'red'}
 default_plot_funcs = {0:plot_a, 1:plot_c, 2:plot_g, 3:plot_t}
 def plot_weights_given_ax(ax, array,
-                 height_padding_factor,
-                 length_padding,
-                 subticks_frequency,
-                 highlight,
+                 figsize=(20,2),
+                 height_padding_factor=0.2,
+                 length_padding=1.0,
+                 subticks_frequency=1.0,
                  colors=default_colors,
                  plot_funcs=default_plot_funcs,
+                 highlight={},
                  ylabel=""):
     if len(array.shape)==3:
         array = np.squeeze(array)
@@ -129,21 +130,24 @@ def plot_weights_given_ax(ax, array,
 
 def plot_weights(array,
                  figsize=(20,2),
-                 height_padding_factor=0.2,
-                 length_padding=1.0,
-                 subticks_frequency=1.0,
-                 colors=default_colors,
-                 plot_funcs=default_plot_funcs,
-                 highlight={},
-                 ylabel=""):
+                 **kwargs):
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111) 
-    plot_weights_given_ax(ax=ax, array=array,
-        height_padding_factor=height_padding_factor,
-        length_padding=length_padding,
-        subticks_frequency=subticks_frequency,
-        colors=colors,
-        plot_funcs=plot_funcs,
-        highlight=highlight,
-        ylabel=ylabel)
+    plot_weights_given_ax(ax=ax, array=array,**kwargs)
     plt.show()
+
+
+def plot_score_track_given_ax(arr, ax, threshold=None, **kwargs):
+    ax.plot(np.arange(len(arr)), arr, **kwargs)
+    if (threshold is not None):
+        ax.plot([0, len(arr)-1], [threshold, threshold])
+    ax.set_xlim(0,len(arr)-1)
+
+
+def plot_score_track(arr, threshold=None, figsize=(20,2), **kwargs):
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111) 
+    plot_score_track_given_ax(arr, threshold=threshold, ax=ax, **kwargs) 
+    plt.show()
+
+

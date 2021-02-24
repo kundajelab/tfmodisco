@@ -53,7 +53,6 @@ class TestDataTrack(unittest.TestCase):
 
     def test_data_track_basic(self):
         assert len(self.data_track_has_pos_axis)==10
-        assert self.data_track_has_pos_axis.track_length==9
 
     def test_data_track_get_snippet(self):
         np.testing.assert_almost_equal(

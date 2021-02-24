@@ -5,7 +5,14 @@ import subprocess
 import numpy as np
 import h5py
 import traceback
-from sklearn.neighbors.kde import KernelDensity
+import scipy.sparse
+
+
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
 
 
 def load_patterns(grp, track_set):
@@ -31,6 +38,20 @@ def save_patterns(patterns, grp):
                      grp=grp)
 
 
+def flatten_seqlet_impscore_features(seqlet_impscores):
+    return np.reshape(seqlet_impscores, (len(seqlet_impscores), -1))
+
+
+def coo_matrix_from_neighborsformat(entries, neighbors, ncols):
+    coo_mat = scipy.sparse.coo_matrix(
+            (np.concatenate(entries, axis=0),
+             (np.array([i for i in range(len(neighbors))
+                           for j in neighbors[i]]).astype("int"),
+              np.concatenate(neighbors, axis=0)) ),
+            shape=(len(entries), ncols)) 
+    return coo_mat
+
+
 def load_string_list(dset_name, grp):
     return [x.decode("utf-8") for x in grp[dset_name][:]]
 
@@ -53,6 +74,20 @@ def save_seqlet_coords(seqlets, dset_name, grp):
                      dset_name=dset_name, grp=grp)
 
 
+def save_list_of_objects(grp, list_of_objects):
+    grp.attrs["num_objects"] = len(list_of_objects) 
+    for idx,obj in enumerate(list_of_objects):
+        obj.save_hdf5(grp=grp.create_group("obj"+str(idx)))
+
+
+def load_list_of_objects(grp, obj_class):
+    num_objects = grp.attrs["num_objects"]
+    list_of_objects = []
+    for idx in range(num_objects):
+        list_of_objects.append(obj_class.from_hdf5(grp=grp["obj"+str(idx)]))
+    return list_of_objects
+
+
 def factorial(val):
     to_return = 1
     for i in range(1,val+1):
@@ -61,6 +96,7 @@ def factorial(val):
 
 
 def first_curvature_max(values, bins, bandwidth):
+    from sklearn.neighbors.kde import KernelDensity
     kde = KernelDensity(kernel="gaussian", bandwidth=bandwidth).fit(
                 [[x,0] for x in values])
     midpoints = np.min(values)+((np.arange(bins)+0.5)
@@ -172,157 +208,6 @@ def identify_peaks(arr):
     return found_peaks
 
 
-def create_detector_from_subset_of_sequential_layers(sequential_container,
-                                                    idx_of_layer_of_interest,
-                                                    channel_indices,
-                                                    multipliers_on_channels):
-    import deeplift
-    import deeplift.backend as B
-    layers = []  
-    #this adds in all the layers preceeding idx_of_layer_of_interest
-    #(remember zero-based indexing...)
-    for layer_idx in range(idx_of_layer_of_interest):
-        layers.append(
-         sequential_container.get_layers()[layer_idx].copy_blob_keep_params()
-        )
-    #add in the layer of interest, but with the channels subsetted to
-    #the channels of interest
-    layer_to_subset = sequential_container.get_layers()\
-                       [idx_of_layer_of_interest]
-    assert hasattr(layer_to_subset, "W"), "Layer does not have weights - "\
-        +" make sure you have supplied the correct index for the conv layer?"
-    subsetted_weights = layer_to_subset.W[channel_indices]
-    subsetted_biases = layer_to_subset.b[channel_indices]
-    layer_kwargs = layer_to_subset.get_yaml_compatible_object_kwargs()
-    layer_kwargs['W'] = subsetted_weights 
-    layer_kwargs['b'] = subsetted_biases
-    subsetted_layer = layer_to_subset.\
-                      load_blob_from_yaml_contents_only(**layer_kwargs)
-    layers.append(subsetted_layer)
-    #check if the next layer is an activation layer
-    layer_after_layer_of_interest =\
-      sequential_container.get_layers()[idx_of_layer_of_interest+1]
-    if isinstance(layer_after_layer_of_interest, deeplift.blobs.Activation):
-        layers.append(layer_after_layer_of_interest.copy_blob_keep_params())
-    #multipliers_layer = sequential_container.get_layers()[layer_idx+1].copy_blob_keep_params()
-    #add in a layer with a conv filter that is the multipliers
-    #need to be reversed because this is doing a convolution, not cross corr
-    multipliers_layer = deeplift.blobs.Conv2D(
-                    name="multipliers_layer",
-                    W=multipliers_on_channels[:,:,::-1,::-1].astype('float32'),
-                    b=np.zeros(multipliers_on_channels.shape[0])\
-                      .astype('float32'),
-                    strides=(1,1), 
-                    border_mode=B.BorderMode.valid)
-    layers.append(multipliers_layer)
-    deeplift.util.connect_list_of_layers(layers)
-    layers[-1].build_fwd_pass_vars()
-    model_to_return = deeplift.models.SequentialModel(layers=layers)
-    model_to_return.get_layers()
-
-    return model_to_return
-
-def get_conv_out_symbolic_var(input_var,
-                              set_of_2d_patterns_to_conv_with,
-                              normalise_by_magnitude,
-                              take_max,
-                              mode='valid'):
-    import theano
-    import theano.tensor.signal.conv
-    assert len(set_of_2d_patterns_to_conv_with.shape)==3
-    if (normalise_by_magnitude):
-        set_of_2d_patterns_to_conv_with =\
-         set_of_2d_patterns_to_conv_with/\
-          (np.sqrt(np.sum(np.sum(np.square(set_of_2d_patterns_to_conv_with),
-                               axis=-1),
-                        axis=-1))[:,None,None])
-    filters = theano.tensor.as_tensor_variable(
-               x=set_of_2d_patterns_to_conv_with,
-               name="filters")
-    conv_out = theano.tensor.signal.conv.conv2d(
-                input=input_var,
-                filters=filters,
-                border_mode=mode)
-    if (normalise_by_magnitude):
-        sum_squares_per_pos =\
-                   theano.tensor.signal.conv.conv2d(
-                    input=theano.tensor.square(input_var),
-                    filters=np.ones(set_of_2d_patterns_to_conv_with.shape)\
-                            .astype("float32"),
-                    border_mode=mode) 
-        per_pos_magnitude = theano.tensor.sqrt(sum_squares_per_pos)
-        per_pos_magnitude += 0.0000001*(per_pos_magnitude < 0.0000001)
-        conv_out = conv_out/per_pos_magnitude
-    if (take_max):
-        conv_out = theano.tensor.max(
-                    theano.tensor.max(conv_out, axis=-1), #max over cols
-                    axis=-1) #max over rows
-    return conv_out 
-
-
-def compile_conv_func_with_theano(set_of_2d_patterns_to_conv_with,
-                                  normalise_by_magnitude=False,
-                                  take_max=False,
-                                  mode='valid'):
-    import theano
-    input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
-                                         broadcastable=[False]*3)("input")
-    conv_out = get_conv_out_symbolic_var(input_var,
-                                 set_of_2d_patterns_to_conv_with,
-                                 normalise_by_magnitude=normalise_by_magnitude,
-                                 take_max=take_max,
-                                 mode=mode)
-    func = theano.function([input_var],
-                           conv_out,
-                           allow_input_downcast=True)
-    return func 
-
-
-def get_max_cross_corr(filters, things_to_scan,
-                           verbose=True, batch_size=10,
-                           func_params_size=1000000,
-                           progress_update=1000,
-                           min_overlap=0.3):
-    """
-        func_params_size: when compiling functions
-    """
-    import deeplift
-    #reverse the patterns as the func is a conv not a cross corr
-    filters = filters.astype("float32")[:,::-1,::-1]
-    to_return = np.zeros((filters.shape[0], len(things_to_scan)))
-    #compile the number of filters that result in a function with
-    #params equal to func_params_size 
-    params_per_filter = np.prod(filters[0].shape)
-    filter_batch_size = int(func_params_size/params_per_filter)
-    filter_length = filters.shape[-1]
-    filter_idx = 0 
-    while filter_idx < filters.shape[0]:
-        if (verbose):
-            print("On filters",filter_idx,"to",(filter_idx+filter_batch_size))
-        filter_batch = filters[filter_idx:(filter_idx+filter_batch_size)]
-        cross_corr_func = compile_conv_func_with_theano(
-                           set_of_2d_patterns_to_conv_with=filter_batch,
-                           normalise_by_magnitude=False,
-                           take_max=True)  
-        padding_amount = int((filter_length)*(1-min_overlap))
-        padded_input = [np.pad(array=x,
-                              pad_width=((padding_amount, padding_amount)),
-                              mode="constant") for x in things_to_scan]
-        max_cross_corrs = np.array(deeplift.util.run_function_in_batches(
-                            func=cross_corr_func,
-                            input_data_list=[padded_input],
-                            batch_size=batch_size,
-                            progress_update=(None if verbose==False else
-                                             progress_update)))
-        assert len(max_cross_corrs.shape)==2, max_cross_corrs.shape
-        to_return[filter_idx:
-                  (filter_idx+filter_batch_size),:] =\
-                  np.transpose(max_cross_corrs)
-        filter_idx += filter_batch_size
-        
-    return to_return
-
-
 def get_top_N_scores_per_region(scores, N, exclude_hits_within_window):
     scores = scores.copy()
     assert len(scores.shape)==2, scores.shape
@@ -390,70 +275,6 @@ def compute_jaccardify(sim_mat, start_job, end_job):
         ratio = minimum_sum/maximum_sum
         distances.append(ratio)
     return distances
-
-
-#might be speed-upable further by recognizing that the distance is symmetric
-def gpu_jaccardify(sim_mat, power=1,
-                   func_params_size=1000000,
-                   batch_size=100,
-                   progress_update=1000,
-                   verbose=True):
-    import theano
-    if (power != 1):
-        print("taking the power")
-        sim_mat = np.power(sim_mat, power)
-        print("took the power")
-    num_nodes = sim_mat.shape[0]
-    cols_batch_size = int(func_params_size/num_nodes) 
-    print("cols_batch_size is",cols_batch_size)
-    assert cols_batch_size > 0, "Please increase func_params_size; a single"+\
-                                " col can't fit in the function otherwise"
-
-    to_return = np.zeros(sim_mat.shape)
-
-    col_idx = 0
-    while col_idx < num_nodes:
-        if (verbose):
-            print("cols idx:",col_idx)
-        #compile a function for computing distance to
-        #nodes col_idx:(col_idx + cols_batch_size)
-
-        #input var will store a batch of input data points
-        input_var = theano.tensor.TensorType(
-                        dtype=theano.config.floatX,
-                        broadcastable=[False]*2)("input")
-        
-        end_col_idx = min(col_idx + cols_batch_size, num_nodes)
-        minimum_sum = theano.tensor.sum(
-                         theano.tensor.minimum(
-                            input_var[:,None,:],
-                            sim_mat[None,
-                                     col_idx:end_col_idx,:]),
-                                     axis=-1)
-        maximum_sum = theano.tensor.sum(
-                         theano.tensor.maximum(
-                            input_var[:,None,:],
-                            sim_mat[None,
-                                     col_idx:end_col_idx,:]),
-                                     axis=-1)
-        ratios = minimum_sum/maximum_sum #the "jaccardified" distance
-
-        #compile the function which takes input_var as the input tensor
-        #and returns ratios 
-        func = theano.function([input_var], ratios, allow_input_downcast=True)
-
-        #apply the function in batches to all the nodes
-        row_idx = 0
-        while row_idx < num_nodes: 
-            if (verbose):
-                if (row_idx%progress_update == 0):
-                    print("Done",row_idx)
-            end_row_idx = row_idx+batch_size
-            distances = func(sim_mat[row_idx:end_row_idx,:])
-            to_return[row_idx:end_row_idx, col_idx:end_col_idx] = distances
-            row_idx = end_row_idx
-        col_idx = end_col_idx
-    return to_return
 
 
 #should be speed-upable further by recognizing that the distance is symmetric
@@ -562,321 +383,6 @@ def cluster_louvain(sim_mat):
     return louvain_labels
 
 
-def scan_regions_with_filters(filters, regions_to_scan,
-                              batch_size=50, progress_update=1000):
-    """
-        filters: for PWMs, use log-odds matrices.
-        Will be cross-correlated with sequence
-    
-        set_of_regions: either one-hot-encoded or deeplift score tracks.
-    """ 
-    import deeplift
-    import theano
-    if (len(filters.shape)==3):
-        filters = filters[:,None,:,:]
-    assert filters.shape[1]==1 #input channels=1
-    assert filters.shape[2]==4 #acgt
-    assert len(regions_to_scan.shape)==4
-    assert regions_to_scan.shape[1]==1 #input channels=1
-    assert regions_to_scan.shape[2]==4 #acgt
-
-    #set up the theano convolution 
-    fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
-    rev_comp_filters = filters
-
-    input_var = theano.tensor.TensorType(dtype=theano.config.floatX,
-                                         broadcastable=[False]*4)("input") 
-    fwd_filters_var = theano.tensor.as_tensor_variable(
-                        x=fwd_filters, name="fwd_filters")
-    rev_comp_filters_var = theano.tensor.as_tensor_variable(
-                             x=rev_comp_filters, name="rev_comp_filters")
-    fwd_conv_out = theano.tensor.nnet.conv2d(
-                    input=input_var, filters=fwd_filters_var)
-    rev_comp_conv_out = theano.tensor.nnet.conv2d(
-                         input=input_var, filters=rev_comp_filters_var)
-
-    #concatenate the results to take an elementwise max
-    #remember that the lenght of the row dimension is 1, so this is a
-    #good dimension to take advantage of for concatenation
-    concatenated_fwd_and_rev_results = theano.tensor.concatenate(
-        [fwd_conv_out, rev_comp_conv_out], axis=2) 
-
-    fwd_or_rev = theano.tensor.argmax(concatenated_fwd_and_rev_results, axis=2, keepdims=True)
-    scores = theano.tensor.max(concatenated_fwd_and_rev_results, axis=2, keepdims=True)
-
-    #concatenated score and complementation
-    concatenated_score_and_orientation = theano.tensor.concatenate(
-        [scores,fwd_or_rev], axis=2)
-
-    compiled_func = theano.function([input_var],
-                                    concatenated_score_and_orientation,
-                                    allow_input_downcast=True)
-
-    #run function in batches
-    conv_results = np.array(deeplift.util.run_function_in_batches(
-                            func=compiled_func,
-                            input_data_list=[regions_to_scan],
-                            batch_size=batch_size,
-                            progress_update=progress_update))
-
-    return conv_results
-
-
-def product_of_cosine_distances(filters, track1, track2,
-                                batch_size=50, progress_update=1000):
-    """
-        filters: 3d array: filter_idx x ACGT x length
-        Will take cosine distance of filter with track1 and
-         as track2 at each position and return product of cosines
-
-        track1: 3-d array: samples x length x channels(ACGT)
-        track2: 3-d array: samples x length x channels(ACGT)
-    """ 
-    import deeplift
-    import theano
-    import theano.tensor.signal.conv
-    assert len(filters.shape)==3
-    assert len(track1.shape)==3
-    assert len(track2.shape)==3
-    #for DNA sequences, filters.shape[1] will be 4 (ACGT)
-    assert filters.shape[1] == track1.shape[2] #channel axis has same dims
-    assert filters.shape[1] == track2.shape[2]
-
-    #Normalize filters by magnitude (makes cosine dist computation easier)
-    #first flatten the last two dimensions of the filters, then compute norm
-    filter_magnitudes = np.linalg.norm(filters.reshape(filters.shape[0],-1),
-                                       axis=1)
-    #'None' inserts dummy dimensions of length 1
-    filters = filters/filter_magnitudes[:,None,None]
-    scanning_window_area = filters.shape[1]*filters.shape[2]
-
-    #insert dummy dimensions to convert shapes from 1d format to
-    #the theano 2d format
-    #for input tracks:
-    #keras 1d format is: samples x length x ACGT (channels)
-    #theano conv2d wants: samples x 1 (channels) x ACGT (height) x length
-    #for filters:
-    #start with: num_filters x ACGT (channels) x filter len
-    #conv2d wants: num_filters x 1 (channels) x ACGT (height) x filter len
-    #transpose is necessary to get the ACGT into axis index 2
-    filters = filters[:,None,:,:]
-    track1 = track1[:,None,:,:].transpose(0,1,3,2)
-    track2 = track2[:,None,:,:].transpose(0,1,3,2)
-
-    #prepare the forward and reverse complement filters for the conv2d call
-    fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
-    rev_comp_filters = filters
-
-    #create theano variables for the inputs and filters
-    #set the channel axis to be broadcastable because that should come
-    #in handy when dividing the convolutions for each filter
-    #by the magnitude of the underlying track computed using average pooling
-    track1_var = theano.tensor.TensorType(
-                    dtype=theano.config.floatX,
-                    broadcastable=[False,True,False,False])("track1") 
-    track2_var = theano.tensor.TensorType(
-                  dtype=theano.config.floatX,
-                  broadcastable=[False,True,False,False])("track2") 
-    fwd_filters_var = theano.tensor.as_tensor_variable(
-                        x=fwd_filters, name="fwd_filters")
-    rev_comp_filters_var = theano.tensor.as_tensor_variable(
-                             x=rev_comp_filters, name="rev_comp_filters")
-
-    #get variables representing the results of the convolutions,
-    #which are equal to the the dot products at each sliding window
-    fwd_track1_conv_out_var = theano.tensor.nnet.conv2d(
-                         input=track1_var, filters=fwd_filters_var)
-    fwd_track2_conv_out_var = theano.tensor.nnet.conv2d(
-                         input=track2_var, filters=fwd_filters_var)
-    rev_track1_conv_out_var = theano.tensor.nnet.conv2d(
-                         input=track1_var, filters=rev_comp_filters_var)
-    rev_track2_conv_out_var = theano.tensor.nnet.conv2d(
-                         input=track2_var, filters=rev_comp_filters_var)
-
-    #cosine distance is dot product divided by magnitude; we compute
-    #per-window magnitude by squaring the tracks, then summing in
-    #sliding windows, then taking the square root
-    #squaring:
-    track1_squared_var = track1_var*track1_var 
-    track2_squared_var = track2_var*track2_var
-    #compute per-position sliding window sums using average and then
-    #scaling up by window size
-    track1_squared_sumpool_var = theano.tensor.signal.pool.pool_2d(
-                                input=track1_squared_var,
-                                ws=(filters.shape[-2], filters.shape[-1]),
-                                ignore_border=False,
-                                stride=(1,1),
-                                pad=(0,0),
-                                mode='average_exc_pad')*scanning_window_area
-    track2_squared_sumpool_var = theano.tensor.signal.pool.pool_2d(
-                                input=track2_squared_var,
-                                ws=(filters.shape[-2], filters.shape[-1]),
-                                ignore_border=False,
-                                stride=(1,1),
-                                pad=(0,0),
-                                mode='average_exc_pad')*scanning_window_area
-
-    #take square roots to get magnitudes
-    track1_magnitude_var = theano.tensor.sqrt(track1_squared_sumpool_var)
-    track2_magnitude_var = theano.tensor.sqrt(track2_squared_sumpool_var)
-
-    pseudocount=0.0000001
-    #compute product of cosine distances. Add pseudocount to avoid div by 0
-    #filters were already normalized to have magnituded 1, so don't have
-    #to worry about them
-    fwd_scores_var = ((fwd_track1_conv_out_var/
-                    (track1_magnitude_var+pseudocount))
-                  *(fwd_track2_conv_out_var/
-                    (track2_magnitude_var+pseudocount)))
-    rev_scores_var = ((rev_track1_conv_out_var/
-                    (track1_magnitude_var+pseudocount))
-                  *(rev_track2_conv_out_var/
-                    (track2_magnitude_var+pseudocount))) 
-
-    #concatenate the results to take an elementwise max
-    #The length of the height dimension becomes 1 after convolution,
-    #so this is a good dimension to take advantage of for concatenation
-    concatenated_fwd_and_rev_scores_var = theano.tensor.concatenate(
-        [fwd_scores_var, rev_scores_var], axis=2) 
-    #use argmax to determine whether the fwd or rev match is stronger
-    fwd_or_rev_var = theano.tensor.argmax(concatenated_fwd_and_rev_scores_var,
-                                          axis=2, keepdims=True)
-    #final score is max of fwd and rev result
-    final_scores_var = theano.tensor.max(concatenated_fwd_and_rev_scores_var,
-                                         axis=2, keepdims=True)
-    #concatenate the score with variable determining fwd or rev
-    concatenated_score_and_orientation_var = theano.tensor.concatenate(
-        [final_scores_var,fwd_or_rev_var], axis=2)
-
-    #compile the function linking inputs and outputs
-    compiled_func = theano.function([track1_var, track2_var],
-                                    concatenated_score_and_orientation_var,
-                                    allow_input_downcast=True)
-
-    #run function in batches
-    final_scores = np.array(deeplift.util.run_function_in_batches(
-                            func=compiled_func,
-                            input_data_list=[track1, track2],
-                            batch_size=batch_size,
-                            progress_update=progress_update))
-
-    return final_scores
-
-
-def project_onto_nonzero_filters(filters, track,
-                                 batch_size=50, progress_update=1000):
-    """
-        filters: 3d array: filter_idx x ACGT x length
-        At each position, gives you a value equivalent to what you get if
-         you eliminate all positions of the filter that are 0 in the
-         underlying track, and then projected the deeplift track onto
-         the filter
-
-        track: 3-d array: samples x length x channels(ACGT)
-    """ 
-    import deeplift
-    assert len(filters.shape)==3
-    assert len(track.shape)==3
-    #for DNA sequences, filters.shape[1] will be 4 (ACGT)
-    assert filters.shape[1] == track.shape[2] #channel axis has same dims
-    scanning_window_area = filters.shape[1]*filters.shape[2]
-
-    #insert dummy dimensions to convert shapes from 1d format to
-    #the theano 2d format
-    #for input tracks:
-    #keras 1d format is: samples x length x ACGT (channels)
-    #theano conv2d wants: samples x 1 (channels) x ACGT (height) x length
-    #for filters:
-    #start with: num_filters x ACGT (channels) x filter len
-    #conv2d wants: num_filters x 1 (channels) x ACGT (height) x filter len
-    #transpose is necessary to get the ACGT into axis index 2
-    filters = filters[:,None,:,:]
-    track = track[:,None,:,:].transpose(0,1,3,2)
-
-    #prepare the forward and reverse complement filters for the conv2d call
-    fwd_filters = filters[:,:,::-1,::-1] #convolutions reverse things
-    rev_comp_filters = filters
-
-    #create theano variables for the inputs and filters
-    #set the channel axis to be broadcastable because that should come
-    #in handy when dividing the convolutions for each filter
-    #by the magnitude of the underlying track computed using average pooling
-    track_var = theano.tensor.TensorType(
-                    dtype=theano.config.floatX,
-                    broadcastable=[False,True,False,False])("track") 
-    nonzeros_track_var = theano.tensor.gt(
-                          theano.tensor.abs_(track_var),0.0)*1.0
-
-    fwd_filters_var = theano.tensor.as_tensor_variable(
-                        x=fwd_filters, name="fwd_filters")
-    squared_fwd_filters_var = fwd_filters_var*fwd_filters_var
-    nonzero_fwd_filters_var = theano.tensor.gt(
-                               theano.tensor.abs_(fwd_filters_var),0.0)*1.0
-    rev_comp_filters_var = theano.tensor.as_tensor_variable(
-                             x=rev_comp_filters, name="rev_comp_filters")
-    squared_rev_comp_filters_var = rev_comp_filters_var*rev_comp_filters_var
-    nonzero_rev_filters_var = theano.tensor.gt(
-                              theano.tensor.abs_(rev_comp_filters_var),0.0)*1.0
-
-    #get variables representing the results of the convolutions,
-    #which are equal to the the dot products at each sliding window
-    fwd_track_conv_out_var = theano.tensor.nnet.conv2d(
-                         input=track_var, filters=fwd_filters_var)
-    rev_track_conv_out_var = theano.tensor.nnet.conv2d(
-                         input=track_var, filters=rev_comp_filters_var)
-    #also convolve the squared filters with the nonzeros track, to get
-    #the square of the magnitude for all the positions of the filter that
-    #are nonzero in the underlying track
-    squaredfwd_nonzerotrack_conv_out_var = theano.tensor.nnet.conv2d(
-                               input=nonzeros_track_var,
-                               filters=squared_fwd_filters_var)
-    squaredrev_nonzerotrack_conv_out_var = theano.tensor.nnet.conv2d(
-                               input=nonzeros_track_var,
-                               filters=squared_rev_comp_filters_var)
-
-    #take square roots to get magnitudes
-    fwd_nonzero_magnitude_var =\
-     theano.tensor.sqrt(squaredfwd_nonzerotrack_conv_out_var)
-    rev_nonzero_magnitude_var =\
-     theano.tensor.sqrt(squaredrev_nonzerotrack_conv_out_var)
-
-    pseudocount=0.0000001
-    #compute projection. Add pseudocount to avoid div by 0
-    fwd_scores_var = (fwd_track_conv_out_var/
-                      (fwd_nonzero_magnitude_var+pseudocount))
-    rev_scores_var = (rev_track_conv_out_var/
-                      (rev_nonzero_magnitude_var+pseudocount))
-
-    #concatenate the results to take an elementwise max
-    #The length of the height dimension becomes 1 after convolution,
-    #so this is a good dimension to take advantage of for concatenation
-    concatenated_fwd_and_rev_scores_var = theano.tensor.concatenate(
-        [fwd_scores_var, rev_scores_var], axis=2) 
-    #use argmax to determine whether the fwd or rev match is stronger
-    fwd_or_rev_var = theano.tensor.argmax(concatenated_fwd_and_rev_scores_var,
-                                          axis=2, keepdims=True)
-    #final score is max of fwd and rev result
-    final_scores_var = theano.tensor.max(concatenated_fwd_and_rev_scores_var,
-                                         axis=2, keepdims=True)
-    #concatenate the score with variable determining fwd or rev
-    concatenated_score_and_orientation_var = theano.tensor.concatenate(
-        [final_scores_var,fwd_or_rev_var], axis=2)
-
-    #compile the function linking inputs and outputs
-    compiled_func = theano.function([track_var],
-                                     concatenated_score_and_orientation_var,
-                                     allow_input_downcast=True)
-
-    #run function in batches
-    final_scores = np.array(deeplift.util.run_function_in_batches(
-                            func=compiled_func,
-                            input_data_list=[track],
-                            batch_size=batch_size,
-                            progress_update=progress_update))
-
-    return final_scores
-
-
 def get_betas_from_tsne_conditional_probs(conditional_probs,
                                           original_affmat, aff_to_dist_mat):
     dist_mat = aff_to_dist_mat(original_affmat)
@@ -907,9 +413,11 @@ def get_betas_from_tsne_conditional_probs(conditional_probs,
 
 def convert_to_percentiles(vals):
     to_return = np.zeros(len(vals))
-    sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
-    for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
-        to_return[orig_idx] = sort_idx/float(len(vals))
+    argsort = np.argsort(vals)
+    to_return[argsort] = np.arange(len(vals))/float(len(vals))
+    #sorted_vals = sorted(enumerate(vals), key=lambda x: x[1])
+    #for sort_idx,(orig_idx,val) in enumerate(sorted_vals):
+    #    to_return[orig_idx] = sort_idx/float(len(vals))
     return to_return
 
 
@@ -951,11 +459,129 @@ def binary_search_perplexity(desired_perplexity, distances):
                 beta = (beta + beta_min) / 2.0
     return beta, ps
 
+
+def get_ic_trimming_indices(ppm, background, threshold, pseudocount=0.001):
+    """Return tuple of indices to trim to if ppm is trimmed by info content.
+
+    The ppm will be trimmed from the left and from the right until a position
+     that meets the information content specified by threshold is found. A
+     base of 2 is used for the infromation content.
+
+    Arguments:
+        threshold: the minimum information content.
+        remaining arguments same as for compute_per_position_ic
+
+    Returns:
+        (start_idx, end_idx). start_idx is inclusive, end_idx is exclusive.
+    """
+    per_position_ic = compute_per_position_ic(
+                       ppm=ppm, background=background, pseudocount=pseudocount)
+    passing_positions = np.where(per_position_ic >= threshold)
+    return (passing_positions[0][0], passing_positions[0][-1]+1)
+
+
+def compute_per_position_ic(ppm, background, pseudocount):
+    """Compute information content at each position of ppm.
+
+    Arguments:
+        ppm: should have dimensions of length x alphabet. Entries along the
+            alphabet axis should sum to 1.
+        background: the background base frequencies
+        pseudocount: pseudocount to be added to the probabilities of the ppm
+            to prevent overflow/underflow.
+
+    Returns:
+        total information content at each positon of the ppm.
+    """
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background),\
+            "Make sure the letter axis is the second axis"
+    if (not np.allclose(np.sum(ppm, axis=1), 1.0, atol=1.0e-5)):
+        print("WARNING: Probabilities don't sum to 1 in all the rows; this can"
+              +" be caused by zero-padding. Will renormalize. PPM:\n"
+              +str(ppm)
+              +"\nProbability sums:\n"
+              +str(np.sum(ppm, axis=1)))
+        ppm = ppm/np.sum(ppm, axis=1)[:,None]
+
+    alphabet_len = len(background)
+    ic = ((np.log((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/np.log(2))
+          *ppm - (np.log(background)*background/np.log(2))[None,:])
+    return np.sum(ic,axis=1)
+
+
+#rolling_window is from this blog post by Erik Rigtorp:
+# https://rigtorp.se/2011/01/01/rolling-statistics-numpy.html
+def rolling_window(a, window):
+    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+    strides = a.strides + (a.strides[-1],)
+    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+def sliding_window_max(a, window):
+    rolling_windows_a = rolling_window(a, window)
+    return np.max(rolling_windows_a, axis=-1) 
+
+
+def compute_masked_cosine_sim(imp_scores, onehot_seq, weightmat): 
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+    strided_onehotseq = rolling_window(
+        onehot_seq.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+
+    #this finds the cosine similarity with a masked version of the weightmat
+    # where only the positions that are nonzero in the deeplift scores are
+    # considered
+    dot_product_imp_weightmat = np.sum(
+        strided_impscores*weightmat[None,None,:,:], axis=(2,3))
+    norm_deeplift_scores = np.sqrt(np.sum(np.square(strided_impscores),
+                                   axis=(2,3)))
+    norm_masked_weightmat = np.sqrt(np.sum(np.square(
+                                strided_onehotseq*weightmat[None,None,:,:]),
+                                axis=(2,3)))
+    cosine_sim = dot_product_imp_weightmat/(
+                  norm_deeplift_scores*norm_masked_weightmat)
+    return cosine_sim
+
+
+def get_logodds_pwm(ppm, background, pseudocount):
+    assert len(ppm.shape)==2
+    assert ppm.shape[1]==len(background),\
+            "Make sure the letter axis is the second axis"
+    assert (np.max(np.abs(np.sum(ppm, axis=1)-1.0)) < 1e-7),(
+             "Probabilities don't sum to 1 along axis 1 in "
+             +str(ppm)+"\n"+str(np.sum(ppm, axis=1)))
+    alphabet_len = len(background)
+    odds_ratio = ((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/(
+                  background[None,:])
+    return np.log(odds_ratio)
+
+
+def compute_pwm_scan(onehot_seq, weightmat):
+    strided_onehotseq = rolling_window(
+        onehot_seq.transpose((0,2,1)),
+        window=len(weightmat)).transpose((0,2,3,1))
+    pwm_scan = np.sum(
+        strided_onehotseq*weightmat[None,None,:,:], axis=(2,3)) 
+    return pwm_scan
+
+
+def compute_sum_scores(imp_scores, window_size):
+    strided_impscores = rolling_window(
+        imp_scores.transpose((0,2,1)),
+        window=window_size).transpose((0,2,3,1))
+    sum_scores = np.sum(strided_impscores, axis=(2,3))
+    return sum_scores
+
+
 def trim_ppm(ppm, t=0.45):
     maxes = np.max(ppm,-1)
     maxes = np.where(maxes>=t)
     return ppm[maxes[0][0]:maxes[0][-1]+1] 
         
+
 def write_meme_file(ppm, bg, fname):
     f = open(fname, 'w')
     f.write('MEME version 4\n\n')
@@ -968,7 +594,8 @@ def write_meme_file(ppm, bg, fname):
     for s in ppm:
         f.write('%.5f %.5f %.5f %.5f\n' % tuple(s))
     f.close()
-    
+
+
 def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_path='tomtom', motifs_db='HOCOMOCOv11_core_HUMAN_mono_meme_format.meme' , n=5, temp_dir='./', trim_threshold=0.45):
     """Fetches top matches from a motifs database using TomTom.
     
@@ -1013,3 +640,19 @@ def fetch_tomtom_matches(ppm, background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_p
     
     os.system('rm ' + fname)
     return r
+
+
+def show_or_savefig(plot_save_dir, filename):
+    from matplotlib import pyplot as plt
+    if plt.isinteractive():
+        plt.show()
+    else:
+        import os, errno
+        try:
+            os.makedirs(plot_save_dir)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+        fname = (plot_save_dir+"/"+filename)
+        plt.savefig(fname)
+        print("saving plot to " + fname)

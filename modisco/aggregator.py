@@ -3,10 +3,12 @@ import numpy as np
 from . import affinitymat
 from . import core
 from . import util
-from . import backend as B
 from collections import OrderedDict, defaultdict
 import itertools
 import sys
+from joblib import Parallel, delayed
+from sklearn.metrics import roc_auc_score
+import time
 
 
 class AbstractAggSeqletPostprocessor(object):
@@ -42,27 +44,40 @@ class TrimToFracSupport(AbstractAggSeqletPostprocessor):
                   verbose=self.verbose) for x in aggregated_seqlets]
 
 
-class TrimToBestWindow(AbstractAggSeqletPostprocessor):
+class AbstractTrimToBestWindow(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, window_size, track_names):
+    def __init__(self, window_size):
         self.window_size = window_size
-        self.track_names = track_names
+
+    def score_positions(self, aggregated_seqlet):
+        raise NotImplementError()
 
     def __call__(self, aggregated_seqlets):
         trimmed_agg_seqlets = []
         for aggregated_seqlet in aggregated_seqlets:
             start_idx = np.argmax(util.cpu_sliding_window_sum(
-                arr=np.sum(np.abs(
-                    np.concatenate(
-                    [aggregated_seqlet[track_name].fwd
-                      .reshape(len(aggregated_seqlet),-1) for
-                     track_name in self.track_names], axis=1)),axis=1),
+                arr=self.score_positions(aggregated_seqlet),
                 window_size=self.window_size))
             end_idx = start_idx + self.window_size
             trimmed_agg_seqlets.append(
                 aggregated_seqlet.trim_to_start_and_end_idx(
                     start_idx=start_idx, end_idx=end_idx)) 
         return trimmed_agg_seqlets
+
+
+class TrimToBestWindowByIC(AbstractTrimToBestWindow):
+
+    def __init__(self, window_size, onehot_track_name, bg_freq):
+        super(TrimToBestWindowByIC, self).__init__(window_size=window_size)
+        self.onehot_track_name = onehot_track_name
+        self.bg_freq = bg_freq
+
+    #sub up imp for each track, take l1 norm, average across seqlets
+    def score_positions(self, aggregated_seqlet):
+        ppm = aggregated_seqlet[self.onehot_track_name].fwd
+        per_pos_ic = util.compute_per_position_ic(
+            ppm=ppm, background=self.bg_freq, pseudocount=0.001)
+        return per_pos_ic
 
 
 class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
@@ -264,7 +279,7 @@ class ReassignSeqletsFromSmallClusters(AbstractAggSeqletPostprocessor):
                 large_patterns, new_assignments =\
                     self.seqlet_assigner(patterns=large_patterns,
                                          seqlets_to_assign=seqlets_to_assign,
-                                         merge_into_existing_patterns=True)
+                                         merge_into_existing_patterns=False)
             large_patterns = self.postprocessor(large_patterns)
             return large_patterns
         else:
@@ -346,11 +361,16 @@ class AssignSeqletsByBestMetric(object):
                      filters=pattern_fwd_data,
                      things_to_scan=seqlet_fwd_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_metric_rev = self.matrix_affinity_metric(
+        if (seqlet_rev_data is not None):
+            cross_metric_rev = self.matrix_affinity_metric(
                      filters=pattern_fwd_data,
                      things_to_scan=seqlet_rev_data,
                      min_overlap=self.pattern_comparison_settings.min_overlap) 
-        cross_metrics = np.maximum(cross_metric_fwd, cross_metric_rev)
+        if (seqlet_rev_data is not None):
+            cross_metrics = np.maximum(cross_metric_fwd, cross_metric_rev)
+        else:
+            cross_metrics = cross_metric_fwd
+            
         assert cross_metrics.shape == (len(patterns), len(seqlets_to_assign))
         seqlet_assignments = np.argmax(cross_metrics, axis=0) 
         seqlet_assignment_scores = np.max(cross_metrics, axis=0)
@@ -382,103 +402,16 @@ class AssignSeqletsByBestMetric(object):
 
         if (merge_into_existing_patterns):
             new_patterns = patterns
-            for pattern,x in zip(patterns, seqlet_and_alnmnt_grps):
-                pattern.merge_seqlets_and_alnmts(
-                    seqlets_and_alnmts=x,
-                    aligner=self.pattern_aligner) 
         else:
-            new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
-                for x in seqlet_and_alnmnt_grps if len(x) > 0]
-
-        return new_patterns, seqlet_assignments
-
-
-#reassign seqlets to best match motif
-class AssignSeqletsByBestCrossCorr(object):
-
-    def __init__(self, pattern_crosscorr_settings,
-                       min_similarity=0.0,
-                       verbose=True, batch_size=50, progress_update=1000,
-                       func_params_size=1000000):
-
-        self.pattern_crosscorr_settings = pattern_crosscorr_settings
-        self.pattern_aligner = core.CrossCorrelationPatternAligner(
-                        pattern_comparison_settings=pattern_crosscorr_settings)
-        self.min_similarity = min_similarity
-        self.verbose = verbose
-        self.batch_size = batch_size
-        self.progress_update = progress_update
-        self.func_params_size = func_params_size
-
-    def __call__(self, patterns, seqlets_to_assign,
-                       merge_into_existing_patterns):
-
-        (pattern_fwd_data, pattern_rev_data) =\
-            core.get_2d_data_from_patterns(
-                patterns=patterns,
-                track_names=self.pattern_crosscorr_settings.track_names,
-                track_transformer=
-                    self.pattern_crosscorr_settings.track_transformer)
-        (seqlet_fwd_data, seqlet_rev_data) =\
-            core.get_2d_data_from_patterns(
-                patterns=seqlets_to_assign,
-                track_names=self.pattern_crosscorr_settings.track_names,
-                track_transformer=
-                    self.pattern_crosscorr_settings.track_transformer)
-
-        cross_corrs_fwd = B.max_cross_corrs(
-                     filters=pattern_fwd_data,
-                     things_to_scan=seqlet_fwd_data,
-                     min_overlap=self.pattern_crosscorr_settings.min_overlap,
-                     batch_size=self.batch_size,
-                     func_params_size=self.func_params_size,
-                     progress_update=self.progress_update) 
-        cross_corrs_rev = B.max_cross_corrs(
-                     filters=pattern_fwd_data,
-                     things_to_scan=seqlet_rev_data,
-                     min_overlap=self.pattern_crosscorr_settings.min_overlap,
-                     batch_size=self.batch_size,
-                     func_params_size=self.func_params_size,
-                     progress_update=self.progress_update) 
-        cross_corrs = np.maximum(cross_corrs_fwd, cross_corrs_rev)
-        assert cross_corrs.shape == (len(patterns), len(seqlets_to_assign))
-        seqlet_assignments = np.argmax(cross_corrs, axis=0) 
-        seqlet_assignment_scores = np.max(cross_corrs, axis=0)
-
-        seqlet_and_alnmnt_grps = [[] for x in patterns]
-        discarded_seqlets = 0
-        for seqlet_idx, (assignment, score)\
-            in enumerate(zip(seqlet_assignments, seqlet_assignment_scores)):
-            if (score >= self.min_similarity):
-                alnmt, revcomp_match, score = self.pattern_aligner(
-                    parent_pattern=patterns[assignment],
-                    child_pattern=seqlets_to_assign[seqlet_idx]) 
-                if (revcomp_match):
-                    seqlet = seqlets_to_assign[seqlet_idx].revcomp()
-                else:
-                    seqlet = seqlets_to_assign[seqlet_idx]
-                seqlet_and_alnmnt_grps[assignment].append(
-                    core.SeqletAndAlignment(
-                        seqlet=seqlets_to_assign[seqlet_idx],
-                        alnmt=alnmt))
-            else:
-                seqlet_assignments[seqlet_idx] = -1
-                discarded_seqlets += 1
-
-        if (self.verbose):
-            if discarded_seqlets > 0:
-                print("Discarded "+str(discarded_seqlets)+" seqlets") 
-                sys.stdout.flush()
-
-        if (merge_into_existing_patterns):
-            new_patterns = patterns
-            for pattern,x in zip(patterns, seqlet_and_alnmnt_grps):
-                pattern.merge_seqlets_and_alnmts(
-                    seqlets_and_alnmts=x,
-                    aligner=self.pattern_aligner) 
-        else:
-            new_patterns = [core.AggregatedSeqlet(seqlets_and_alnmts_arr=x)
-                for x in seqlet_and_alnmnt_grps if len(x) > 0]
+            #Make a copy of each one
+            new_patterns = [
+                core.AggregatedSeqlet(pattern._seqlets_and_alnmts.copy())
+                for pattern in patterns]
+            
+        for pattern,x in zip(new_patterns, seqlet_and_alnmnt_grps):
+            pattern.merge_seqlets_and_alnmts(
+                seqlets_and_alnmts=x,
+                aligner=self.pattern_aligner) 
 
         return new_patterns, seqlet_assignments
 
@@ -670,40 +603,6 @@ class AdhocMergeAlignedPatternsCondition(
                          child_pattern=child_pattern, alnmt=alnmt)
 
 
-class SimilarityThreshold(AbstractMergeAlignedPatternsCondition):
-
-    def __init__(self, pattern_comparison_settings,
-                       comparison_metric, threshold, verbose):
-        self.pattern_comparison_settings = pattern_comparison_settings
-        self.comparison_metric = comparison_metric
-        self.threshold = threshold
-        self.verbose = verbose
-    
-    def __call__(self, parent_pattern, child_pattern, alnmt):
-        parent_data_fwd, patern_data_rev =\
-            core.get_2d_data_from_pattern(
-                pattern=parent_pattern,
-                track_names=self.pattern_comparison_settings.track_names,
-                track_transformer=
-                    self.pattern_comparison_settings.track_transformer)
-        child_data_fwd, child_data_rev =\
-            core.get_2d_data_from_pattern(
-                pattern=child_pattern,
-                track_names=self.pattern_comparison_settings.track_names,
-                track_transformer=
-                    self.pattern_comparison_settings.track_transformer)
-        metric = self.comparison_metric(
-                    in1=parent_data_fwd[max(alnmt,0):
-                                    min(len(parent_data_fwd),
-                                        (len(child_data_fwd)+alnmt))],
-                    in2=child_data_fwd[max(-alnmt,0):
-                                      min(len(child_data_fwd),
-                                          len(parent_data_fwd)-alnmt)])
-        if (self.verbose):
-            print("Metric",metric)
-        return (metric >= self.threshold)
-
-
 class PatternMergeHierarchy(object):
 
     def __init__(self, root_nodes):
@@ -712,34 +611,166 @@ class PatternMergeHierarchy(object):
     def add_level(self, level_arr):
         self.levels.append(level_arr)
 
+    def save_hdf5(self, grp):
+        root_node_names = []
+        for i in range(len(self.root_nodes)):
+            node_name = "root_node"+str(i)
+            root_node_names.append(node_name) 
+            self.root_nodes[i].save_hdf5(grp.create_group(node_name))
+        util.save_string_list(root_node_names,
+                              dset_name="root_node_names",
+                              grp=grp) 
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        root_node_names = util.load_string_list(dset_name="root_node_names",
+                                                grp=grp) 
+        root_nodes = []
+        for root_node_name in root_node_names:
+            root_node = PatternMergeHierarchyNode.from_hdf5(
+                            grp=grp[root_node_name],
+                            track_set=track_set)
+            root_nodes.append(root_node)
+        return cls(root_nodes=root_nodes) 
+
 
 class PatternMergeHierarchyNode(object):
 
-    def __init__(self, pattern, child_nodes=None, parent_node=None): 
+    def __init__(self, pattern, child_nodes=None, parent_node=None,
+                       indices_merged=None, submat_crosscontam=None,
+                       submat_alignersim=None): 
         self.pattern = pattern 
         if (child_nodes is None):
             child_nodes = []
         self.child_nodes = child_nodes
         self.parent_node = parent_node
+        self.indices_merged = indices_merged
+        self.submat_crosscontam = submat_crosscontam
+        self.submat_alignersim = submat_alignersim
+
+    def save_hdf5(self, grp):
+        if (self.indices_merged is not None):
+            grp.create_dataset("indices_merged",
+                               data=np.array(self.indices_merged)) 
+            grp.create_dataset("submat_crosscontam",
+                               data=np.array(self.submat_crosscontam)) 
+            grp.create_dataset("submat_alignersim",
+                               data=np.array(self.submat_alignersim)) 
+        self.pattern.save_hdf5(grp=grp.create_group("pattern"))
+        if (self.child_nodes is not None):
+            child_node_names = []
+            for i in range(len(self.child_nodes)):
+                child_node_name = "child_node"+str(i)
+                child_node_names.append(child_node_name)
+                self.child_nodes[i].save_hdf5(
+                    grp.create_group(child_node_name))
+            util.save_string_list(child_node_names,
+                                  dset_name="child_node_names",
+                                  grp=grp)
+
+    @classmethod
+    def from_hdf5(cls, grp, track_set):
+        pattern = core.AggregatedSeqlet.from_hdf5(grp=grp["pattern"],
+                                                  track_set=track_set)  
+        if "indices_merged" in grp:
+            indices_merged = tuple(grp["indices_merged"][:])
+            submat_crosscontam = np.array(grp["submat_crosscontam"])
+            submat_alignersim = np.array(grp["submat_alignersim"])
+        else:
+            (indices_merged, submat_crosscontam,
+             submat_alignersim) = (None, None, None)
+        if "child_node_names" in grp:
+            child_node_names = util.load_string_list(
+                                dset_name="child_node_names",
+                                grp=grp)
+            child_nodes = []
+            for child_node_name in child_node_names:
+                child_node = PatternMergeHierarchyNode.from_hdf5(
+                               grp=grp[child_node_name],
+                               track_set=track_set) 
+                child_nodes.append(child_node)
+               
+        else:
+            child_nodes = None
+   
+        to_return = cls(pattern=pattern,
+                        child_nodes=child_nodes,
+                        indices_merged=indices_merged,
+                        submat_crosscontam=submat_crosscontam,
+                        submat_alignersim=submat_alignersim) 
+
+        if (child_nodes is not None):
+            for child_node in child_nodes:
+                child_node.parent_node = to_return
+
+        return to_return
 
 
-class DynamicThresholdSimilarPatternsCollapser(object):
+def compute_continjacc_vec_vs_arr(vec, arr):
+    abs_vec = np.abs(vec)
+    abs_arr = np.abs(arr)
+    union = np.sum(np.maximum(abs_vec[None,:], abs_arr), axis=-1)
+    intersection = np.sum((np.minimum(abs_vec[None,:], abs_arr)
+                    *np.sign(vec[None,:])*np.sign(arr)), axis=-1)
+    zeros_mask = (union==0)
+    union = (union*(zeros_mask==False) + 1e-7*zeros_mask)
+    return intersection/union
 
-    def __init__(self, pattern_to_seqlet_sim_computer,
+
+def compute_continjacc_arr1_vs_arr2(arr1, arr2, n_cores): 
+    return np.array(
+        Parallel(n_jobs=n_cores)(
+            delayed(compute_continjacc_vec_vs_arr)(vec, arr2) for vec in arr1
+        ))
+
+
+def compute_continjacc_arr1_vs_arr2fwdandrev(arr1, arr2fwd, arr2rev, n_cores):
+    sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2fwd,
+                                               n_cores=n_cores)
+    if (arr2rev is not None):
+        rev_sims = compute_continjacc_arr1_vs_arr2(arr1=arr1, arr2=arr2rev,
+                                                   n_cores=n_cores)
+        sims = np.maximum(sims, rev_sims)
+    return sims
+
+
+class DynamicDistanceSimilarPatternsCollapser2(object):
+
+    def __init__(self, pattern_comparison_settings,
+                       track_set,
                        pattern_aligner,
                        collapse_condition, dealbreaker_condition,
                        postprocessor,
-                       verbose=True):
-        self.pattern_to_seqlet_sim_computer = pattern_to_seqlet_sim_computer
+                       verbose=True,
+                       max_seqlets_subsample=1000,
+                       n_cores=1):
+        self.pattern_comparison_settings = pattern_comparison_settings
+        self.track_set = track_set
         self.pattern_aligner = pattern_aligner
         self.collapse_condition = collapse_condition
         self.dealbreaker_condition = dealbreaker_condition
         self.postprocessor = postprocessor
         self.verbose = verbose
+        self.n_cores = n_cores
+        self.max_seqlets_subsample = max_seqlets_subsample
 
-    def __call__(self, patterns, seqlets):
+    def subsample_pattern(self, pattern):
+        seqlets_and_alnmts_list = list(pattern.seqlets_and_alnmts)
+        subsample = [seqlets_and_alnmts_list[i]
+                     for i in
+                     np.random.RandomState(1234).choice(
+                         a=np.arange(len(seqlets_and_alnmts_list)),
+                         replace=False,
+                         size=self.max_seqlets_subsample)]
+        return core.AggregatedSeqlet(seqlets_and_alnmts_arr=subsample) 
+
+    def __call__(self, patterns):
 
         patterns = [x.copy() for x in patterns]
+
+        #Let's subsample 'patterns' to prevent runtime from being too
+        # large in calculating pairwise sims. Max 1000, and also add in
+        # parallelization.
         merge_hierarchy_levels = []        
         current_level_nodes = [
             PatternMergeHierarchyNode(pattern=x) for x in patterns]
@@ -748,8 +779,16 @@ class DynamicThresholdSimilarPatternsCollapser(object):
         merge_occurred_last_iteration = True
         merging_iteration = 0
 
+        #negative numbers to indicate which
+        # entries need to be filled (versus entries we can infer
+        # from the previous iteration of the while loop)
+        pairwise_aurocs = -np.ones((len(patterns), len(patterns)))
+        pairwise_sims = np.zeros((len(patterns), len(patterns)))
+
         #loop until no more patterns get merged
         while (merge_occurred_last_iteration):
+
+            start  = time.time()
             
             merging_iteration += 1
             if (self.verbose):
@@ -758,23 +797,152 @@ class DynamicThresholdSimilarPatternsCollapser(object):
             merge_occurred_last_iteration = False
 
             if (self.verbose):
-                print("Computing pattern to seqlet similarities")
-                sys.stdout.flush()
-            patterns_to_seqlets_sims = self.pattern_to_seqlet_sim_computer(
-                                            seqlets=seqlets,
-                                            filter_seqlets=patterns)
-            assert len(pattern_to_seqlets_sims)==len(seqlets)
-            assert len(pattern_to_seqlets_sims[0])==len(patterns)
+                print("Numbers for each pattern pre-subsample:",
+                      str([len(x.seqlets) for x in patterns]))
+            subsample_patterns = [
+                (x if x.num_seqlets <= self.max_seqlets_subsample
+                 else self.subsample_pattern(x)) for x in patterns]
             if (self.verbose):
-                print("Computing pattern to pattern similarities")
-                sys.stdout.flush()
-            patterns_to_patterns_aligner_sim =\
-                np.zeros((len(patterns), len(patterns))) 
-            for i,pattern1 in enumerate(patterns):
-                for j,pattern2 in enumerate(patterns):
+                print("Numbers after subsampling:",
+                      str([len(x.seqlets) for x in subsample_patterns]))
+
+
+            for i,(pattern1, subsample_pattern1) in enumerate(
+                                            zip(patterns, subsample_patterns)):
+                #from modisco.visualization import viz_sequence
+                #viz_sequence.plot_weights(pattern1["task0_contrib_scores"].fwd)
+                for j,(pattern2, subsample_pattern2) in enumerate(
+                                            zip(patterns, subsample_patterns)):
+                    #Note: I compute both i,j AND j,i because although
+                    # the result is the same for the sim, it can be different
+                    # for the auroc because a different motif is getting
+                    # shifted over.
+                    if (j==i):
+                        pairwise_aurocs[i,j] = 0.5
+                        pairwise_sims[i,j] = 1.0
+                        continue
+                    if pairwise_aurocs[i,j] >= 0: #filled in from previous iter
+                        assert pairwise_aurocs[j,i] >= 0
+                        continue 
+                        
+                    #Compute best alignment between pattern pair
                     (alnmt, rc, aligner_sim) =\
                         self.pattern_aligner(pattern1, pattern2)
-                    patterns_to_patterns_aligner_sim[i,j] = aligner_sim
+                    pairwise_sims[i,j] = aligner_sim
+
+                    #get realigned pattern2
+                    pattern2_coords = [x.coor
+                        for x in subsample_pattern2.seqlets]
+                    if (rc):
+                        pattern2_coords  = [x.revcomp()
+                         for x in pattern2_coords]
+                    #now apply the alignment
+                    pattern2_coords = [
+                        x.shift((1 if x.is_revcomp else -1)*alnmt)
+                        for x in pattern2_coords] 
+
+                    pattern2_shifted_seqlets = self.track_set.create_seqlets(
+                        coords=pattern2_coords,
+                        track_names=
+                         self.pattern_comparison_settings.track_names) 
+
+                    pattern1_fwdseqdata, pattern1_revseqdata =\
+                      core.get_2d_data_from_patterns(
+                        patterns=subsample_pattern1.seqlets,
+                        track_names=
+                         self.pattern_comparison_settings.track_names,
+                        track_transformer=
+                         self.pattern_comparison_settings.track_transformer)
+                    pattern2_fwdseqdata, pattern2_revseqdata =\
+                      core.get_2d_data_from_patterns(
+                        patterns=pattern2_shifted_seqlets,
+                        track_names=
+                         self.pattern_comparison_settings.track_names,
+                        track_transformer=
+                         self.pattern_comparison_settings.track_transformer)
+
+                    #Flatten, compute continjacc sim at this alignment
+                    flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
+                        (len(pattern1_fwdseqdata), -1))
+                    flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
+                        (len(pattern2_fwdseqdata), -1))
+                    if (pattern1_revseqdata is not None):
+                        flat_pattern1_revseqdata = pattern1_revseqdata.reshape(
+                            (len(pattern1_revseqdata), -1))
+                        flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
+                            (len(pattern2_fwdseqdata), -1))
+                    else:
+                        flat_pattern1_revseqdata = None 
+                        flat_pattern2_revseqdata = None 
+                        assert rc==False
+
+                    #Do a check for all-zero scores, print warning
+                    #do a check about the per-example sum
+                    per_ex_sum_pattern1_zeromask = (np.sum(np.abs(
+                        flat_pattern1_fwdseqdata),axis=-1))==0
+                    per_ex_sum_pattern2_zeromask = (np.sum(np.abs(
+                        flat_pattern2_fwdseqdata),axis=-1))==0
+                    if (np.sum(per_ex_sum_pattern1_zeromask) > 0):
+                        print("WARNING: Zeros present for pattern1 coords")
+                        zero_seqlet_locs =\
+                            np.nonzero(per_ex_sum_pattern1_zeromask) 
+                        print("\n".join([str(s.coor) for s in
+                                         subsample_pattern1.seqlets]))
+                    if (np.sum(per_ex_sum_pattern2_zeromask) > 0):
+                        print("WARNING: Zeros present for pattern2 coords")
+                        zero_seqlet_locs =\
+                            np.nonzero(per_ex_sum_pattern2_zeromask)
+                        print("\n".join([str(coor) for coor in
+                                         pattern2_coords]))
+
+                    between_pattern_sims =\
+                     compute_continjacc_arr1_vs_arr2fwdandrev(
+                        arr1=flat_pattern1_fwdseqdata,
+                        arr2fwd=flat_pattern2_fwdseqdata,
+                        arr2rev=flat_pattern2_revseqdata,
+                        n_cores=self.n_cores).ravel()
+
+                    within_pattern1_sims =\
+                     compute_continjacc_arr1_vs_arr2fwdandrev(
+                        arr1=flat_pattern1_fwdseqdata,
+                        arr2fwd=flat_pattern1_fwdseqdata,
+                        arr2rev=flat_pattern1_revseqdata,
+                        n_cores=self.n_cores).ravel()
+
+                    auroc = roc_auc_score(
+                        y_true=[0 for x in between_pattern_sims]
+                               +[1 for x in within_pattern1_sims],
+                        y_score=list(between_pattern_sims)
+                                +list(within_pattern1_sims))
+
+                    #The 'within pattern2 sims' may be less reliable due
+                    # to the shiftover, that's why I won't compute them
+                    #within_pattern2_sims =\
+                    # compute_continjacc_arr1_vs_arr2fwdandrev(
+                    #    arr1=flat_pattern2_fwdseqdata,
+                    #    arr2fwd=flat_pattern2_fwdseqdata,
+                    #    arr2rev=flat_pattern2_revseqdata,
+                    #    n_cores=self.n_cores).ravel()
+                    #auroc2 = roc_auc_score(
+                    #    y_true=[0 for x in between_pattern_sims]
+                    #           +[1 for x in within_pattern2_sims],
+                    #    y_score=list(between_pattern_sims)
+                    #            +list(within_pattern2_sims))
+
+                    #The symmetrization over i,j and j,i is done later
+                    pairwise_aurocs[i,j] = auroc
+
+
+            patterns_to_patterns_aligner_sim = pairwise_sims
+            cross_contamination = 2*(1-np.maximum(pairwise_aurocs,0.5))
+            
+            if (self.verbose):
+                print("Cluster sizes")
+                print(np.array([len(x.seqlets) for x in patterns]))
+                print("Cross-contamination matrix:")
+                print(np.round(cross_contamination,2))
+                print("Pattern-to-pattern sim matrix:")
+                print(np.round(patterns_to_patterns_aligner_sim,2))
 
             indices_to_merge = []
             merge_partners_so_far = dict([(i, set([i])) for i in
@@ -787,14 +955,15 @@ class DynamicThresholdSimilarPatternsCollapser(object):
                             key=lambda x: -x[2])
             #iterate over pairs
             for (i,j,aligner_sim) in sorted_pairs:
-                dist_prob = min(patterns_dist_probs[i,j],
-                                patterns_dist_probs[j,i])
-                if (self.collapse_condition(dist_prob=dist_prob,
+                #symmetrize asymmetric crosscontam
+                cross_contam = 0.5*(cross_contamination[i,j]+
+                                    cross_contamination[j,i])
+                if (self.collapse_condition(prob=cross_contam,
                                             aligner_sim=aligner_sim)):
                     if (self.verbose):
                         print("Collapsing "+str(i)
                               +" & "+str(j)
-                              +" with prob "+str(dist_prob)+" and"
+                              +" with crosscontam "+str(cross_contam)+" and"
                               +" sim "+str(aligner_sim)) 
                         sys.stdout.flush()
 
@@ -807,22 +976,22 @@ class DynamicThresholdSimilarPatternsCollapser(object):
                     for m1 in merge_under_consideration:
                         for m2 in merge_under_consideration:
                             if (m1 < m2):
-                                min_dist_prob_here =\
-                                    min(patterns_dist_probs[m1, m2],
-                                        patterns_dist_probs[m2, m1])
+                                cross_contam_here =\
+                                    0.5*(cross_contamination[m1, m2]+
+                                         cross_contamination[m2, m1])
                                 aligner_sim_here =\
                                     patterns_to_patterns_aligner_sim[
                                         m1, m2]
                                 if (self.dealbreaker_condition(
-                                        dist_prob=min_dist_prob_here,
+                                        prob=cross_contam_here,
                                         aligner_sim=aligner_sim_here)):
                                     collapse_passed=False                     
                                     if (self.verbose):
                                         print("Aborting collapse as "
                                               +str(m1)
                                               +" & "+str(m2)
-                                              +" have prob "
-                                              +str(min_dist_prob_here)
+                                              +" have cross-contam "
+                                              +str(cross_contam_here)
                                               +" and"
                                               +" sim "
                                               +str(aligner_sim_here)) 
@@ -838,7 +1007,7 @@ class DynamicThresholdSimilarPatternsCollapser(object):
                     if (self.verbose):
                         pass
                         #print("Not collapsed "+str(i)+" & "+str(j)
-                        #      +" with prob "+str(dist_prob)+" and"
+                        #      +" with cross-contam "+str(cross_contam)+" and"
                         #      +" sim "+str(aligner_sim)) 
                         #sys.stdout.flush()
 
@@ -859,227 +1028,491 @@ class DynamicThresholdSimilarPatternsCollapser(object):
                     assert len(new_pattern)==1
                     new_pattern = new_pattern[0]
                     for k in range(len(patterns)):
+                        #Replace EVERY case where the parent or child
+                        # pattern is present with the new pattern. This
+                        # effectively does single-linkage.
                         if (patterns[k]==parent_pattern or
                             patterns[k]==child_pattern):
                             patterns[k]=new_pattern
             merge_occurred_last_iteration = (len(indices_to_merge) > 0)
 
             if (merge_occurred_last_iteration):
-                #Once we are out of this loop, each element of 'patterns'
+                #Once we are here, each element of 'patterns'
                 #will have the new parent of the corresponding element
                 #of 'old_patterns'
                 old_to_new_pattern_mapping = patterns
 
-                #sort by size and remove redundant patterns 
+                #sort by size and remove redundant patterns
                 patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
                 patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
+
+                #let's figure out which indices don't require recomputation
+                # and use it to repopulate pairwise_sims and pairwise_aurocs
+                old_to_new_index_mappings = OrderedDict()
+                for old_pattern_idx,(old_pattern_node, corresp_new_pattern)\
+                    in enumerate(zip(current_level_nodes,
+                                     old_to_new_pattern_mapping)):
+                    #if the old pattern was NOT changed in this iteration
+                    if (old_pattern_node.pattern == corresp_new_pattern):
+                        new_idx = patterns.index(corresp_new_pattern) 
+                        old_to_new_index_mappings[old_pattern_idx] = new_idx
+                print("Unmerged patterns remapping:",old_to_new_index_mappings)
+                new_pairwise_aurocs = -np.ones((len(patterns), len(patterns)))
+                new_pairwise_sims = np.zeros((len(patterns), len(patterns)))
+                for old_idx_i, new_idx_i in\
+                    old_to_new_index_mappings.items():
+                    for old_idx_j, new_idx_j in\
+                        old_to_new_index_mappings.items():
+                        new_pairwise_aurocs[new_idx_i, new_idx_j] =\
+                            pairwise_aurocs[old_idx_i, old_idx_j]
+                        new_pairwise_sims[new_idx_i, new_idx_j] =\
+                            pairwise_sims[old_idx_i, old_idx_j]
+                pairwise_aurocs = new_pairwise_aurocs 
+                pairwise_sims = new_pairwise_sims
+                     
 
                 #update the hierarchy
                 next_level_nodes = [PatternMergeHierarchyNode(x)
                                     for x in patterns]
                 for next_level_node in next_level_nodes:
                     #iterate over all the old patterns and their new parent
-                    for old_pattern_node, corresp_new_pattern\
-                        in zip(current_level_nodes,
-                               old_to_new_pattern_mapping):
+                    # in order to set up the child nodes correctly
+                    for old_pattern_idx,(old_pattern_node, corresp_new_pattern)\
+                        in enumerate(zip(current_level_nodes,
+                                         old_to_new_pattern_mapping)):
+ 
                         #if the node has a new parent
                         if (old_pattern_node.pattern != corresp_new_pattern):
                             if (next_level_node.pattern==corresp_new_pattern):
+
+                                
+                                #corresp_new_pattern should be comprised of a 
+                                # merging of all the old patterns at
+                                # indices_merged_with
+                                indices_merged = tuple(sorted(
+                                    merge_partners_so_far[old_pattern_idx])) 
+                                #get the relevant slice         
+                                submat_crosscontam =\
+                                 cross_contamination[indices_merged,:][:,
+                                                     indices_merged]
+                                submat_alignersim =\
+                                 patterns_to_patterns_aligner_sim[
+                                    indices_merged, :][:,indices_merged]
+
+                                if (next_level_node.indices_merged is not None):
+                                    assert (next_level_node.indices_merged
+                                            ==indices_merged),\
+                                     (next_level_node.indices_merged,
+                                      indices_merged)
+                                else:
+                                    next_level_node.indices_merged =\
+                                        indices_merged
+                                    next_level_node.submat_crosscontam =\
+                                        submat_crosscontam
+                                    next_level_node.submat_alignersim =\
+                                        submat_alignersim
+
                                 next_level_node.child_nodes.append(
                                                 old_pattern_node) 
                                 assert old_pattern_node.parent_node is None
                                 old_pattern_node.parent_node = next_level_node
+                            
 
                 current_level_nodes=next_level_nodes
+                print("Time spent on merging iteration:", time.time()-start)
 
         return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
 
 
-class DynamicDistanceSimilarPatternsCollapser(object):
+#class DynamicDistanceSimilarPatternsCollapser(object):
+#
+#    def __init__(self, pattern_to_pattern_sim_computer,
+#                       aff_to_dist_mat, pattern_aligner,
+#                       collapse_condition, dealbreaker_condition,
+#                       postprocessor,
+#                       verbose=True):
+#        self.pattern_to_pattern_sim_computer = pattern_to_pattern_sim_computer 
+#        self.aff_to_dist_mat = aff_to_dist_mat
+#        self.pattern_aligner = pattern_aligner
+#        self.collapse_condition = collapse_condition
+#        self.dealbreaker_condition = dealbreaker_condition
+#        self.postprocessor = postprocessor
+#        self.verbose = verbose
+#
+#    def __call__(self, patterns):
+#
+#
+#        patterns = [x.copy() for x in patterns]
+#        merge_hierarchy_levels = []        
+#        current_level_nodes = [
+#            PatternMergeHierarchyNode(pattern=x) for x in patterns]
+#        merge_hierarchy_levels.append(current_level_nodes)
+#
+#        merge_occurred_last_iteration = True
+#        merging_iteration = 0
+#
+#        #loop until no more patterns get merged
+#        while (merge_occurred_last_iteration):
+#            
+#            merging_iteration += 1
+#            if (self.verbose):
+#                print("On merging iteration",merging_iteration) 
+#                sys.stdout.flush()
+#            merge_occurred_last_iteration = False
+#
+#            if (self.verbose):
+#                print("Computing pattern to seqlet distances")
+#                sys.stdout.flush()
+#
+#            seqlets = [x for pattern in patterns for x in pattern.seqlets]
+#            orig_seqlet_membership = [pattern_idx for (pattern_idx,pattern)
+#                                      in enumerate(patterns)
+#                                      for x in pattern.seqlets]
+#            patterns_to_seqlets_simmat =\
+#                self.pattern_to_pattern_sim_computer(
+#                                        seqlets=seqlets,
+#                                        filter_seqlets=patterns).transpose(
+#                                         (1,0))
+#            cross_contamination = np.zeros((len(patterns_to_seqlets_simmat),
+#                                            len(patterns_to_seqlets_simmat)))
+#            for seqlet_idx in range(patterns_to_seqlets_simmat.shape[1]):
+#                seqlet_orig_pattern = orig_seqlet_membership[seqlet_idx]
+#                seqlet_self_sim = patterns_to_seqlets_simmat[
+#                                   seqlet_orig_pattern, seqlet_idx]
+#                for pattern_idx in range(patterns_to_seqlets_simmat.shape[0]):
+#                    if (patterns_to_seqlets_simmat[pattern_idx, seqlet_idx] >=
+#                        seqlet_self_sim):
+#                        cross_contamination[seqlet_orig_pattern,
+#                                            pattern_idx] += 1 
+#            #normalize the cross_contamination rows by the num in the diagonal 
+#            for pattern_idx in range(len(cross_contamination)):
+#                assert cross_contamination[pattern_idx,pattern_idx] > 0
+#                cross_contamination[pattern_idx] =\
+#                 (cross_contamination[pattern_idx]/
+#                  float(cross_contamination[pattern_idx,pattern_idx]))
+#
+#            if (self.verbose):
+#                print("Computing pattern to pattern sims")
+#                sys.stdout.flush()
+#            patterns_to_patterns_aligner_sim =\
+#                np.zeros((len(patterns), len(patterns))) 
+#            for i,pattern1 in enumerate(patterns):
+#                for j,pattern2 in enumerate(patterns):
+#                    (alnmt, rc, aligner_sim) =\
+#                        self.pattern_aligner(pattern1, pattern2)
+#                    patterns_to_patterns_aligner_sim[i,j] = aligner_sim
+#            if (self.verbose):
+#                print("Cluster sizes")
+#                print(np.array([len(x.seqlets) for x in patterns]))
+#                print("Cross-contamination matrix:")
+#                print(np.round(cross_contamination,2))
+#                print("Pattern-to-pattern sim matrix:")
+#                print(np.round(patterns_to_patterns_aligner_sim,2))
+#
+#            indices_to_merge = []
+#            merge_partners_so_far = dict([(i, set([i])) for i in
+#                                          range(len(patterns))])
+#
+#            #merge patterns with highest similarity first
+#            sorted_pairs = sorted([(i,j,patterns_to_patterns_aligner_sim[i,j])
+#                            for i in range(len(patterns))
+#                            for j in range(len(patterns)) if (i < j)],
+#                            key=lambda x: -x[2])
+#            #iterate over pairs
+#            for (i,j,aligner_sim) in sorted_pairs:
+#                cross_contam = max(cross_contamination[i,j],
+#                                   cross_contamination[j,i])
+#                if (self.collapse_condition(prob=cross_contam,
+#                                            aligner_sim=aligner_sim)):
+#                    if (self.verbose):
+#                        print("Collapsing "+str(i)
+#                              +" & "+str(j)
+#                              +" with crosscontam "+str(cross_contam)+" and"
+#                              +" sim "+str(aligner_sim)) 
+#                        sys.stdout.flush()
+#
+#                    collapse_passed = True
+#                    #check compatibility for all indices that are
+#                    #about to be merged
+#                    merge_under_consideration = set(
+#                        list(merge_partners_so_far[i])
+#                        +list(merge_partners_so_far[j]))
+#                    for m1 in merge_under_consideration:
+#                        for m2 in merge_under_consideration:
+#                            if (m1 < m2):
+#                                cross_contam_here =\
+#                                    max(cross_contamination[m1, m2],
+#                                        cross_contamination[m2, m1])
+#                                aligner_sim_here =\
+#                                    patterns_to_patterns_aligner_sim[
+#                                        m1, m2]
+#                                if (self.dealbreaker_condition(
+#                                        prob=cross_contam_here,
+#                                        aligner_sim=aligner_sim_here)):
+#                                    collapse_passed=False                     
+#                                    if (self.verbose):
+#                                        print("Aborting collapse as "
+#                                              +str(m1)
+#                                              +" & "+str(m2)
+#                                              +" have cross-contam "
+#                                              +str(cross_contam_here)
+#                                              +" and"
+#                                              +" sim "
+#                                              +str(aligner_sim_here)) 
+#                                        sys.stdout.flush()
+#                                    break
+#
+#                    if (collapse_passed):
+#                        indices_to_merge.append((i,j))
+#                        for an_idx in merge_under_consideration:
+#                            merge_partners_so_far[an_idx]=\
+#                                merge_under_consideration 
+#                else:
+#                    if (self.verbose):
+#                        pass
+#                        #print("Not collapsed "+str(i)+" & "+str(j)
+#                        #      +" with cross-contam "+str(cross_contam)+" and"
+#                        #      +" sim "+str(aligner_sim)) 
+#                        #sys.stdout.flush()
+#
+#            for i,j in indices_to_merge:
+#                pattern1 = patterns[i]
+#                pattern2 = patterns[j]
+#                if (pattern1 != pattern2): #if not the same object
+#                    if (pattern1.num_seqlets < pattern2.num_seqlets):
+#                        parent_pattern, child_pattern = pattern2, pattern1
+#                    else:
+#                        parent_pattern, child_pattern = pattern1, pattern2
+#                    new_pattern = parent_pattern.copy()
+#                    new_pattern.merge_aggregated_seqlet(
+#                        agg_seqlet=child_pattern,
+#                        aligner=self.pattern_aligner) 
+#                    new_pattern =\
+#                        self.postprocessor([new_pattern])
+#                    assert len(new_pattern)==1
+#                    new_pattern = new_pattern[0]
+#                    for k in range(len(patterns)):
+#                        if (patterns[k]==parent_pattern or
+#                            patterns[k]==child_pattern):
+#                            patterns[k]=new_pattern
+#            merge_occurred_last_iteration = (len(indices_to_merge) > 0)
+#
+#            if (merge_occurred_last_iteration):
+#                #Once we are out of this loop, each element of 'patterns'
+#                #will have the new parent of the corresponding element
+#                #of 'old_patterns'
+#                old_to_new_pattern_mapping = patterns
+#
+#                #sort by size and remove redundant patterns 
+#                patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
+#                patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
+#
+#                #update the hierarchy
+#                next_level_nodes = [PatternMergeHierarchyNode(x)
+#                                    for x in patterns]
+#                for next_level_node in next_level_nodes:
+#                    #iterate over all the old patterns and their new parent
+#                    for old_pattern_node, corresp_new_pattern\
+#                        in zip(current_level_nodes,
+#                               old_to_new_pattern_mapping):
+#                        #if the node has a new parent
+#                        if (old_pattern_node.pattern != corresp_new_pattern):
+#                            if (next_level_node.pattern==corresp_new_pattern):
+#                                next_level_node.child_nodes.append(
+#                                                old_pattern_node) 
+#                                assert old_pattern_node.parent_node is None
+#                                old_pattern_node.parent_node = next_level_node
+#
+#                current_level_nodes=next_level_nodes
+#
+#        return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
 
-    def __init__(self, pattern_to_pattern_sim_computer,
-                       aff_to_dist_mat, pattern_aligner,
-                       collapse_condition, dealbreaker_condition,
-                       postprocessor,
-                       verbose=True):
-        self.pattern_to_pattern_sim_computer = pattern_to_pattern_sim_computer 
-        self.aff_to_dist_mat = aff_to_dist_mat
-        self.pattern_aligner = pattern_aligner
-        self.collapse_condition = collapse_condition
-        self.dealbreaker_condition = dealbreaker_condition
-        self.postprocessor = postprocessor
-        self.verbose = verbose
 
-    def __call__(self, patterns, seqlets):
-
-        patterns = [x.copy() for x in patterns]
-        merge_hierarchy_levels = []        
-        current_level_nodes = [
-            PatternMergeHierarchyNode(pattern=x) for x in patterns]
-        merge_hierarchy_levels.append(current_level_nodes)
-
-        merge_occurred_last_iteration = True
-        merging_iteration = 0
-
-        #loop until no more patterns get merged
-        while (merge_occurred_last_iteration):
-            
-            merging_iteration += 1
-            if (self.verbose):
-                print("On merging iteration",merging_iteration) 
-                sys.stdout.flush()
-            merge_occurred_last_iteration = False
-
-            if (self.verbose):
-                print("Computing pattern to seqlet distances")
-                sys.stdout.flush()
-            patterns_to_seqlets_dist =\
-                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
-                                        seqlets=seqlets,
-                                        filter_seqlets=patterns))
-            desired_perplexities = [len(pattern.seqlets_and_alnmts)
-                                    for pattern in patterns]
-            pattern_betas = np.array([
-                util.binary_search_perplexity(
-                    desired_perplexity=desired_perplexity,
-                    distances=distances)[0]
-                for desired_perplexity,distances
-                in zip(desired_perplexities, patterns_to_seqlets_dist.T)])
-
-            if (self.verbose):
-                print("Computing pattern to pattern distances")
-                sys.stdout.flush()
-            patterns_to_patterns_dist =\
-                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
-                                     seqlets=patterns,
-                                     filter_seqlets=patterns))
-            patterns_dist_probs = np.exp(-pattern_betas[:,None]*
-                                         patterns_to_patterns_dist)
-            patterns_to_patterns_aligner_sim =\
-                np.zeros((len(patterns), len(patterns))) 
-            for i,pattern1 in enumerate(patterns):
-                for j,pattern2 in enumerate(patterns):
-                    (alnmt, rc, aligner_sim) =\
-                        self.pattern_aligner(pattern1, pattern2)
-                    patterns_to_patterns_aligner_sim[i,j] = aligner_sim
-
-            indices_to_merge = []
-            merge_partners_so_far = dict([(i, set([i])) for i in
-                                          range(len(patterns))])
-
-            #merge patterns with highest similarity first
-            sorted_pairs = sorted([(i,j,patterns_to_patterns_aligner_sim[i,j])
-                            for i in range(len(patterns))
-                            for j in range(len(patterns)) if (i < j)],
-                            key=lambda x: -x[2])
-            #iterate over pairs
-            for (i,j,aligner_sim) in sorted_pairs:
-                dist_prob = min(patterns_dist_probs[i,j],
-                                patterns_dist_probs[j,i])
-                if (self.collapse_condition(dist_prob=dist_prob,
-                                            aligner_sim=aligner_sim)):
-                    if (self.verbose):
-                        print("Collapsing "+str(i)
-                              +" & "+str(j)
-                              +" with prob "+str(dist_prob)+" and"
-                              +" sim "+str(aligner_sim)) 
-                        sys.stdout.flush()
-
-                    collapse_passed = True
-                    #check compatibility for all indices that are
-                    #about to be merged
-                    merge_under_consideration = set(
-                        list(merge_partners_so_far[i])
-                        +list(merge_partners_so_far[j]))
-                    for m1 in merge_under_consideration:
-                        for m2 in merge_under_consideration:
-                            if (m1 < m2):
-                                min_dist_prob_here =\
-                                    min(patterns_dist_probs[m1, m2],
-                                        patterns_dist_probs[m2, m1])
-                                aligner_sim_here =\
-                                    patterns_to_patterns_aligner_sim[
-                                        m1, m2]
-                                if (self.dealbreaker_condition(
-                                        dist_prob=min_dist_prob_here,
-                                        aligner_sim=aligner_sim_here)):
-                                    collapse_passed=False                     
-                                    if (self.verbose):
-                                        print("Aborting collapse as "
-                                              +str(m1)
-                                              +" & "+str(m2)
-                                              +" have prob "
-                                              +str(min_dist_prob_here)
-                                              +" and"
-                                              +" sim "
-                                              +str(aligner_sim_here)) 
-                                        sys.stdout.flush()
-                                    break
-
-                    if (collapse_passed):
-                        indices_to_merge.append((i,j))
-                        for an_idx in merge_under_consideration:
-                            merge_partners_so_far[an_idx]=\
-                                merge_under_consideration 
-                else:
-                    if (self.verbose):
-                        pass
-                        #print("Not collapsed "+str(i)+" & "+str(j)
-                        #      +" with prob "+str(dist_prob)+" and"
-                        #      +" sim "+str(aligner_sim)) 
-                        #sys.stdout.flush()
-
-            for i,j in indices_to_merge:
-                pattern1 = patterns[i]
-                pattern2 = patterns[j]
-                if (pattern1 != pattern2): #if not the same object
-                    if (pattern1.num_seqlets < pattern2.num_seqlets):
-                        parent_pattern, child_pattern = pattern2, pattern1
-                    else:
-                        parent_pattern, child_pattern = pattern1, pattern2
-                    new_pattern = parent_pattern.copy()
-                    new_pattern.merge_aggregated_seqlet(
-                        agg_seqlet=child_pattern,
-                        aligner=self.pattern_aligner) 
-                    new_pattern =\
-                        self.postprocessor([new_pattern])
-                    assert len(new_pattern)==1
-                    new_pattern = new_pattern[0]
-                    for k in range(len(patterns)):
-                        if (patterns[k]==parent_pattern or
-                            patterns[k]==child_pattern):
-                            patterns[k]=new_pattern
-            merge_occurred_last_iteration = (len(indices_to_merge) > 0)
-
-            if (merge_occurred_last_iteration):
-                #Once we are out of this loop, each element of 'patterns'
-                #will have the new parent of the corresponding element
-                #of 'old_patterns'
-                old_to_new_pattern_mapping = patterns
-
-                #sort by size and remove redundant patterns 
-                patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
-                patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
-
-                #update the hierarchy
-                next_level_nodes = [PatternMergeHierarchyNode(x)
-                                    for x in patterns]
-                for next_level_node in next_level_nodes:
-                    #iterate over all the old patterns and their new parent
-                    for old_pattern_node, corresp_new_pattern\
-                        in zip(current_level_nodes,
-                               old_to_new_pattern_mapping):
-                        #if the node has a new parent
-                        if (old_pattern_node.pattern != corresp_new_pattern):
-                            if (next_level_node.pattern==corresp_new_pattern):
-                                next_level_node.child_nodes.append(
-                                                old_pattern_node) 
-                                assert old_pattern_node.parent_node is None
-                                old_pattern_node.parent_node = next_level_node
-
-                current_level_nodes=next_level_nodes
-
-        return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
+#class OldDynamicDistanceSimilarPatternsCollapser(object):
+#
+#    def __init__(self, pattern_to_pattern_sim_computer,
+#                       aff_to_dist_mat, pattern_aligner,
+#                       collapse_condition, dealbreaker_condition,
+#                       postprocessor,
+#                       verbose=True):
+#        self.pattern_to_pattern_sim_computer = pattern_to_pattern_sim_computer 
+#        self.aff_to_dist_mat = aff_to_dist_mat
+#        self.pattern_aligner = pattern_aligner
+#        self.collapse_condition = collapse_condition
+#        self.dealbreaker_condition = dealbreaker_condition
+#        self.postprocessor = postprocessor
+#        self.verbose = verbose
+#
+#    def __call__(self, patterns, seqlets):
+#
+#        patterns = [x.copy() for x in patterns]
+#        merge_hierarchy_levels = []        
+#        current_level_nodes = [
+#            PatternMergeHierarchyNode(pattern=x) for x in patterns]
+#        merge_hierarchy_levels.append(current_level_nodes)
+#
+#        merge_occurred_last_iteration = True
+#        merging_iteration = 0
+#
+#        #loop until no more patterns get merged
+#        while (merge_occurred_last_iteration):
+#            
+#            merging_iteration += 1
+#            if (self.verbose):
+#                print("On merging iteration",merging_iteration) 
+#                sys.stdout.flush()
+#            merge_occurred_last_iteration = False
+#
+#            if (self.verbose):
+#                print("Computing pattern to seqlet distances")
+#                sys.stdout.flush()
+#            patterns_to_seqlets_dist =\
+#                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
+#                                        seqlets=seqlets,
+#                                        filter_seqlets=patterns))
+#            desired_perplexities = [len(pattern.seqlets_and_alnmts)
+#                                    for pattern in patterns]
+#            pattern_betas = np.array([
+#                util.binary_search_perplexity(
+#                    desired_perplexity=desired_perplexity,
+#                    distances=distances)[0]
+#                for desired_perplexity,distances
+#                in zip(desired_perplexities, patterns_to_seqlets_dist.T)])
+#
+#            if (self.verbose):
+#                print("Computing pattern to pattern distances")
+#                sys.stdout.flush()
+#            patterns_to_patterns_dist =\
+#                self.aff_to_dist_mat(self.pattern_to_pattern_sim_computer(
+#                                     seqlets=patterns,
+#                                     filter_seqlets=patterns))
+#            patterns_dist_probs = np.exp(-pattern_betas[:,None]*
+#                                         patterns_to_patterns_dist)
+#            patterns_to_patterns_aligner_sim =\
+#                np.zeros((len(patterns), len(patterns))) 
+#            for i,pattern1 in enumerate(patterns):
+#                for j,pattern2 in enumerate(patterns):
+#                    (alnmt, rc, aligner_sim) =\
+#                        self.pattern_aligner(pattern1, pattern2)
+#                    patterns_to_patterns_aligner_sim[i,j] = aligner_sim
+#
+#            indices_to_merge = []
+#            merge_partners_so_far = dict([(i, set([i])) for i in
+#                                          range(len(patterns))])
+#
+#            #merge patterns with highest similarity first
+#            sorted_pairs = sorted([(i,j,patterns_to_patterns_aligner_sim[i,j])
+#                            for i in range(len(patterns))
+#                            for j in range(len(patterns)) if (i < j)],
+#                            key=lambda x: -x[2])
+#            #iterate over pairs
+#            for (i,j,aligner_sim) in sorted_pairs:
+#                dist_prob = min(patterns_dist_probs[i,j],
+#                                patterns_dist_probs[j,i])
+#                if (self.collapse_condition(dist_prob=dist_prob,
+#                                            aligner_sim=aligner_sim)):
+#                    if (self.verbose):
+#                        print("Collapsing "+str(i)
+#                              +" & "+str(j)
+#                              +" with prob "+str(dist_prob)+" and"
+#                              +" sim "+str(aligner_sim)) 
+#                        sys.stdout.flush()
+#
+#                    collapse_passed = True
+#                    #check compatibility for all indices that are
+#                    #about to be merged
+#                    merge_under_consideration = set(
+#                        list(merge_partners_so_far[i])
+#                        +list(merge_partners_so_far[j]))
+#                    for m1 in merge_under_consideration:
+#                        for m2 in merge_under_consideration:
+#                            if (m1 < m2):
+#                                min_dist_prob_here =\
+#                                    min(patterns_dist_probs[m1, m2],
+#                                        patterns_dist_probs[m2, m1])
+#                                aligner_sim_here =\
+#                                    patterns_to_patterns_aligner_sim[
+#                                        m1, m2]
+#                                if (self.dealbreaker_condition(
+#                                        dist_prob=min_dist_prob_here,
+#                                        aligner_sim=aligner_sim_here)):
+#                                    collapse_passed=False                     
+#                                    if (self.verbose):
+#                                        print("Aborting collapse as "
+#                                              +str(m1)
+#                                              +" & "+str(m2)
+#                                              +" have prob "
+#                                              +str(min_dist_prob_here)
+#                                              +" and"
+#                                              +" sim "
+#                                              +str(aligner_sim_here)) 
+#                                        sys.stdout.flush()
+#                                    break
+#
+#                    if (collapse_passed):
+#                        indices_to_merge.append((i,j))
+#                        for an_idx in merge_under_consideration:
+#                            merge_partners_so_far[an_idx]=\
+#                                merge_under_consideration 
+#                else:
+#                    if (self.verbose):
+#                        pass
+#                        #print("Not collapsed "+str(i)+" & "+str(j)
+#                        #      +" with prob "+str(dist_prob)+" and"
+#                        #      +" sim "+str(aligner_sim)) 
+#                        #sys.stdout.flush()
+#
+#            for i,j in indices_to_merge:
+#                pattern1 = patterns[i]
+#                pattern2 = patterns[j]
+#                if (pattern1 != pattern2): #if not the same object
+#                    if (pattern1.num_seqlets < pattern2.num_seqlets):
+#                        parent_pattern, child_pattern = pattern2, pattern1
+#                    else:
+#                        parent_pattern, child_pattern = pattern1, pattern2
+#                    new_pattern = parent_pattern.copy()
+#                    new_pattern.merge_aggregated_seqlet(
+#                        agg_seqlet=child_pattern,
+#                        aligner=self.pattern_aligner) 
+#                    new_pattern =\
+#                        self.postprocessor([new_pattern])
+#                    assert len(new_pattern)==1
+#                    new_pattern = new_pattern[0]
+#                    for k in range(len(patterns)):
+#                        if (patterns[k]==parent_pattern or
+#                            patterns[k]==child_pattern):
+#                            patterns[k]=new_pattern
+#            merge_occurred_last_iteration = (len(indices_to_merge) > 0)
+#
+#            if (merge_occurred_last_iteration):
+#                #Once we are out of this loop, each element of 'patterns'
+#                #will have the new parent of the corresponding element
+#                #of 'old_patterns'
+#                old_to_new_pattern_mapping = patterns
+#
+#                #sort by size and remove redundant patterns 
+#                patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
+#                patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
+#
+#                #update the hierarchy
+#                next_level_nodes = [PatternMergeHierarchyNode(x)
+#                                    for x in patterns]
+#                for next_level_node in next_level_nodes:
+#                    #iterate over all the old patterns and their new parent
+#                    for old_pattern_node, corresp_new_pattern\
+#                        in zip(current_level_nodes,
+#                               old_to_new_pattern_mapping):
+#                        #if the node has a new parent
+#                        if (old_pattern_node.pattern != corresp_new_pattern):
+#                            if (next_level_node.pattern==corresp_new_pattern):
+#                                next_level_node.child_nodes.append(
+#                                                old_pattern_node) 
+#                                assert old_pattern_node.parent_node is None
+#                                old_pattern_node.parent_node = next_level_node
+#
+#                current_level_nodes=next_level_nodes
+#
+#        return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
     
 
 class BasicSimilarPatternsCollapser(object):

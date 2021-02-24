@@ -44,65 +44,6 @@ def run_function_in_batches(func,
     return to_return
 
 
-def tensor_with_dims(num_dims, name):
-    return T.TensorType(dtype=theano.config.floatX,
-                        broadcastable=[False]*num_dims)(name)
-
-
-def get_window_sum_function(window_size,same_size_return):
-    """
-        Returns a function for smoothening inputs with a window
-         of size window_size.
-
-        Returned function has arguments of inp,
-         batch_size and progress_update
-    """
-    orig_inp_tensor = tensor_with_dims(2, "inp_tensor") 
-    inp_tensor = orig_inp_tensor[:,None,None,:]
-
-    averaged_inp = theano.tensor.signal.pool.pool_2d(
-                        input=inp_tensor,
-                        ws=(1,window_size),
-                        ignore_border=True,
-                        stride=(1,1),
-                        pad=(0,0 if (not same_size_return)
-                               else int(window_size/2)),
-                        mode='average_exc_pad') 
-
-    #if window_size is even, then we have an extra value in the output,
-    #so kick off the value from the front
-    if (window_size%2==0 and same_size_return):
-        averaged_inp = averaged_inp[:,:,:,1:]
-
-    averaged_inp = averaged_inp[:,0,0,:]
-    smoothen_func = theano.function([orig_inp_tensor],
-                                    averaged_inp*window_size,
-                                    allow_input_downcast=True)
-
-    def smoothen(inp, batch_size, progress_update=None):
-       return run_function_in_batches(
-                func=smoothen_func,
-                input_data_list=[inp],
-                batch_size=batch_size,
-                progress_update=progress_update)
-
-    return smoothen
-
-
-def get_argmax_function(): 
-    inp_tensor = tensor_with_dims(2, "inp_tensor") 
-    argmaxes = T.argmax(inp_tensor, axis=1) 
-    argmax_func = theano.function([inp_tensor], argmaxes,
-                                  allow_input_downcast=True)
-    def argmax_func_wrapper(inp, batch_size, progress_update=None):
-        return run_function_in_batches(
-                func=argmax_func,
-                input_data_list=[inp],
-                batch_size=batch_size,
-                progress_update=progress_update)
-    return argmax_func_wrapper
-
-
 def get_gapped_kmer_embedding_func(filters, biases, require_onehot_match):
 
     #filters should be: out_channels, rows, ACGT
@@ -146,19 +87,6 @@ def get_gapped_kmer_embedding_func(filters, biases, require_onehot_match):
                                 batch_size=batch_size,
                                 progress_update=progress_update))
     return batchwise_func
-
-
-def matrix_dot_product(mat1, mat2, batch_size):
-    mat1_tensor = theano.tensor.TensorType(dtype=theano.config.floatX,
-                                         broadcastable=[False]*2)("mat1")
-    result = theano.tensor.dot(mat1_tensor, mat2.astype("float32"))
-    dot_product_func = theano.function([mat1_tensor], result,
-                                       allow_input_downcast=True)
-    return np.array(run_function_in_batches(
-                        func=dot_product_func,
-                        input_data_list=[mat1],
-                        batch_size=batch_size,
-                        progress_update=None))
 
 
 def max_cross_corrs(filters, things_to_scan, min_overlap,
@@ -220,34 +148,3 @@ def max_cross_corrs(filters, things_to_scan, min_overlap,
         filter_idx += filter_batch_size
         
     return to_return
-
-
-def sign(var):
-    return (1.0*(var > 0.0) + -1.0*(var < 0.0))
-
-
-def get_jaccard_sim_func(filters):
-    """
-        func_params_size: when compiling functions
-    """
-    #reverse the patterns as the func is a conv not a cross corr
-    assert len(filters.shape)==3,"Did you pass in filters of unequal len?"
-
-
-    input_var = theano.tensor.TensorType(
-                    dtype=theano.config.floatX,
-                    broadcastable=[False,False,False])("input")
-    intersection = T.sum(T.sum(T.minimum(T.abs_(input_var[None,:,:,:]),
-                                         T.abs_(filters[:,None,:,:]))*
-                               (sign(input_var[None,:,:,:])*
-                                sign(filters[:,None,:,:])),
-                         axis=3),axis=2) 
-    union = T.sum(T.sum(T.maximum(T.abs_(input_var[None,:,:,:]),
-                                  T.abs_(filters[:,None,:,:])),
-                  axis=3),axis=2)
-    result = intersection/union   
-
-    jaccard_sim_func = theano.function([input_var], result,
-                                          allow_input_downcast=True)
-        
-    return jaccard_sim_func

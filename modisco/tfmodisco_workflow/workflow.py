@@ -11,6 +11,14 @@ from .. import core
 from .. import coordproducers
 from .. import metaclusterers
 from .. import util
+from .. import value_provider
+
+
+def print_memory_use():
+    import os
+    import psutil
+    process = psutil.Process(os.getpid())
+    print("MEMORY",process.memory_info().rss/1000000000)
 
 
 class TfModiscoResults(object):
@@ -38,8 +46,9 @@ class TfModiscoResults(object):
             core.MultiTaskSeqletCreationResults.from_hdf5(
                 grp=grp["multitask_seqlet_creation_results"],
                 track_set=track_set)
-        metaclustering_results = None #punt on this for now
-
+        metaclustering_results =\
+            metaclusterers.MetaclusteringResults.from_hdf5(
+                grp["metaclustering_results"])
         metacluster_idx_to_submetacluster_results = OrderedDict()
         metacluster_idx_to_submetacluster_results_group =\
             grp["metacluster_idx_to_submetacluster_results"]
@@ -107,28 +116,48 @@ class SubMetaclusterResults(object):
 
 
 def prep_track_set(task_names, contrib_scores,
-                    hypothetical_contribs, one_hot):
+                    hypothetical_contribs, one_hot,
+                    custom_perpos_contribs=None,
+                    revcomp=True, other_tracks=[]):
     contrib_scores_tracks = [
         core.DataTrack(
             name=key+"_contrib_scores",
             fwd_tracks=contrib_scores[key],
-            rev_tracks=[x[::-1, ::-1] for x in 
-                        contrib_scores[key]],
+            rev_tracks=(([x[::-1, ::-1] for x in 
+                         contrib_scores[key]])
+                        if revcomp else
+                         None),
             has_pos_axis=True) for key in task_names] 
     hypothetical_contribs_tracks = [
         core.DataTrack(name=key+"_hypothetical_contribs",
                        fwd_tracks=hypothetical_contribs[key],
-                       rev_tracks=[x[::-1, ::-1] for x in 
-                                    hypothetical_contribs[key]],
+                       rev_tracks=(([x[::-1, ::-1] for x in 
+                                     hypothetical_contribs[key]])
+                                   if revcomp else
+                                    None),
                        has_pos_axis=True)
                        for key in task_names]
     onehot_track = core.DataTrack(
                         name="sequence", fwd_tracks=one_hot,
-                        rev_tracks=[x[::-1, ::-1] for x in one_hot],
+                        rev_tracks=([x[::-1, ::-1] for x in one_hot]
+                                    if revcomp else None),
                         has_pos_axis=True)
+
+    custom_perpos_contrib_tracks = []
+    if (custom_perpos_contribs):
+        custom_perpos_contrib_tracks = [
+            core.DataTrack(name=key+"_custom_perposcontribs",
+                           fwd_tracks=custom_perpos_contribs[key],
+                           rev_tracks=([x[::-1] for x in
+                                       custom_perpos_contribs[key]]
+                                       if revcomp else None),
+                           has_pos_axis=True)
+                           for key in task_names] 
+
     track_set = core.TrackSet(
                     data_tracks=contrib_scores_tracks
-                    +hypothetical_contribs_tracks+[onehot_track])
+                    +hypothetical_contribs_tracks+[onehot_track]
+                    +custom_perpos_contrib_tracks+other_tracks)
     return track_set
 
 
@@ -138,27 +167,36 @@ class TfModiscoWorkflow(object):
                  seqlets_to_patterns_factory=
                  seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(),
                  sliding_window_size=21, flank_size=10,
-                 histogram_bins=100, percentiles_in_bandwidth=10, 
                  overlap_portion=0.5,
                  min_metacluster_size=100,
-                 target_seqlet_fdr=0.05,
-                 weak_threshold_for_counting_sign=0.99,
+                 min_metacluster_size_frac=0.01,
+                 weak_threshold_for_counting_sign=0.8,
                  max_seqlets_per_metacluster=20000,
-                 max_seqlets_per_task=None,
-                 verbose=True):
+                 target_seqlet_fdr=0.2,
+                 min_passing_windows_frac=0.03,
+                 max_passing_windows_frac=0.2,
+                 separate_pos_neg_thresholds=False,
+                 verbose=True,
+                 min_seqlets_per_task=None):
+
+        if (min_seqlets_per_task is not None):
+            raise DeprecationWarning(
+                "parameter min_seqlets_per_task is now controlled by param"
+                +" min_passing_windows_frac, which defaults to 0.005")
 
         self.seqlets_to_patterns_factory = seqlets_to_patterns_factory
         self.sliding_window_size = sliding_window_size
         self.flank_size = flank_size
-        self.histogram_bins = histogram_bins
-        self.percentiles_in_bandwidth = percentiles_in_bandwidth
         self.overlap_portion = overlap_portion
         self.min_metacluster_size = min_metacluster_size
+        self.min_metacluster_size_frac = min_metacluster_size_frac
         self.target_seqlet_fdr = target_seqlet_fdr
         self.weak_threshold_for_counting_sign =\
             weak_threshold_for_counting_sign
         self.max_seqlets_per_metacluster = max_seqlets_per_metacluster
-        self.max_seqlets_per_task = max_seqlets_per_task
+        self.min_passing_windows_frac = min_passing_windows_frac
+        self.max_passing_windows_frac = max_passing_windows_frac
+        self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
         self.verbose = verbose
 
         self.build()
@@ -168,85 +206,135 @@ class TfModiscoWorkflow(object):
         self.overlap_resolver = core.SeqletsOverlapResolver(
             overlap_detector=core.CoordOverlapDetector(self.overlap_portion),
             seqlet_comparator=core.SeqletComparator(
-                                    value_provider=lambda x: x.coor.score))
+                               value_provider=
+                                value_provider.CoorScoreValueProvider()))
 
     def __call__(self, task_names, contrib_scores,
-                       hypothetical_contribs, one_hot):
+                       hypothetical_contribs, one_hot,
+                       #null_tracks should either be a dictionary
+                       # from task_name to 1d trakcs, or a callable
+                       null_per_pos_scores=coordproducers.LaplaceNullDist(
+                         num_to_samp=10000),
+                       per_position_contrib_scores=None,
+                       revcomp=True,
+                       other_tracks=[],
+                       just_return_seqlets=False,
+                       plot_save_dir="figures"):
 
-        self.coord_producer = coordproducers.FixedWindowAroundChunks(
-            sliding=self.sliding_window_size,
-            flank=self.flank_size,
-            thresholding_function=coordproducers.LaplaceThreshold(
-                                    target_fdr=self.target_seqlet_fdr,
-                                    verbose=self.verbose),
-            max_seqlets_total=self.max_seqlets_per_task,
-            verbose=self.verbose) 
+        print_memory_use()
+        if (hasattr(self.sliding_window_size, '__iter__')):
+            self.coord_producer = coordproducers.VariableWindowAroundChunks(
+                sliding=self.sliding_window_size,
+                flank=self.flank_size,
+                suppress=(int(0.5*max(self.sliding_window_size))
+                          + self.flank_size),
+                target_fdr=self.target_seqlet_fdr,
+                min_passing_windows_frac=self.min_passing_windows_frac,
+                max_passing_windows_frac=self.max_passing_windows_frac,
+                separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+                max_seqlets_total=None,
+                verbose=self.verbose,
+                plot_save_dir=plot_save_dir) 
+        else:
+            self.coord_producer = coordproducers.FixedWindowAroundChunks(
+                sliding=self.sliding_window_size,
+                flank=self.flank_size,
+                suppress=(int(0.5*self.sliding_window_size)
+                          + self.flank_size),
+                target_fdr=self.target_seqlet_fdr,
+                min_passing_windows_frac=self.min_passing_windows_frac,
+                max_passing_windows_frac=self.max_passing_windows_frac,
+                separate_pos_neg_thresholds=self.separate_pos_neg_thresholds,
+                max_seqlets_total=None,
+                verbose=self.verbose,
+                plot_save_dir=plot_save_dir) 
+
+        custom_perpos_contribs = per_position_contrib_scores
+        if (per_position_contrib_scores is None):
+            per_position_contrib_scores = OrderedDict([
+                (x, [np.sum(s,axis=1) for s in contrib_scores[x]])
+                for x in task_names])
 
         track_set = prep_track_set(
                         task_names=task_names,
                         contrib_scores=contrib_scores,
                         hypothetical_contribs=hypothetical_contribs,
-                        one_hot=one_hot)
+                        one_hot=one_hot,
+                        revcomp=revcomp,
+                        custom_perpos_contribs=custom_perpos_contribs,
+                        other_tracks=other_tracks)
 
-        per_position_contrib_scores = OrderedDict([
-            (x, [np.sum(s,axis=1) for s in contrib_scores[x]]) for x in task_names])
-
-
-        task_name_to_threshold_transformer = OrderedDict([
-            (task_name, core.LaplaceCdf(
-                name=task_name+"_label",
-                track_name=task_name+"_contrib_scores",
-                flank_to_ignore=self.flank_size))
-             for task_name in task_names]) 
-
-        multitask_seqlet_creation_results = core.MultiTaskSeqletCreation(
+        multitask_seqlet_creation_results = core.MultiTaskSeqletCreator(
             coord_producer=self.coord_producer,
-            track_set=track_set,
             overlap_resolver=self.overlap_resolver)(
                 task_name_to_score_track=per_position_contrib_scores,
-                task_name_to_threshold_transformer=\
-                    task_name_to_threshold_transformer)
+                null_tracks=null_per_pos_scores,
+                track_set=track_set)
 
-        #find the weakest laplace cdf threshold used across all tasks
-        laplace_threshold_cdf = min(
-            [min(x.thresholding_results.pos_threshold_cdf,
-                 x.thresholding_results.neg_threshold_cdf)
-                 for x in multitask_seqlet_creation_results.
-                      task_name_to_coord_producer_results.values()])
-        print("Across all tasks, the weakest laplace threshold used"
-              +" was: "+str(laplace_threshold_cdf))
+        #find the weakest transformed threshold used across all tasks
+        weakest_transformed_thresh = (min(
+            [min(x.tnt_results.transformed_pos_threshold,
+                 abs(x.tnt_results.transformed_neg_threshold))
+                 for x in (multitask_seqlet_creation_results.
+                           task_name_to_coord_producer_results.values())]) -
+            0.0001) #subtract 1e-4 to avoid weird numerical issues
+        print("Across all tasks, the weakest transformed threshold used"
+              +" was: "+str(weakest_transformed_thresh))
+        print_memory_use()
 
         seqlets = multitask_seqlet_creation_results.final_seqlets
         print(str(len(seqlets))+" identified in total")
         if (len(seqlets) < 100):
             print("WARNING: you found relatively few seqlets."
                   +" Consider dropping target_seqlet_fdr") 
-
-        attribute_vectors = (np.array([
-                              [x[key+"_label"] for key in task_names]
-                               for x in seqlets]))
+        
+        if int(self.min_metacluster_size_frac
+               * len(seqlets)) > self.min_metacluster_size:
+            print("min_metacluster_size_frac * len(seqlets) = {0} is more than min_metacluster_size={1}.".\
+                  format(int(self.min_metacluster_size_frac
+                             * len(seqlets)), self.min_metacluster_size))
+            print("Using it as a new min_metacluster_size")
+            self.min_metacluster_size =\
+                int(self.min_metacluster_size_frac * len(seqlets))
 
         if (self.weak_threshold_for_counting_sign is None):
-            weak_threshold_for_counting_sign = laplace_threshold_cdf
+            weak_threshold_for_counting_sign = weakest_transformed_thresh
         else:
             weak_threshold_for_counting_sign =\
                 self.weak_threshold_for_counting_sign
-        if (weak_threshold_for_counting_sign > laplace_threshold_cdf):
+        if (weak_threshold_for_counting_sign > weakest_transformed_thresh):
             print("Reducing weak_threshold_for_counting_sign to"
-                  +" match laplace_threshold_cdf, from "
+                  +" match weakest_transformed_thresh, from "
                   +str(weak_threshold_for_counting_sign)
-                  +" to "+str(laplace_threshold_cdf))
-            weak_threshold_for_counting_sign = laplace_threshold_cdf
+                  +" to "+str(weakest_transformed_thresh))
+            weak_threshold_for_counting_sign = weakest_transformed_thresh
+
+        task_name_to_value_provider = OrderedDict([
+            (task_name,
+             value_provider.TransformCentralWindowValueProvider(
+                track_name=(task_name+"_contrib_scores"
+                            if custom_perpos_contribs is None else
+                            task_name+"_custom_perposcontribs"),
+                central_window=self.sliding_window_size,
+                val_transformer= 
+                 coord_producer_results.tnt_results.val_transformer))
+             for (task_name,coord_producer_results)
+                 in (multitask_seqlet_creation_results.
+                     task_name_to_coord_producer_results.items())])
 
         metaclusterer = metaclusterers.SignBasedPatternClustering(
                                 min_cluster_size=self.min_metacluster_size,
+                                task_name_to_value_provider=
+                                    task_name_to_value_provider,
+                                task_names=task_names,
                                 threshold_for_counting_sign=
-                                    laplace_threshold_cdf,
+                                    weakest_transformed_thresh,
                                 weak_threshold_for_counting_sign=
                                     weak_threshold_for_counting_sign)
 
-        metaclustering_results = metaclusterer(attribute_vectors)
-        metacluster_indices = metaclustering_results.metacluster_indices
+        metaclustering_results = metaclusterer.fit_transform(seqlets)
+        metacluster_indices = np.array(
+            metaclustering_results.metacluster_indices)
         metacluster_idx_to_activity_pattern =\
             metaclustering_results.metacluster_idx_to_activity_pattern
 
@@ -256,6 +344,7 @@ class TfModiscoWorkflow(object):
         if (self.verbose):
             print("Metacluster sizes: ",metacluster_sizes)
             print("Idx to activities: ",metacluster_idx_to_activity_pattern)
+            print_memory_use()
             sys.stdout.flush()
 
         metacluster_idx_to_submetacluster_results = OrderedDict()
@@ -287,17 +376,22 @@ class TfModiscoWorkflow(object):
                 assert False, "This should not happen"
                 sys.stdout.flush()
             
-            seqlets_to_patterns = self.seqlets_to_patterns_factory(
-                track_set=track_set,
-                onehot_track_name="sequence",
-                contrib_scores_track_names =\
-                    [key+"_contrib_scores" for key in relevant_task_names],
-                hypothetical_contribs_track_names=\
-                    [key+"_hypothetical_contribs" for key in relevant_task_names],
-                track_signs=relevant_task_signs,
-                other_comparison_track_names=[])
-
-            seqlets_to_patterns_result = seqlets_to_patterns(metacluster_seqlets)
+            if (just_return_seqlets==False):
+                seqlets_to_patterns = self.seqlets_to_patterns_factory(
+                  track_set=track_set,
+                  onehot_track_name="sequence",
+                  contrib_scores_track_names =\
+                      [key+"_contrib_scores"
+                       for key in relevant_task_names],
+                  hypothetical_contribs_track_names=\
+                      [key+"_hypothetical_contribs"
+                       for key in relevant_task_names],
+                  track_signs=relevant_task_signs,
+                  other_comparison_track_names=[])
+                seqlets_to_patterns_result = seqlets_to_patterns(
+                                              metacluster_seqlets)
+            else:
+                seqlets_to_patterns_result = None 
             metacluster_idx_to_submetacluster_results[metacluster_idx] =\
                 SubMetaclusterResults(
                     metacluster_size=metacluster_size,
@@ -309,8 +403,6 @@ class TfModiscoWorkflow(object):
                  task_names=task_names,
                  multitask_seqlet_creation_results=
                     multitask_seqlet_creation_results,
-                 seqlet_attribute_vectors=attribute_vectors,
                  metaclustering_results=metaclustering_results,
                  metacluster_idx_to_submetacluster_results=
                     metacluster_idx_to_submetacluster_results)
-
