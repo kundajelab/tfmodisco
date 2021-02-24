@@ -1,5 +1,5 @@
 from __future__ import division, print_function, absolute_import
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from collections import namedtuple
 from collections import defaultdict
 import numpy as np
@@ -732,7 +732,8 @@ class AggregatedSeqlet(Pattern):
                 subpattern.save_hdf5(subpattern_grp)
 
     def compute_subclusters_and_embedding(self, pattern_comparison_settings,
-                                          perplexity, n_jobs, verbose=True):
+                                          perplexity, n_jobs, verbose=True,
+                                          compute_embedding=True):
 
         from . import affinitymat
         from . import cluster
@@ -772,11 +773,12 @@ class AggregatedSeqlet(Pattern):
         distmat_sp = distmat_sp.tocsr()
         distmat_sp.sort_indices()
 
-        twod_embedding = sklearn.manifold.TSNE(
-            perplexity=perplexity,
-            metric='precomputed',
-            verbose=3, random_state=1234).fit_transform(distmat_sp) 
-        self.twod_embedding = twod_embedding
+        if (compute_embedding):
+            twod_embedding = sklearn.manifold.TSNE(
+                perplexity=perplexity,
+                metric='precomputed',
+                verbose=3, random_state=1234).fit_transform(distmat_sp) 
+            self.twod_embedding = twod_embedding
 
         #do density adaptation
         density_adapted_affmat_transformer =\
@@ -799,6 +801,8 @@ class AggregatedSeqlet(Pattern):
                                     initclusters=None)
 
         self.subclusters = cluster_results.cluster_indices
+        if (verbose):
+            print("Got subclusters:",Counter(self.subclusters)) 
         self.update_exemplarmotifs_from_subclusters()
 
     def update_exemplarmotifs_from_subclusters(self):

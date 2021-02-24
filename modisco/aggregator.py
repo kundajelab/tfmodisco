@@ -255,6 +255,112 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
         return to_return
 
 
+class DetectSpuriousMerging2(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, subcluster_settings, min_in_subcluster, verbose):
+        self.subcluster_settings = subcluster_settings
+        self.min_in_subcluster = min_in_subcluster
+        self.verbose = verbose
+
+    def __call__(self, aggregated_seqlets):
+        to_return = []
+        for pattern in aggregated_seqlets:
+            if (len(pattern.seqlets) > self.min_in_subcluster):
+                pattern.compute_subclusters_and_embedding(
+                    verbose=self.verbose,
+                    compute_embedding=False,
+                    **self.subcluster_settings)
+                to_return.extend(pattern.subcluster_to_subpattern.values()) 
+            else:
+                to_return.append(pattern)
+        return to_return
+
+
+class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, track_names, track_transformer,
+                       affmat_from_1d, diclusterer,
+                       is_dissimilar_func,
+                       min_in_subcluster, verbose=True):
+        self.track_names = track_names
+        self.track_transformer = track_transformer
+        self.affmat_from_1d = affmat_from_1d
+        self.diclusterer = diclusterer
+        self.is_dissimilar_func = is_dissimilar_func
+        self.min_in_subcluster = min_in_subcluster
+        self.verbose = verbose
+
+    def cluster_fwd_seqlet_data(self, fwd_seqlet_data, affmat):
+
+        if (len(fwd_seqlet_data) < self.min_in_subcluster):
+            return np.zeros(len(fwd_seqlet_data)) 
+        if (self.verbose):
+            print("Inspecting for spurious merging")
+            sys.stdout.flush()
+        dicluster_results = self.diclusterer(affmat) 
+        dicluster_indices = dicluster_results.cluster_indices 
+        assert np.max(dicluster_indices)==1 or np.max(dicluster_indices==0)
+        if (np.sum(dicluster_indices==1)==0 or
+            np.sum(dicluster_indices==0)==0):
+            sufficiently_dissimilar = False
+        else:
+            #check that the subclusters are more
+            #dissimilar than sim_split_threshold 
+            mat1_agg = np.mean(fwd_seqlet_data[dicluster_indices==0], axis=0)
+            mat2_agg = np.mean(fwd_seqlet_data[dicluster_indices==1], axis=0)
+            sufficiently_dissimilar = self.is_dissimilar_func(
+                                            inp1=mat1_agg, inp2=mat2_agg)
+        if (not sufficiently_dissimilar):
+            return np.zeros(len(fwd_seqlet_data))
+        else:
+            #if sufficiently dissimilar, check for subclusters
+            cluster_indices = np.array(dicluster_indices)
+            for i in [0, 1]:
+                mask_for_this_cluster = dicluster_indices==i  
+                subcluster_indices =\
+                    self.cluster_fwd_seqlet_data(
+                        fwd_seqlet_data=fwd_seqlet_data[mask_for_this_cluster],
+                        affmat=(affmat[mask_for_this_cluster]
+                                     [:,mask_for_this_cluster]))
+                subcluster_indices = np.array([
+                    i if x==0 else x+1 for x in subcluster_indices])
+                cluster_indices[mask_for_this_cluster] = subcluster_indices 
+            return cluster_indices
+
+    def __call__(self, aggregated_seqlets):
+        to_return = []
+        for agg_seq_idx, aggregated_seqlet in enumerate(aggregated_seqlets):
+
+            assert len(set(len(x.seqlet) for x in
+                       aggregated_seqlet._seqlets_and_alnmts))==1,\
+                ("all seqlets should be same length; use "+
+                 "ExpandSeqletsToFillPattern to equalize lengths")
+            fwd_seqlet_data = aggregated_seqlet.get_fwd_seqlet_data(
+                                track_names=self.track_names,
+                                track_transformer=self.track_transformer)
+            vecs_1d = np.array([x.ravel() for x in fwd_seqlet_data]) 
+            affmat = self.affmat_from_1d(vecs1=vecs_1d, vecs2=vecs_1d)
+
+            subcluster_indices = self.cluster_fwd_seqlet_data(
+                                    fwd_seqlet_data=fwd_seqlet_data,
+                                    affmat=affmat)  
+            num_subclusters = np.max(subcluster_indices)+1
+
+            if (num_subclusters > 1):
+                if (self.verbose):
+                    print("Got "+str(num_subclusters)+" subclusters")
+                    sys.stdout.flush()
+                for i in range(num_subclusters):
+                    seqlets_and_alnmts_for_subcluster = [x[0] for x in
+                        zip(aggregated_seqlet._seqlets_and_alnmts,
+                            subcluster_indices) if x[1]==i]
+                    to_return.append(core.AggregatedSeqlet(
+                     seqlets_and_alnmts_arr=seqlets_and_alnmts_for_subcluster))
+            else:
+                to_return.append(aggregated_seqlet)
+        return to_return
+
+
 class ReassignSeqletsFromSmallClusters(AbstractAggSeqletPostprocessor):
 
     def __init__(self, seqlet_assigner,
@@ -1072,8 +1178,26 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                      
 
                 #update the hierarchy
-                next_level_nodes = [PatternMergeHierarchyNode(x)
-                                    for x in patterns]
+                #the current 'top level' will consist of all the current
+                # nodes that didn't get a new parent, plus any new parents
+                # created                
+                next_level_nodes = []
+                for frontier_pattern in patterns:
+                    #either this pattern is in old_pattern_nodes, in which
+                    # case take the old_pattern_node entry, or it's a completely
+                    # new pattern in which case make a node for it
+                    old_pattern_node_found = False
+                    for old_pattern_node in current_level_nodes:
+                        if (old_pattern_node.pattern==frontier_pattern):
+                            #sanity check..there should be only one node
+                            # per pattern
+                            assert old_pattern_node_found==False
+                            next_level_nodes.append(old_pattern_node)
+                            old_pattern_node_found = True 
+                    if (old_pattern_node_found==False):
+                       next_level_nodes.append(
+                        PatternMergeHierarchyNode(frontier_pattern)) 
+
                 for next_level_node in next_level_nodes:
                     #iterate over all the old patterns and their new parent
                     # in order to set up the child nodes correctly
