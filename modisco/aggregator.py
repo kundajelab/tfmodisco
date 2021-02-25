@@ -257,20 +257,28 @@ class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
 
 class DetectSpuriousMerging2(AbstractAggSeqletPostprocessor):
 
-    def __init__(self, subcluster_settings, min_in_subcluster, verbose):
+    def __init__(self, subcluster_settings, min_in_subcluster,
+                       similar_patterns_collapser, verbose):
         self.subcluster_settings = subcluster_settings
         self.min_in_subcluster = min_in_subcluster
+        self.similar_patterns_collapser = similar_patterns_collapser
         self.verbose = verbose
 
     def __call__(self, aggregated_seqlets):
         to_return = []
-        for pattern in aggregated_seqlets:
+        for i,pattern in enumerate(aggregated_seqlets):
+            if (self.verbose):
+                print("Inspecting pattern",i,"for spurious merging")
             if (len(pattern.seqlets) > self.min_in_subcluster):
                 pattern.compute_subclusters_and_embedding(
                     verbose=self.verbose,
                     compute_embedding=False,
                     **self.subcluster_settings)
-                to_return.extend(pattern.subcluster_to_subpattern.values()) 
+                subpatterns = pattern.subcluster_to_subpattern.values()
+                #pattern_collapser resturns both the merged patterns as well
+                # as the pattern merge hierarchy; we return the merged patterns
+                to_return.extend(
+                    self.similar_patterns_collapser(subpatterns)[0]) 
             else:
                 to_return.append(pattern)
         return to_return
@@ -874,9 +882,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
         patterns = [x.copy() for x in patterns]
 
-        #Let's subsample 'patterns' to prevent runtime from being too
-        # large in calculating pairwise sims. Max 1000, and also add in
-        # parallelization.
         merge_hierarchy_levels = []        
         current_level_nodes = [
             PatternMergeHierarchyNode(pattern=x) for x in patterns]
@@ -905,6 +910,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
             if (self.verbose):
                 print("Numbers for each pattern pre-subsample:",
                       str([len(x.seqlets) for x in patterns]))
+            #Let's subsample 'patterns' to prevent runtime from being too
+            # large in calculating pairwise sims. 
             subsample_patterns = [
                 (x if x.num_seqlets <= self.max_seqlets_subsample
                  else self.subsample_pattern(x)) for x in patterns]
@@ -915,6 +922,9 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
             for i,(pattern1, subsample_pattern1) in enumerate(
                                             zip(patterns, subsample_patterns)):
+                start = time.time()
+                if (self.verbose):
+                    print("Computing sims for pattern",i)
                 #from modisco.visualization import viz_sequence
                 #viz_sequence.plot_weights(pattern1["task0_contrib_scores"].fwd)
                 for j,(pattern2, subsample_pattern2) in enumerate(
@@ -939,7 +949,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     #get realigned pattern2
                     pattern2_coords = [x.coor
                         for x in subsample_pattern2.seqlets]
-                    if (rc):
+                    if (rc): #flip strand if needed to align
                         pattern2_coords  = [x.revcomp()
                          for x in pattern2_coords]
                     #now apply the alignment
@@ -952,14 +962,14 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         track_names=
                          self.pattern_comparison_settings.track_names) 
 
-                    pattern1_fwdseqdata, pattern1_revseqdata =\
+                    pattern1_fwdseqdata, _ =\
                       core.get_2d_data_from_patterns(
                         patterns=subsample_pattern1.seqlets,
                         track_names=
                          self.pattern_comparison_settings.track_names,
                         track_transformer=
                          self.pattern_comparison_settings.track_transformer)
-                    pattern2_fwdseqdata, pattern2_revseqdata =\
+                    pattern2_fwdseqdata, _ =\
                       core.get_2d_data_from_patterns(
                         patterns=pattern2_shifted_seqlets,
                         track_names=
@@ -972,15 +982,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         (len(pattern1_fwdseqdata), -1))
                     flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
                         (len(pattern2_fwdseqdata), -1))
-                    if (pattern1_revseqdata is not None):
-                        flat_pattern1_revseqdata = pattern1_revseqdata.reshape(
-                            (len(pattern1_revseqdata), -1))
-                        flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
-                            (len(pattern2_fwdseqdata), -1))
-                    else:
-                        flat_pattern1_revseqdata = None 
-                        flat_pattern2_revseqdata = None 
-                        assert rc==False
 
                     #Do a check for all-zero scores, print warning
                     #do a check about the per-example sum
@@ -1002,17 +1003,15 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                                          pattern2_coords]))
 
                     between_pattern_sims =\
-                     compute_continjacc_arr1_vs_arr2fwdandrev(
+                     compute_continjacc_arr1_vs_arr2(
                         arr1=flat_pattern1_fwdseqdata,
-                        arr2fwd=flat_pattern2_fwdseqdata,
-                        arr2rev=flat_pattern2_revseqdata,
+                        arr2=flat_pattern2_fwdseqdata,
                         n_cores=self.n_cores).ravel()
 
                     within_pattern1_sims =\
-                     compute_continjacc_arr1_vs_arr2fwdandrev(
+                     compute_continjacc_arr1_vs_arr2(
                         arr1=flat_pattern1_fwdseqdata,
-                        arr2fwd=flat_pattern1_fwdseqdata,
-                        arr2rev=flat_pattern1_revseqdata,
+                        arr2=flat_pattern1_fwdseqdata,
                         n_cores=self.n_cores).ravel()
 
                     auroc = roc_auc_score(
@@ -1037,6 +1036,9 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
                     #The symmetrization over i,j and j,i is done later
                     pairwise_aurocs[i,j] = auroc
+                if (self.verbose):
+                    print("Computed sims for pattern",i,
+                          "in",time.time()-start,"s")
 
 
             patterns_to_patterns_aligner_sim = pairwise_sims
