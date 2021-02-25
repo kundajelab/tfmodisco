@@ -25,6 +25,7 @@ modisco/backend/tensorflow_backend.py
 modisco/backend/theano_backend.py
 modisco/cluster/__init__.py
 modisco/cluster/core.py
+modisco/cluster/run_leiden
 modisco/cluster/phenograph/__init__.py
 modisco/cluster/phenograph/bruteforce_nn.py
 modisco/cluster/phenograph/cluster.py

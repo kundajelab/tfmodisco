@@ -170,7 +170,7 @@ class AdvancedGappedKmerEmbedderFactory(object):
 
     def __init__(self, topn=20, min_k=4, max_k=6, max_gap=15, max_len=15, 
                        max_entries=500,
-                       alphabet_size=4, n_jobs=10):
+                       alphabet_size=4):
         self.topn = topn
         self.min_k = min_k
         self.max_k = max_k
@@ -178,7 +178,6 @@ class AdvancedGappedKmerEmbedderFactory(object):
         self.max_len = max_len
         self.max_entries = max_entries
         self.alphabet_size = alphabet_size
-        self.n_jobs = n_jobs
 
     def get_jsonable_config(self):
         return OrderedDict([
@@ -189,16 +188,17 @@ class AdvancedGappedKmerEmbedderFactory(object):
                 ('max_len', self.max_len),
                 ('max_entries', self.max_entries),
                 ('alphabet_size', self.alphabet_size),
-                ('n_jobs', self.n_jobs)
                 ])
 
-    def __call__(self, onehot_track_name, toscore_track_names_and_signs):
+    def __call__(self, onehot_track_name,
+                       toscore_track_names_and_signs,
+                       n_jobs):
         return AdvancedGappedKmerEmbedder(
                 topn=self.topn, min_k=self.min_k, max_k=self.max_k,
                 max_gap=self.max_gap, max_len=self.max_len,
                 max_entries=self.max_entries,
                 alphabet_size=self.alphabet_size,
-                n_jobs=self.n_jobs,
+                n_jobs=n_jobs,
                 onehot_track_name=onehot_track_name,
                 toscore_track_names_and_signs=toscore_track_names_and_signs) 
 
