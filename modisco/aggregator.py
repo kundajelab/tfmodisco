@@ -1064,7 +1064,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
             #iterate over pairs
             for (i,j,aligner_sim) in sorted_pairs:
                 #symmetrize asymmetric crosscontam
-                cross_contam = 0.5*(cross_contamination[i,j]+
+                # take min rather than avg to avoid aggressive merging
+                cross_contam = min(cross_contamination[i,j],
                                     cross_contamination[j,i])
                 if (self.collapse_condition(prob=cross_contam,
                                             aligner_sim=aligner_sim)):
