@@ -21,5 +21,5 @@ if __name__== '__main__':
           extras_require={
             'tensorflow': ['tensorflow>=1.7'],
             'tensorflow with gpu': ['tensorflow-gpu>=1.7']},
-          scripts=[],
+          scripts=['modisco/cluster/run_leiden'],
           name='modisco')

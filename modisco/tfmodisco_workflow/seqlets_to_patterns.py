@@ -277,7 +277,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 onehot_track_name=onehot_track_name,
                 toscore_track_names_and_signs=list(
                 zip(hypothetical_contribs_track_names,
-                    [np.sign(x) for x in track_signs])))
+                    [np.sign(x) for x in track_signs])),
+                n_jobs=self.n_cores)
 
         #affinity matrix from embeddings
         coarse_affmat_computer =\
