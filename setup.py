@@ -6,7 +6,7 @@ if __name__== '__main__':
           description='TF MOtif Discovery from Importance SCOres',
           long_description="""Algorithm for discovering consolidated patterns from base-pair-level importance scores""",
           url='https://github.com/kundajelab/tfmodisco',
-          version='0.5.13.1',
+          version='0.5.13.2',
           packages=find_packages(),
           package_data={
                 '': ['cluster/phenograph/louvain/*convert*', 'cluster/phenograph/louvain/*community*', 'cluster/phenograph/louvain/*hierarchy*']
