@@ -40,7 +40,8 @@ class GappedKmerEmbedderFactory(object):
                 ('mean_normalize', self.mean_normalize),
                 ])
 
-    def __call__(self, onehot_track_name, toscore_track_names_and_signs):
+    def __call__(self, onehot_track_name, toscore_track_names_and_signs,
+                       *args, **kwargs): #additional potentially ignored args
         return GappedKmerEmbedder(
                 alphabet_size=self.alphabet_size,
                 kmer_len=self.kmer_len,
