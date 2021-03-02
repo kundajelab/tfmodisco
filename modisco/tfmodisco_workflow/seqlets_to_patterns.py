@@ -384,6 +384,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 seqlet_sort_metric=
                     lambda x: -sum([np.sum(np.abs(x[track_name].fwd)) for
                                track_name in contrib_scores_track_names]),
+            track_set=track_set, #needed for seqlet expansion
             postprocessor=postprocessor1)
 
         def sign_consistency_func(motif):

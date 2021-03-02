@@ -80,6 +80,44 @@ class TrimToBestWindowByIC(AbstractTrimToBestWindow):
         return per_pos_ic
 
 
+def expand_seqlets_to_fill_pattern(pattern, track_set, flank_to_add,
+                                   track_names=None, verbose=True):
+    new_seqlets_and_alnmts = []
+    skipped_seqlets = 0
+    for seqlet_and_alnmt in pattern.seqlets_and_alnmts:
+        seqlet = seqlet_and_alnmt.seqlet
+        alnmt = seqlet_and_alnmt.alnmt
+        left_expansion = alnmt+flank_to_add 
+        right_expansion = (len(pattern) - (alnmt+len(seqlet)))+flank_to_add
+        if (seqlet.coor.is_revcomp == False):
+            start = seqlet.coor.start - left_expansion
+            end = seqlet.coor.end + right_expansion
+        else:
+            start = seqlet.coor.start - right_expansion
+            end = seqlet.coor.end + left_expansion
+        if (start >= 0 and
+            end <= track_set.get_example_idx_len(
+                    seqlet.coor.example_idx)):
+            seqlet = track_set.create_seqlet(
+                coor=core.SeqletCoordinates(
+                    example_idx=seqlet.coor.example_idx,
+                    start=start, end=end,
+                    is_revcomp=seqlet.coor.is_revcomp),
+                track_names=track_names) 
+            new_seqlets_and_alnmts.append(
+             core.SeqletAndAlignment(seqlet=seqlet, alnmt=0))
+        else:
+            skipped_seqlets += 1 
+    if verbose and (skipped_seqlets > 0):
+        print("Skipped "+str(skipped_seqlets)+" seqlets") 
+        sys.stdout.flush()
+    if (len(new_seqlets_and_alnmts) > 0):
+        return core.AggregatedSeqlet(seqlets_and_alnmts_arr=
+                                      new_seqlets_and_alnmts)
+    else:
+        return None
+
+
 class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
 
     def __init__(self, track_set, flank_to_add=0,
@@ -92,40 +130,12 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
     def __call__(self, aggregated_seqlets):
         new_aggregated_seqlets = []
         for aggregated_seqlet in aggregated_seqlets:
-            new_seqlets_and_alnmts = []
-            skipped_seqlets = 0
-            for seqlet_and_alnmt in aggregated_seqlet.seqlets_and_alnmts:
-                seqlet = seqlet_and_alnmt.seqlet
-                alnmt = seqlet_and_alnmt.alnmt
-                left_expansion = alnmt+self.flank_to_add 
-                right_expansion = (len(aggregated_seqlet) -
-                                    (alnmt+len(seqlet)))+self.flank_to_add
-                if (seqlet.coor.is_revcomp == False):
-                    start = seqlet.coor.start - left_expansion
-                    end = seqlet.coor.end + right_expansion
-                else:
-                    start = seqlet.coor.start - right_expansion
-                    end = seqlet.coor.end + left_expansion
-                if (start >= 0 and
-                    end <=
-                     self.track_set.get_example_idx_len(
-                           seqlet.coor.example_idx)):
-                    seqlet = self.track_set.create_seqlet(
-                        coor=core.SeqletCoordinates(
-                            example_idx=seqlet.coor.example_idx,
-                            start=start, end=end,
-                            is_revcomp=seqlet.coor.is_revcomp),
-                        track_names=self.track_names) 
-                    new_seqlets_and_alnmts.append(
-                     core.SeqletAndAlignment(seqlet=seqlet, alnmt=0))
-                else:
-                    skipped_seqlets += 1 
-            if self.verbose and (skipped_seqlets > 0):
-                print("Skipped "+str(skipped_seqlets)+" seqlets") 
-                sys.stdout.flush()
-            if (len(new_seqlets_and_alnmts) > 0):
-                new_aggregated_seqlets.append(core.AggregatedSeqlet(
-                    seqlets_and_alnmts_arr=new_seqlets_and_alnmts))
+            new_agg_seqlet = expand_seqlets_to_fill_pattern(
+                pattern=aggregated_seqlet, track_set=self.track_set,
+                flank_to_add=self.flank_to_add,
+                track_names=self.track_names, verbose=self.verbose)
+            if new_agg_seqlet is not None:
+                new_aggregated_seqlets.append(new_agg_seqlet)
         return new_aggregated_seqlets 
 
 
@@ -610,9 +620,13 @@ class GreedySeqletAggregator(AbstractSeqletsAggregator):
 
     def __init__(self, pattern_aligner,
                        seqlet_sort_metric,
+                       track_set,
+                       track_names=None,
                        postprocessor=None):
         self.pattern_aligner = pattern_aligner
         self.seqlet_sort_metric = seqlet_sort_metric
+        self.track_set = track_set
+        self.track_names = track_names
         self.postprocessor = postprocessor
 
     def __call__(self, seqlets):
@@ -625,6 +639,20 @@ class GreedySeqletAggregator(AbstractSeqletsAggregator):
                 aggregated_seqlet.merge_aggregated_seqlet(
                     agg_seqlet=core.AggregatedSeqlet.from_seqlet(seqlet),
                     aligner=self.pattern_aligner) 
+                #expand the seqlets to fill the flanks
+                filled_agg_seqlet = expand_seqlets_to_fill_pattern(
+                    pattern=aggregated_seqlet,
+                    track_set=self.track_set, flank_to_add=0,
+                    track_names=self.track_names,
+                    verbose=True)
+                if (filled_agg_seqlet is not None):
+                    aggregated_seqlet = filled_agg_seqlet
+                else:
+                    #if flank expansion got rid of all the seqlets due
+                    # to going over the edge, reset
+                    # aggregated_seqlet to be the very first one
+                    aggregated_seqlet = core.AggregatedSeqlet.from_seqlet(
+                                                             sorted_seqlets[0])
         to_return = [aggregated_seqlet]
         if (self.postprocessor is not None):
             to_return = self.postprocessor(to_return)
