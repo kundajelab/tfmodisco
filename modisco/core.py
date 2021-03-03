@@ -1064,25 +1064,31 @@ class AggregatedSeqlet(Pattern):
                 self.add_pattern(pattern=seqlet_and_alnmt.seqlet,
                                  aligner=aligner) 
         
-    def add_pattern(self, pattern, aligner):
-        (alnmt, revcomp_match, alnmt_score) =\
-            aligner(parent_pattern=self, child_pattern=pattern)
-        if (revcomp_match):
-            pattern = pattern.revcomp()
-        self._add_pattern_with_alnmt(pattern=pattern, alnmt=alnmt)
+    #def add_pattern(self, pattern, aligner):
+    #    assert False, "Don't call this anymore"
+    #    (alnmt, revcomp_match, alnmt_score) =\
+    #        aligner(parent_pattern=self, child_pattern=pattern)
+    #    if (revcomp_match):
+    #        pattern = pattern.revcomp()
+    #    self._add_pattern_with_alnmt(pattern=pattern, alnmt=alnmt)
 
-    def _add_pattern_with_alnmt(self, pattern, alnmt):
-        if alnmt < 0:
-           self._pad_before(num_zeros=abs(alnmt)) 
-           alnmt = 0
-        end_coor_of_pattern = (alnmt + len(pattern))
-        if (end_coor_of_pattern > self.length):
-            self._pad_after(num_zeros=(end_coor_of_pattern - self.length))
-        self._add_pattern_with_valid_alnmt(pattern=pattern, alnmt=alnmt)
+    #def _add_pattern_with_alnmt(self, pattern, alnmt):
+    #    assert False, "Don't call this anymore"
+    #    if alnmt < 0:
+    #       self._pad_before(num_zeros=abs(alnmt)) 
+    #       alnmt = 0
+    #    end_coor_of_pattern = (alnmt + len(pattern))
+    #    if (end_coor_of_pattern > self.length):
+    #        self._pad_after(num_zeros=(end_coor_of_pattern - self.length))
+    #    self._add_pattern_with_valid_alnmt(pattern=pattern, alnmt=alnmt)
 
     def _add_pattern_with_valid_alnmt(self, pattern, alnmt):
-        assert alnmt >= 0
-        assert alnmt + len(pattern) <= self.length
+        #assert alnmt >= 0
+        #assert alnmt + len(pattern) <= self.length
+        #Moving to an approach where only seqlets that already fill the
+        # pattern should be added...
+        assert alnmt == 0
+        assert alnmt + len(pattern) == self.length
 
         slice_obj = slice(alnmt, alnmt+len(pattern))
         rev_slice_obj = slice(self.length-(alnmt+len(pattern)),
