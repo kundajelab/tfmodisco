@@ -1069,9 +1069,12 @@ class AggregatedSeqlet(Pattern):
             aligner(parent_pattern=self, child_pattern=pattern)
         if (revcomp_match):
             pattern = pattern.revcomp()
+        self._add_pattern_with_alnmt(pattern=pattern, alnmt=alnmt)
+
+    def _add_pattern_with_alnmt(self, pattern, alnmt):
         if alnmt < 0:
            self._pad_before(num_zeros=abs(alnmt)) 
-           alnmt=0
+           alnmt = 0
         end_coor_of_pattern = (alnmt + len(pattern))
         if (end_coor_of_pattern > self.length):
             self._pad_after(num_zeros=(end_coor_of_pattern - self.length))

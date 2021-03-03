@@ -87,7 +87,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                         seqlet_embedding.advanced_gapped_kmer
                                         .AdvancedGappedKmerEmbedderFactory()),
 
-                       nn_n_jobs=None,
                        nearest_neighbors_to_compute=500,
 
                        affmat_correlation_threshold=0.15,
@@ -139,7 +138,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
 
         self.embedder_factory = embedder_factory
 
-        self.nn_n_jobs = (nn_n_jobs if nn_n_jobs is not None else n_cores)
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
 
         self.affmat_correlation_threshold = affmat_correlation_threshold
@@ -201,7 +199,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 ('embedder_factory',
                  self.embedder_factory.get_jsonable_config()),
                 ('num_mismatches', self.num_mismatches),
-                ('nn_n_jobs', self.nn_n_jobs),
                 ('nearest_neighbors_to_compute',
                  self.nearest_neighbors_to_compute),
                 ('affmat_correlation_threshold',
@@ -287,7 +284,6 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 sparse_affmat_from_fwdnrev1dvecs=\
                     affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
                         n_neighbors=self.nearest_neighbors_to_compute, 
-                        nn_n_jobs=self.nn_n_jobs, 
                         verbose=self.verbose),
                 verbose=self.verbose)
 
@@ -494,7 +490,8 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 matrix_affinity_metric=
                     affinitymat.core.CrossContinJaccardMultiCoreCPU(
                         verbose=self.verbose, n_cores=self.n_cores),
-                min_similarity=self.min_similarity_for_seqlet_assignment),
+                min_similarity=self.min_similarity_for_seqlet_assignment,
+                track_set=track_set),
             min_cluster_size=self.final_min_cluster_size,
             postprocessor=expand_trim_expand1,
             verbose=self.verbose) 

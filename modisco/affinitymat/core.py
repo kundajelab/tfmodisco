@@ -177,10 +177,8 @@ def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
 class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         AbstractSparseAffmatFromFwdAndRevOneDVecs):
 
-    def __init__(self, n_neighbors, verbose, nn_n_jobs,
-                       memory_cap_gb=1.0):
+    def __init__(self, n_neighbors, verbose, memory_cap_gb=1.0):
         self.n_neighbors = n_neighbors   
-        self.nn_n_jobs = nn_n_jobs
         self.verbose = verbose
         self.memory_cap_gb = memory_cap_gb
 
