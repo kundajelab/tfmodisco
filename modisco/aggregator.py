@@ -576,21 +576,22 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
                 track_set=track_set, left_flank_to_add=parent_left_expansion,
                 right_flank_to_add=parent_right_expansion,
                 track_names=track_names, verbose=verbose)
+            if (candidate_parent_pattern is not None):
+                parent_pattern = candidate_parent_pattern
+            else: #the flank expansion required to merge in this seqlet got
+                # rid of all the other seqlets in the pattern, so we won't use
+                # this seqlet
+                alt_skipped_seqlets += 1
+                continue
 
-        if (candidate_parent_pattern is not None):
-            parent_pattern = candidate_parent_pattern
-            assert len(seqlet)==len(parent_pattern)
-            #add the seqlet in at alignment 0, assuming it's not already
-            # part of the pattern
-            if (seqlet not in parent_pattern.seqlets_and_alnmts):
-                parent_pattern._add_pattern_with_valid_alnmt(
-                                pattern=seqlet, alnmt=0)
-            else:
-                duplicate_seqlets += 1
-        else: #the flank expansion required to merge in this seqlet got
-        # rid of all the other seqlets in the pattern, so we won't use
-        # this seqlet
-            alt_skipped_seqlets += 1
+        assert len(seqlet)==len(parent_pattern)
+        #add the seqlet in at alignment 0, assuming it's not already
+        # part of the pattern
+        if (seqlet not in parent_pattern.seqlets_and_alnmts):
+            parent_pattern._add_pattern_with_valid_alnmt(
+                            pattern=seqlet, alnmt=0)
+        else:
+            duplicate_seqlets += 1
 
     if (verbose):
         if (skipped_seqlets > 0):
