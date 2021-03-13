@@ -525,6 +525,7 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
     parent_pattern = parent_pattern.copy()
 
     skipped_seqlets = 0
+    alt_skipped_seqlets = 0
     duplicate_seqlets = 0
     dropped_seqlets = 0
     for seqlet in seqlets_to_merge:
@@ -570,25 +571,34 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
         parent_right_expansion = max(0, (alnmt+preexpansion_seqletlen)
                                          - len(parent_pattern))
         if ((parent_left_expansion > 0) or (parent_right_expansion > 0)):
-            parent_pattern = expand_seqlets_to_fill_pattern(
+            candidate_parent_pattern = expand_seqlets_to_fill_pattern(
                 pattern=parent_pattern,
                 track_set=track_set, left_flank_to_add=parent_left_expansion,
                 right_flank_to_add=parent_right_expansion,
                 track_names=track_names, verbose=verbose)
 
-        assert len(seqlet)==len(parent_pattern)
-        #add the seqlet in at alignment 0, assuming it's not already
-        # part of the pattern
-        if (seqlet not in parent_pattern.seqlets_and_alnmts):
-            parent_pattern._add_pattern_with_valid_alnmt(
-                            pattern=seqlet, alnmt=0)
-        else:
-            duplicate_seqlets += 1
+        if (candidate_parent_pattern is not None):
+            parent_pattern = candidate_parent_pattern
+            assert len(seqlet)==len(parent_pattern)
+            #add the seqlet in at alignment 0, assuming it's not already
+            # part of the pattern
+            if (seqlet not in parent_pattern.seqlets_and_alnmts):
+                parent_pattern._add_pattern_with_valid_alnmt(
+                                pattern=seqlet, alnmt=0)
+            else:
+                duplicate_seqlets += 1
+        else: #the flank expansion required to merge in this seqlet got
+        # rid of all the other seqlets in the pattern, so we won't use
+        # this seqlet
+            alt_skipped_seqlets += 1
 
     if (verbose):
         if (skipped_seqlets > 0):
             print("Skipped",skipped_seqlets,"seqlets that went over sequence"
                   +" edge during flank expansion")
+        if (alt_skipped_seqlets > 0):
+            print("Skipped",alt_skipped_seqlets,"seqlets that were requiring"
+                  +" other seqlets to go over the edge during flank expansion")
         if (duplicate_seqlets > 0):
             print("Skipped",duplicate_seqlets,"due to duplicates")
         if (dropped_seqlets > 0):
