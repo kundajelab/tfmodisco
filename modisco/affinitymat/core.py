@@ -120,43 +120,46 @@ def sparse_cosine_similarity(sparse_mat_1, sparse_mat_2):
 #take the dot product of fwd_vecs with
 # fwd_vecs and rev_vecs, take max over the fwd and rev sim, then return
 # the top k
-def top_k_fwdandrev_dot_prod(fwd_vecs, rev_vecs, slice_start, slice_end, k,
-                             initclusters):
+def top_k_fwdandrev_dot_prod(fwd_vecs2, fwd_vecs, rev_vecs,
+                             slice_start, slice_end, k, initclusters):
     if (initclusters is not None):
+        #'initclusters' is only relevant when fwd_vecs2==fwd_vecs
         assert len(initclusters)==fwd_vecs.shape[0]
-    fwd_vecs_slice = fwd_vecs[slice_start:slice_end]
+        assert len(initclusters)==fwd_vecs2.shape[0]
+    fwd_vecs2_slice = fwd_vecs2[slice_start:slice_end]
     initclusters_slice = (None if initclusters is None
                           else initclusters[slice_start:slice_end])
     k = min(k, fwd_vecs.shape[0])
-    if (scipy.sparse.issparse(fwd_vecs_slice)):
-        fwd_dot = np.array(fwd_vecs_slice.dot(fwd_vecs.transpose()).todense())
+    if (scipy.sparse.issparse(fwd_vecs2_slice)):
+        fwd_dot = np.array(fwd_vecs2_slice.dot(fwd_vecs.transpose()).todense())
     else:
-        fwd_dot = np.matmul(fwd_vecs_slice,fwd_vecs.T) 
+        fwd_dot = np.matmul(fwd_vecs2_slice,fwd_vecs.T) 
     if (rev_vecs is not None):
-        if (scipy.sparse.issparse(fwd_vecs_slice)):
-            rev_dot = np.array(fwd_vecs_slice.dot(rev_vecs.transpose())
-                                             .todense())
+        if (scipy.sparse.issparse(fwd_vecs2_slice)):
+            rev_dot = np.array(fwd_vecs2_slice.dot(rev_vecs.transpose())
+                                              .todense())
         else:
-            rev_dot = np.matmul(fwd_vecs_slice, rev_vecs.T)
+            rev_dot = np.matmul(fwd_vecs2_slice, rev_vecs.T)
         dotprod = np.maximum(fwd_dot, rev_dot)
     else:
         dotprod = fwd_dot
 
-    #dotprod has shape batchsize X num_seqlets
+    #dotprod has shape batchsize X num_seqlets in fwd_vecs
     dotprod_argsort = np.argsort(-dotprod, axis=-1) 
     sorted_topk_indices = [] 
     sorted_topk_sims = []
     for row_idx,argsort_row in enumerate(dotprod_argsort): 
         combined_neighbor_row = [] 
         neighbor_row_topnn = argsort_row[:k] 
-        neighbor_set_topnn = set(neighbor_row_topnn) 
         #combined_neighbor_row ends up being the union of the standard nearest  
         # neighbors plus the nearest neighbors if focusing on the initclusters 
         combined_neighbor_row.extend(neighbor_row_topnn) 
         if (initclusters_slice is not None): 
+            neighbor_set_topnn = set(neighbor_row_topnn) 
+            initcluster_for_this_row = initclusters_slice[row_idx]
             combined_neighbor_row.extend([ 
                 y for y in ([x for x in argsort_row 
-                    if initclusters_slice[x]==initclusters_slice[row_idx]][:k]) 
+                    if initclusters[x]==initcluster_for_this_row][:k]) 
                 if y not in neighbor_set_topnn]) 
         sorted_topk_indices.append(
             np.array(combined_neighbor_row).astype("int")) 
@@ -182,7 +185,8 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         self.verbose = verbose
         self.memory_cap_gb = memory_cap_gb
 
-    def __call__(self, fwd_vecs, rev_vecs, initclusters):
+    def __call__(self, fwd_vecs, rev_vecs, initclusters, fwd_vecs2=None):
+        #fwd_vecs2 is used when you don't just want to compute self-similarities
 
         #normalize the vectors 
         fwd_vecs = magnitude_norm_sparsemat(sparse_mat=fwd_vecs)
@@ -190,6 +194,11 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
             rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
         else:
             rev_vecs = None
+
+        if (fwd_vecs2 is None):
+            fwd_vecs2 = fwd_vecs
+        else:
+            fwd_vecs2 = magnitude_norm_sparsemat(sparse_mat=fwd_vecs2)
 
         #fwd_sims = fwd_vecs.dot(fwd_vecs.transpose())
         #rev_sims = fwd_vecs.dot(rev_vecs.transpose())
@@ -199,15 +208,17 @@ class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
         memory_cap_gb = (self.memory_cap_gb if rev_vecs
                          is None else self.memory_cap_gb/2.0)
         batch_size = int(memory_cap_gb*(2**30)/(fwd_vecs.shape[0]*8))
-        batch_size = min(max(1,batch_size),fwd_vecs.shape[0])
+        batch_size = min(max(1,batch_size),fwd_vecs2.shape[0])
         if (self.verbose):
             print("Batching in slices of size",batch_size)
             sys.stdout.flush()
 
         neighbors, sims = [], []
-        for i in tqdm(range(0,fwd_vecs.shape[0],batch_size)):
-            neighbors_batch, sims_batch = top_k_fwdandrev_dot_prod(fwd_vecs,
-                                         rev_vecs,
+        for i in tqdm(range(0,fwd_vecs2.shape[0],batch_size)):
+            neighbors_batch, sims_batch = top_k_fwdandrev_dot_prod(
+                                         fwd_vecs2=fwd_vecs2,
+                                         fwd_vecs=fwd_vecs,
+                                         rev_vecs=rev_vecs,
                                          slice_start=i,
                                          slice_end=(i+batch_size),
                                          k=self.n_neighbors+1,

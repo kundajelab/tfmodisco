@@ -193,6 +193,8 @@ class AdvancedGappedKmerEmbedderFactory(object):
     def __call__(self, onehot_track_name,
                        toscore_track_names_and_signs,
                        n_jobs):
+        #toscore_track_names_and_signs are tuples of (hyptrackname, sign)
+        # will be multiplied by the one-hot encoding to get the contrib scores
         return AdvancedGappedKmerEmbedder(
                 topn=self.topn, min_k=self.min_k, max_k=self.max_k,
                 max_gap=self.max_gap, max_len=self.max_len,

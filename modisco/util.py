@@ -6,6 +6,8 @@ import numpy as np
 import h5py
 import traceback
 import scipy.sparse
+from sklearn.metrics import average_precision_score, precision_recall_curve
+from sklearn.isotonic import IsotonicRegression
 
 
 def print_memory_use():
@@ -656,3 +658,207 @@ def show_or_savefig(plot_save_dir, filename):
         fname = (plot_save_dir+"/"+filename)
         plt.savefig(fname)
         print("saving plot to " + fname)
+
+
+def symmetrize_nn_distmat(distmat_nn, nn, average_with_transpose=False):
+    #Augment any distmat_nn entries with reciprocal entries that might be
+    # missing because "j" might be in the nearest-neighbors list of i, but
+    # i may not have made it into the nearest neighbors list for j, and vice
+    # versa
+
+    #in case the underlying distance metric isn't symmetric, average with
+    # transpose if available
+    if (average_with_transpose):
+       distmat_nn = sparse_average_with_transpose_if_available( 
+                        affmat_nn=distmat_nn, nn=nn)
+
+    nn_sets = [set(x) for x in nn]
+    augmented_distmat_nn = [list(x) for x in distmat_nn]
+    augmented_nn = [list(x) for x in nn]
+
+    for i in range(len(nn)):
+        #print(i)
+        for neighb,distance in zip(nn[i], distmat_nn[i]):
+            if i not in nn_sets[neighb]:
+                augmented_nn[neighb].append(i) 
+                augmented_distmat_nn[neighb].append(distance) 
+
+    verify_symmetric_nn_affmat(affmat_nn=augmented_distmat_nn,
+                               nn=augmented_nn)
+    
+    sorted_augmented_nn = []
+    sorted_augmented_distmat_nn = []
+    for augmented_nn_row, augmented_distmat_nn_row in zip(
+                                           augmented_nn, augmented_distmat_nn): 
+       augmented_nn_row = np.array(augmented_nn_row) 
+       augmented_distmat_nn_row = np.array(augmented_distmat_nn_row)
+       argsort_indices = np.argsort(augmented_distmat_nn_row) 
+       sorted_augmented_nn.append(augmented_nn_row[argsort_indices])
+       sorted_augmented_distmat_nn.append(
+            augmented_distmat_nn_row[argsort_indices])
+
+    #do a sanity check involving the nn sets. Make sure there are no duplicates
+    # and thye are reciprocal
+    nn_sets_2 = [set(x) for x in sorted_augmented_nn]
+    for i in range(len(sorted_augmented_nn)):
+        assert len(nn_sets_2[i])==len(sorted_augmented_nn[i])
+        for neighb in sorted_augmented_nn[i]:
+            assert i in nn_sets_2[neighb] 
+
+    verify_symmetric_nn_affmat(affmat_nn=sorted_augmented_distmat_nn,
+                               nn=sorted_augmented_nn)
+
+    return sorted_augmented_nn, sorted_augmented_distmat_nn
+
+
+def sparse_average_with_transpose_if_available(affmat_nn, nn):
+    coord_to_sim = dict([
+        ((i,j),sim) for i in range(len(affmat_nn))
+        for j,sim in zip(nn[i],affmat_nn[i]) ])
+    new_affmat_nn = [
+        np.array([
+            coord_to_sim[(i,j)] if (j,i) not in coord_to_sim else
+            0.5*(coord_to_sim[(i,j)] + coord_to_sim[(j,i)])
+            for j in nn[i]
+        ]) for i in range(len(affmat_nn))
+    ]
+    return new_affmat_nn
+
+
+def verify_symmetric_nn_affmat(affmat_nn, nn):
+    coord_to_sim = dict([
+        ((i,j),sim) for i in range(len(affmat_nn))
+        for j,sim in zip(nn[i],affmat_nn[i]) ])
+    for (i,j) in coord_to_sim.keys():
+        assert coord_to_sim[(i,j)]==coord_to_sim[(j,i)],\
+                (i,j,coord_to_sim[(i,j)], coord_to_sim[(j,i)])
+
+
+class ClasswisePrecisionScorer(object):
+
+    def __init__(self, true_classes, class_membership_scores):
+        #true_classes has len num_examples
+        #class_membership_scores has dims num_examples x classes
+        self.num_classes = max(true_classes)+1
+        assert len(set(true_classes))==self.num_classes
+        assert len(true_classes)==len(class_membership_scores)
+        assert class_membership_scores.shape[1] == self.num_classes
+
+        argmax_class_from_scores = np.argmax(
+            class_membership_scores, axis=-1)
+        print("Accuracy:", np.mean(true_classes==argmax_class_from_scores))
+        
+        prec_ir_list = []
+        precision_list = []
+        recall_list = []
+        thresholds_list = []
+        for classidx in range(self.num_classes):
+            class_membership_mask = true_classes==classidx
+            ir = IsotonicRegression(out_of_bounds='clip').fit(
+                X=class_membership_scores[:,classidx],
+                y=1.0*(class_membership_mask))
+            prec_ir_list.append(ir)
+            precision, recall, thresholds = precision_recall_curve(
+                    y_true=1.0*(class_membership_mask),
+                    probas_pred=class_membership_scores[:,classidx]) 
+            precision_list.append(precision)
+            recall_list.append(recall)
+            thresholds_list.append(thresholds)
+
+        self.prec_ir_list = prec_ir_list
+        self.precision_list = precision_list
+        self.recall_list = recall_list
+        self.thresholds_list = thresholds_list
+
+    def __call__(self, score, top_class):
+        if (hasattr(score, '__iter__')==False):
+            return self.prec_ir_list[top_class].transform([score])[0]
+        else:
+            if (hasattr(top_class, '__iter__')==False):
+                return self.prec_ir_list[top_class].transform(score)
+            else:
+                return np.array([self.prec_ir_list[y].transform(x)
+                        for x,y in zip(score, top_class)])
+
+
+class ModularityScorer(object):
+
+    #From https://en.wikipedia.org/wiki/Louvain_method#Algorithm
+    #Can't use the formula for deltaQ that they have because that doesn't
+    # account for new nodes. The deltaQ for new nodes is:
+    # 2(k_in)/(2m) - (2*(Sigma_tot + k_in)*k_tot
+    #                 + 2*Sigma_tot*k_in + k_in^2)/((2m)^2)
+    def __init__(self, clusters, nn, affmat_nn):
+
+        verify_symmetric_nn_affmat(affmat_nn=affmat_nn, nn=nn)
+
+        #assert that affmat has the same len as clusters 
+        assert len(clusters)==len(affmat_nn), (len(clusters), len(affmat_nn))
+        assert np.max([np.max(x) for x in nn])==len(clusters)-1, (
+                np.max([np.max(x) for x in nn]), len(clusters))
+        self.num_clusters = max(clusters)+1
+        assert len(set(clusters))==self.num_clusters
+
+        self.clusters = clusters
+        self.twom = np.sum([np.sum(x) for x in affmat_nn]) 
+        sigmatot_arr = []
+        for clusteridx in range(self.num_clusters):
+            withincluster_idxs = np.nonzero(1.0*(clusters==clusteridx))[0]
+            sigmatot_arr.append(np.sum([
+              np.sum(affmat_nn[i]) for i in withincluster_idxs]))
+        self.sigmatot_arr = np.array(sigmatot_arr)
+
+        #compute the modularity deltas 
+        self_modularity_deltas =\
+            self.get_modularity_deltas(new_rows_affmat_nn=affmat_nn,
+                                       new_rows_nn=nn)
+        self.precision_scorer = ClasswisePrecisionScorer(
+            true_classes=self.clusters,
+            class_membership_scores=self_modularity_deltas)
+
+    def get_modularity_deltas(self, new_rows_affmat_nn, new_rows_nn):
+        assert np.max([np.max(x) for x
+                       in new_rows_affmat_nn]) < len(self.clusters)
+        k_tot = np.array([np.sum(x) for x in new_rows_affmat_nn])
+        kin_arr = [] #will have dims of things_to_score X num_clusters
+        for clusteridx in range(self.num_clusters):
+            withincluster_idxs_set = set(
+                np.nonzero(1.0*(self.clusters==clusteridx))[0])
+            #this produces dims of num_clusters X things_to_score
+            # will transpose later
+            kin_arr.append(np.array([
+              np.sum([sim for (sim,nn_idx) in
+                      zip(sim_row, nn_row) if
+                      nn_idx in withincluster_idxs_set])
+              for (sim_row, nn_row) in zip(new_rows_affmat_nn, new_rows_nn)]))
+        kin_arr = np.array(kin_arr).transpose((1,0)) 
+        assert kin_arr.shape[1]==self.num_clusters
+        assert kin_arr.shape[0]==len(new_rows_affmat_nn)
+        assert k_tot.shape[0]==len(new_rows_affmat_nn)
+        assert self.sigmatot_arr.shape[0]==self.num_clusters
+        assert len(k_tot.shape)==1
+        assert len(self.sigmatot_arr.shape)==1
+        assert len(kin_arr.shape)==2
+        
+        modularity_deltas = ((2*kin_arr)/self.twom) - ((
+             2*(self.sigmatot_arr[None,:] + kin_arr)*k_tot[:,None]
+             + 2*self.sigmatot_arr[None,:]*kin_arr + np.square(kin_arr))/(
+             np.square(self.twom)))
+         
+        return modularity_deltas
+
+    #new_rows_affmat_nn and new_rows_nn should be [things_to_score X num_nn],
+    # where nn is in the space of the original nodes used to define the clusters
+    #new_rows_affmat_nn contains the sims to the nearest neighbors,
+    # new_rows_nn contains the nearest neighbor indices 
+    def __call__(self, new_rows_affmat_nn, new_rows_nn):
+        modularity_deltas = self.get_modularity_deltas(
+                       new_rows_affmat_nn=new_rows_affmat_nn,
+                       new_rows_nn=new_rows_nn)
+        argmax_classes = np.argmax(modularity_deltas, axis=-1)
+        return (argmax_classes, self.precision_scorer(
+                                     score=modularity_deltas,
+                                     top_class=argmax_classes),
+                modularity_deltas)
+
+

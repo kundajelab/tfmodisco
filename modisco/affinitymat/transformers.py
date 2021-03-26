@@ -279,8 +279,10 @@ class AbstractNNTsneProbs(AbstractAffMatTransformer):
         assert np.min(distmat_nn[:,0])==0
         assert np.max(distmat_nn[:,0])==0
         #assert that each idx is its own nearest neighbor
-        assert all([i==nearest_neighbors[i][0] for
-                    i in range(len(nearest_neighbors))])
+        if not all([i==nearest_neighbors[i][0] for
+                    i in range(len(nearest_neighbors))]):
+            print("Warning: each seqlet is not its own nearest neighbor;"
+                  +" there may be duplicates")
         # Compute the number of nearest neighbors to find.
         # LvdM uses 3 * perplexity as the number of neighbors.
         # In the event that we have very small # of points

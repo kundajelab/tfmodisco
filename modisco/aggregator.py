@@ -1053,8 +1053,10 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     print("Computed sims for pattern",i,
                           "in",time.time()-start,"s")
 
-
-            patterns_to_patterns_aligner_sim = pairwise_sims
+            #pairwise_sims is not symmetric; differ based on which pattern is
+            # padded with zeros.
+            patterns_to_patterns_aligner_sim =\
+                0.5*(pairwise_sims + pairwise_sims.T)
             cross_contamination = 2*(1-np.maximum(pairwise_aurocs,0.5))
             
             if (self.verbose):
