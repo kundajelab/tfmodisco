@@ -7,7 +7,6 @@ from .. import core
 from .. import util
 from .. import seqlet_embedding
 from collections import defaultdict, OrderedDict, Counter
-from scipy.sparse import coo_matrix
 import numpy as np
 import time
 import sys
@@ -939,7 +938,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             #del filtered_affmat
             #density_adapted_affmats.append(density_adapted_affmat)
 
-            coo_density_adapted_affmat =\
+            csr_density_adapted_affmat =\
                 self.density_adapted_affmat_transformer(
                     filtered_affmat_nn, seqlet_neighbors)
             del filtered_affmat_nn
@@ -953,9 +952,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
             #                            initclusters=filtered_initclusters)
             #del density_adapted_affmat
             #cluster_results_sets.append(cluster_results)
-            cluster_results = clusterer(coo_density_adapted_affmat,
+            cluster_results = clusterer(csr_density_adapted_affmat,
                                         initclusters=filtered_initclusters)
-            del coo_density_adapted_affmat
+            del csr_density_adapted_affmat
 
             num_clusters = max(cluster_results.cluster_indices+1)
             cluster_idx_counts = Counter(cluster_results.cluster_indices)

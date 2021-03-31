@@ -882,14 +882,9 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
         self.max_seqlets_subsample = max_seqlets_subsample
 
     def subsample_pattern(self, pattern):
-        seqlets_and_alnmts_list = list(pattern.seqlets_and_alnmts)
-        subsample = [seqlets_and_alnmts_list[i]
-                     for i in
-                     np.random.RandomState(1234).choice(
-                         a=np.arange(len(seqlets_and_alnmts_list)),
-                         replace=False,
-                         size=self.max_seqlets_subsample)]
-        return core.AggregatedSeqlet(seqlets_and_alnmts_arr=subsample) 
+        return util.subsample_pattern(
+                        pattern,
+                        num_to_subsample=self.max_seqlets_subsample)
 
     def __call__(self, patterns):
 

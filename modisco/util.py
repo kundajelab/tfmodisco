@@ -734,6 +734,18 @@ def verify_symmetric_nn_affmat(affmat_nn, nn):
                 (i,j,coord_to_sim[(i,j)], coord_to_sim[(j,i)])
 
 
+def subsample_pattern(pattern, num_to_subsample):
+    from . import core
+    seqlets_and_alnmts_list = list(pattern.seqlets_and_alnmts)
+    subsample = [seqlets_and_alnmts_list[i]
+                 for i in
+                 np.random.RandomState(1234).choice(
+                     a=np.arange(len(seqlets_and_alnmts_list)),
+                     replace=False,
+                     size=num_to_subsample)]
+    return core.AggregatedSeqlet(seqlets_and_alnmts_arr=subsample) 
+
+
 class ClasswisePrecisionScorer(object):
 
     def __init__(self, true_classes, class_membership_scores):
@@ -770,6 +782,21 @@ class ClasswisePrecisionScorer(object):
         self.recall_list = recall_list
         self.thresholds_list = thresholds_list
 
+    def score_percentile(self, score, top_class):
+        if (hasattr(score, '__iter__')==False):
+            return 1- self.recall_list[top_class][
+                        np.searchsorted(self.thresholds_list[top_class],
+                                        score)]
+        else:
+            if (hasattr(top_class, '__iter__')==False):
+                return 1 - self.recall_list[top_class][
+                            np.searchsorted(self.thresholds_list[top_class],
+                                            score)]
+            else:
+                return 1 - np.array([self.recall_list[y][
+                            np.searchsorted(self.thresholds_list[y],x)]
+                            for x,y in zip(score, top_class)])
+
     def __call__(self, score, top_class):
         if (hasattr(score, '__iter__')==False):
             return self.prec_ir_list[top_class].transform([score])[0]
@@ -777,18 +804,37 @@ class ClasswisePrecisionScorer(object):
             if (hasattr(top_class, '__iter__')==False):
                 return self.prec_ir_list[top_class].transform(score)
             else:
-                return np.array([self.prec_ir_list[y].transform(x)
+                return np.array([self.prec_ir_list[y].transform([x])[0]
                         for x,y in zip(score, top_class)])
+
+
+def trim_patterns_by_ic(patterns, window_size,
+                        onehot_track_name, bg_freq):
+    from . import aggregator 
+    trimmer = aggregator.TrimToBestWindowByIC(
+                window_size=window_size,
+                onehot_track_name=onehot_track_name,
+                bg_freq=bg_freq)
+    return trimmer(patterns)
+
+
+def apply_subclustering_to_patterns(patterns, track_names,
+                                    n_jobs, perplexity=50, verbose=True):
+    from . import affinitymat
+    for pattern in patterns:
+       pattern.compute_subclusters_and_embedding(
+         pattern_comparison_settings=
+            affinitymat.core.PatternComparisonSettings( 
+                track_names=track_names, 
+                track_transformer=affinitymat.L1Normalizer(),
+                min_overlap=None), #min_overlap argument is irrelevant here 
+         perplexity=perplexity, n_jobs=n_jobs, verbose=verbose) 
 
 
 class ModularityScorer(object):
 
-    #From https://en.wikipedia.org/wiki/Louvain_method#Algorithm
-    #Can't use the formula for deltaQ that they have because that doesn't
-    # account for new nodes. The deltaQ for new nodes is:
-    # 2(k_in)/(2m) - (2*(Sigma_tot + k_in)*k_tot
-    #                 + 2*Sigma_tot*k_in + k_in^2)/((2m)^2)
-    def __init__(self, clusters, nn, affmat_nn):
+    def __init__(self, clusters, nn, affmat_nn,
+                       cluster_to_supercluster_mapping=None):
 
         verify_symmetric_nn_affmat(affmat_nn=affmat_nn, nn=nn)
 
@@ -798,6 +844,12 @@ class ModularityScorer(object):
                 np.max([np.max(x) for x in nn]), len(clusters))
         self.num_clusters = max(clusters)+1
         assert len(set(clusters))==self.num_clusters
+
+        if (cluster_to_supercluster_mapping is None):
+            cluster_to_supercluster_mapping = dict([(i,i) for i in
+                                                    range(self.num_clusters)])
+        self.cluster_to_supercluster_mapping = cluster_to_supercluster_mapping
+        self.build_supercluster_masks()
 
         self.clusters = clusters
         self.twom = np.sum([np.sum(x) for x in affmat_nn]) 
@@ -812,11 +864,44 @@ class ModularityScorer(object):
         self_modularity_deltas =\
             self.get_modularity_deltas(new_rows_affmat_nn=affmat_nn,
                                        new_rows_nn=nn)
-        self.precision_scorer = ClasswisePrecisionScorer(
-            true_classes=self.clusters,
-            class_membership_scores=self_modularity_deltas)
 
+        self.precision_scorer = ClasswisePrecisionScorer(
+            true_classes=np.array([self.cluster_to_supercluster_mapping[x]
+                                   for x in self.clusters]),
+            class_membership_scores=
+                self.get_supercluster_scores(scores=self_modularity_deltas))
+
+    def build_supercluster_masks(self):
+        #build a matrix that is num_superclusters x num_clusters were
+        # the entries are booleans indicating membership of a cluster in
+        # the corresponding supercluster
+        self.num_superclusters = max(
+            self.cluster_to_supercluster_mapping.values())+1
+        withinsupercluster_masks =\
+            np.zeros((self.num_superclusters, self.num_clusters))
+        for clusteridx,superclusteridx in\
+            self.cluster_to_supercluster_mapping.items():
+            withinsupercluster_masks[superclusteridx, clusteridx] = 1
+        self.withinsupercluster_masks = (withinsupercluster_masks > 0.0) 
+
+    def get_supercluster_scores(self, scores):
+        #given a scores matrix that is num_examples x num_clusters, prepare
+        # a matrix that is num_examples x num_superclusters, where the
+        # supercluster score is derived by taking a max over the clusters
+        # belonging to the supercluster
+        supercluster_scores = []
+        for withinsupercluster_mask in self.withinsupercluster_masks:
+            supercluster_scores.append(
+                np.max(scores[:,withinsupercluster_mask], axis=-1)) 
+        return np.array(supercluster_scores).transpose() 
+        
     def get_modularity_deltas(self, new_rows_affmat_nn, new_rows_nn):
+        #From https://en.wikipedia.org/wiki/Louvain_method#Algorithm
+        #Note that the formula for deltaQ that they have assumes the graph isn't
+        # being modified and reduces to:
+        # 2(k_in)/(2m) - 2*(Sigma_tot)*k_tot/((2m)^2)
+        #If we assume the graph is modified, this would be:
+        # 2(k_in)/(2m + k_tot) - 2*(Sigma_tot + k_in)*k_tot/((2m + k_tot)^2)
         assert np.max([np.max(x) for x
                        in new_rows_affmat_nn]) < len(self.clusters)
         k_tot = np.array([np.sum(x) for x in new_rows_affmat_nn])
@@ -840,10 +925,14 @@ class ModularityScorer(object):
         assert len(self.sigmatot_arr.shape)==1
         assert len(kin_arr.shape)==2
         
-        modularity_deltas = ((2*kin_arr)/self.twom) - ((
-             2*(self.sigmatot_arr[None,:] + kin_arr)*k_tot[:,None]
-             + 2*self.sigmatot_arr[None,:]*kin_arr + np.square(kin_arr))/(
-             np.square(self.twom)))
+        #Let's just try with the scoring that assumes the new entries
+        # were already part of the graph and we are just computing the
+        # score for going from singleton to being part of the cluster
+        # 2(k_in)/(2m + k_tot) - 2*(Sigma_tot + k_in)*k_tot/((2m + k_tot)^2)
+        modularity_deltas = (
+            ((2*kin_arr)/(self.twom + k_tot[:,None]))
+            - ((2*(self.sigmatot_arr[None,:] + kin_arr)*k_tot[:,None])/
+               np.square(self.twom + k_tot[:,None])))
          
         return modularity_deltas
 
@@ -852,13 +941,19 @@ class ModularityScorer(object):
     #new_rows_affmat_nn contains the sims to the nearest neighbors,
     # new_rows_nn contains the nearest neighbor indices 
     def __call__(self, new_rows_affmat_nn, new_rows_nn):
-        modularity_deltas = self.get_modularity_deltas(
-                       new_rows_affmat_nn=new_rows_affmat_nn,
-                       new_rows_nn=new_rows_nn)
+        modularity_deltas = self.get_supercluster_scores(
+                                   scores=self.get_modularity_deltas(
+                                       new_rows_affmat_nn=new_rows_affmat_nn,
+                                       new_rows_nn=new_rows_nn))
         argmax_classes = np.argmax(modularity_deltas, axis=-1)
-        return (argmax_classes, self.precision_scorer(
-                                     score=modularity_deltas,
-                                     top_class=argmax_classes),
+        argmax_class_scores = modularity_deltas[np.arange(len(argmax_classes)),argmax_classes] 
+        precisions = self.precision_scorer(
+                                     score=argmax_class_scores,
+                                     top_class=argmax_classes)
+        percentiles = self.precision_scorer.score_percentile(
+                                     score=argmax_class_scores,
+                                     top_class=argmax_classes)
+        return (argmax_classes, precisions, percentiles,
                 modularity_deltas)
 
 
