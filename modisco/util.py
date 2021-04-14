@@ -169,6 +169,8 @@ def firstd(x_values, y_values):
     return x_midpoints, rise_over_run
 
 
+#TODO: this can prob be replaced with np.sum(
+# util.rolling_window(a=arr, window=window_size), axis=-1)  
 def cpu_sliding_window_sum(arr, window_size):
     assert len(arr) >= window_size, str(len(arr))+" "+str(window_size)
     to_return = np.zeros(len(arr)-window_size+1)
@@ -514,10 +516,16 @@ def compute_per_position_ic(ppm, background, pseudocount):
 
 #rolling_window is from this blog post by Erik Rigtorp:
 # https://rigtorp.se/2011/01/01/rolling-statistics-numpy.html
+#The last axis of a will be subject to the windowing
 def rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+def sliding_window_max(a, window):
+    rolling_windows_a = rolling_window(a, window)
+    return np.max(rolling_windows_a, axis=-1) 
 
 
 def sliding_window_max(a, window):
@@ -660,7 +668,7 @@ def show_or_savefig(plot_save_dir, filename):
         print("saving plot to " + fname)
 
 
-def symmetrize_nn_distmat(distmat_nn, nn, average_with_transpose=False):
+def symmetrize_nn_distmat(distmat_nn, nn, average_with_transpose):
     #Augment any distmat_nn entries with reciprocal entries that might be
     # missing because "j" might be in the nearest-neighbors list of i, but
     # i may not have made it into the nearest neighbors list for j, and vice

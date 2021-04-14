@@ -1,5 +1,6 @@
 from __future__ import division, print_function, absolute_import
 from . import aggregator
+from . import pattern_filterer
 from . import coordproducers
 from . import core
 from . import gammamix
