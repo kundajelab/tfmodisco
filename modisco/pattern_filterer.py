@@ -1,5 +1,6 @@
 from __future__ import division, print_function, absolute_import
 from . import util
+import numpy as np
 
 
 class PatternFilterer(object):
@@ -24,9 +25,9 @@ class PatternFilterer(object):
         return FuncPatternFilterer(function=func)
 
 
-class FuncPatternFilterer(object):
+class FuncPatternFilterer(PatternFilterer):
 
-    def __init__(self, function);
+    def __init__(self, function):
         self.function = function
 
     def __call__(self, patterns):
@@ -49,7 +50,7 @@ class ConditionPatternFilterer(PatternFilterer):
         return (passing_patterns, filtered_patterns)
 
 
-class MinSeqletSupportFilterer(PatternFilterer):
+class MinSeqletSupportFilterer(ConditionPatternFilterer):
 
     #filter out patterns that don't have at least min_seqlet_support
     def __init__(self, min_seqlet_support):
@@ -59,7 +60,7 @@ class MinSeqletSupportFilterer(PatternFilterer):
         return len(pattern.seqlets) >= self.min_seqlet_support
 
 
-class MinICinWindow(PatternFilterer):
+class MinICinWindow(ConditionPatternFilterer):
 
     #filter out patterns that don't have at least min_seqlet_support
     def __init__(self, window_size, min_ic_in_window, background,
@@ -75,9 +76,9 @@ class MinICinWindow(PatternFilterer):
         ppm = pattern[self.sequence_track_name].fwd
         #compute per-position ic for the pattern
         per_position_ic = util.compute_per_position_ic(
-                             ppm=ppm, bakground=self.background,
+                             ppm=ppm, background=self.background,
                              pseudocount=self.ppm_pseudocount)  
-        if (len(per_position_ic) < window_size):
+        if (len(per_position_ic) < self.window_size):
             print("WARNING: motif length is < window_size")          
             return np.sum(per_position_ic) >= self.min_ic_in_window 
         else:

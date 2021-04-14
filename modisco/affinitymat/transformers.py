@@ -75,27 +75,27 @@ class CurvatureBasedThreshold(AbstractThresholder):
             return fastest_secondd_threshold 
 
 
-#class object(object):
-#
-#    #binarizes an affinity matrix
-#    def __call__(self, affinity_mat):
-#        raise NotImplementedError()
-#
-#    def chain(self, other_affmat_post_processor):
-#        return AdhocAffMatTransformer(
-#                func = lambda x: other_affmat_post_processor(self(x))) 
+class AbstractAffMatTransformer(object):
+
+    #binarizes an affinity matrix
+    def __call__(self, affinity_mat):
+        raise NotImplementedError()
+
+    def chain(self, other_affmat_post_processor):
+        return AdhocAffMatTransformer(
+                func = lambda x: other_affmat_post_processor(self(x))) 
 
 
-#class AdhocAffMatTransformer(object):
-#
-#    def __init__(self, func):
-#        self.func = func 
-#
-#    def __call__(self, affinity_mat):
-#        return self.func(affinity_mat)
+class AdhocAffMatTransformer(AbstractAffMatTransformer):
+
+    def __init__(self, func):
+        self.func = func 
+
+    def __call__(self, affinity_mat):
+        return self.func(affinity_mat)
 
 
-class PerNodeThresholdBinarizer(object):
+class PerNodeThresholdBinarizer(AbstractAffMatTransformer):
 
     def __init__(self, thresholder, verbose=True):
         self.thresholder = thresholder
@@ -116,7 +116,7 @@ class PerNodeThresholdBinarizer(object):
         return to_return
 
 
-class NearestNeighborsBinarizer(object):
+class NearestNeighborsBinarizer(AbstractAffMatTransformer):
 
     def __init__(self, n_neighbors, nearest_neighbors_object):
         self.nearest_neighbors_object = nearest_neighbors_object 
@@ -133,7 +133,7 @@ class NearestNeighborsBinarizer(object):
         return to_return 
 
 
-class ProductOfTransformations(object):
+class ProductOfTransformations(AbstractAffMatTransformer):
 
     def __init__(self, transformer1, transformer2):
         self.transformer1 = transformer1
@@ -143,7 +143,7 @@ class ProductOfTransformations(object):
         return self.transformer1(affinity_mat)*self.transformer2(affinity_mat)
 
 
-class JaccardSimCPU(object):
+class JaccardSimCPU(AbstractAffMatTransformer):
 
     def __init__(self, verbose=True):
         self.verbose = verbose
@@ -175,81 +175,31 @@ class JaccardSimCPU(object):
         return jaccard_sim
 
 
-class SymmetrizeByElemwiseGeomMean(object):
+class SymmetrizeByElemwiseGeomMean(AbstractAffMatTransformer):
 
     def __call__(self, affinity_mat):
         return np.sqrt(affinity_mat*affinity_mat.T)
 
 
-class SymmetrizeByElemwiseMultiplying(object):
+class SymmetrizeByElemwiseMultiplying(AbstractAffMatTransformer):
 
     def __call__(self, affinity_mat):
         return affinity_mat*affinity_mat.T
 
 
-class SymmetrizeByAddition(object):
+class SymmetrizeByAddition(AbstractAffMatTransformer):
 
     def __init__(self, probability_normalize=False):
         self.probability_normalize = probability_normalize
 
-    #def __call__(self, affinity_mat):
-    def __call__(self, distmat_nn, nn):
-
-        sym_seqlet_neighbors, sym_distmat_nn = util.symmetrize_nn_distmat(
-                distmat_nn, nn,
-                average_with_transpose=False)
-        del distmat_nn
-        del seqlet_neighbors
-
-        if (self.verbose):
-            print("Computing betas for density adaptation")
-
-        #Compute beta values for the density adaptation. *store it*
-        betas_and_ps = Parallel(n_jobs=self.n_cores)(
-                 delayed(util.binary_search_perplexity)(
-                      self.perplexity, distances)
-                 for distances in sym_distmat_nn)
-        self.motifseqlet_betas = np.array([x[0] for x in betas_and_ps])
-        del betas_and_ps
-
-        if (self.verbose):
-            print("Computing normalizing denominators")
-
-        #also compute the normalization factor needed to get probs to sum to 1
-        #note: sticking to lists here because different rows of
-        # sym_distmat_nn may have different lengths after adding in
-        # the symmetric pairs
-        densadapted_affmat_nn_unnorm = [np.exp(-np.array(distmat_row)/beta)
-            for distmat_row, beta in
-            zip(sym_distmat_nn, self.motifseqlet_betas)]
-        normfactors = np.array([max(np.sum(x),1e-8) for x in
-                                densadapted_affmat_nn_unnorm])
-        self.motifseqlet_normfactors = normfactors
-        del normfactors
-
-        if (self.verbose):
-            print("Computing density-adapted nn affmat")
-
-        #Do density-adaptation using average of self-Beta and other-Beta.
-        sym_densadapted_affmat_nn = self.densadapt_wrt_motifseqlets(
-                            new_rows_distmat_nn=sym_distmat_nn,
-                            new_rows_nn=sym_seqlet_neighbors,
-                            new_rows_betas=self.motifseqlet_betas,
-                            new_rows_normfactors=self.motifseqlet_normfactors)
-
-        #Make csr matrix
-        csr_sym_density_adapted_affmat = util.coo_matrix_from_neighborsformat(
-            entries=sym_densadapted_affmat_nn,
-            neighbors=sym_seqlet_neighbors,
-            ncols=len(sym_densadapted_affmat_nn)).tocsr()
-
-        #to_return = affinity_mat + affinity_mat.T
-        #if (self.probability_normalize):
-        #    to_return = to_return/np.sum(to_return).astype("float")
+    def __call__(self, affinity_mat):
+        to_return = affinity_mat + affinity_mat.T
+        if (self.probability_normalize):
+            to_return = to_return/np.sum(to_return).astype("float")
         return to_return
 
 
-class MinVal(object):
+class MinVal(AbstractAffMatTransformer):
 
     def __init__(self, min_val):
         self.min_val = min_val
@@ -258,13 +208,13 @@ class MinVal(object):
         return affinity_mat*(affinity_mat >= self.min_val)
 
 
-class DistToSymm(object):
+class DistToSymm(AbstractAffMatTransformer):
 
     def __call__(self, affinity_mat):
         return np.max(affinity_mat)-affinity_mat
 
 
-class ApplyTransitions(object):
+class ApplyTransitions(AbstractAffMatTransformer):
 
     def __init__(self, num_steps):
         self.num_steps = num_steps
@@ -295,7 +245,7 @@ class AffToDistViaInvLogistic(AbstractAffToDistMat):
         return to_return
 
 
-class AbstractNNTsneProbs(object):
+class AbstractNNTsneProbs(AbstractAffMatTransformer):
 
     def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
         self.perplexity = perplexity 
@@ -389,7 +339,7 @@ class NNTsneConditionalProbs(AbstractNNTsneProbs):
         return P
 
 
-class AbstractTsneProbs(object):
+class AbstractTsneProbs(AbstractAffMatTransformer):
 
     def __init__(self, perplexity, aff_to_dist_mat, verbose=1):
         self.perplexity = perplexity 
@@ -488,7 +438,7 @@ class TsneJointProbs(AbstractTsneProbs):
         return np.array(P.todense())
 
 
-class LouvainMembershipAverage(object):
+class LouvainMembershipAverage(AbstractAffMatTransformer):
 
     def __init__(self, n_runs, level_to_return, parallel_threads,
                  verbose=True, seed=1234):
