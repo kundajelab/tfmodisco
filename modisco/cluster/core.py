@@ -249,8 +249,11 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
 
         if (initclusters is not None):
             np.save(uid+"_initclusters.npy", initclusters)
+            print("initclusters length:",len(initclusters))
 
         for use_initclusters in initclusters_to_try_list:
+
+            print("Affmat shape:",affinity_mat.shape[0])
 
             parallel_leiden_results = (
                 Parallel(n_jobs=self.n_jobs,
