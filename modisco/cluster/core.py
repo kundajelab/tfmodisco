@@ -171,7 +171,10 @@ def run_leiden(fileprefix, use_initclusters, n_vertices,
     out, err = p.communicate()
 
     if (len(err)>0):
-        raise RuntimeError(err)
+        raise RuntimeError("----\nERROR:\n"
+                           +err.decode()
+                           +"\n----\nSTDOUT:\n"
+                           +out.decode())
 
     parse_membership = False
     membership = []

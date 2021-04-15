@@ -15,7 +15,7 @@ def get_igraph(sources_idxs_file, targets_idxs_file, weights_file, n_vertices):
     g = ig.Graph(directed=None) 
     g.add_vertices(n_vertices) # this adds adjacency.shap[0] vertices
     g.add_edges(list(zip(sources, targets))) 
-    g.es['weight'] = weights       
+    g.es['weight'] = list(weights) 
     if g.vcount() != n_vertices: 
         print('WARNING: The constructed graph has only ' 
               +str(g.vcount())+' nodes. ' 
@@ -47,10 +47,10 @@ if __name__ == "__main__":
     partition_type = eval("leidenalg."+args.partition_type) 
     n_iterations = args.n_iterations
     initial_membership = (None if args.initial_membership_file is None
-                          else np.load(args.initial_membership_file))
+                          else np.load(args.initial_membership_file).tolist())
     seed = args.seed
 
-    weights = (np.array(the_graph.es['weight']).astype(np.float64))
+    weights = np.array(the_graph.es['weight']).astype(np.float64).tolist()
 
     if (args.refine==False):
         partition = leidenalg.find_partition(
