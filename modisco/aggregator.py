@@ -80,6 +80,47 @@ class TrimToBestWindowByIC(AbstractTrimToBestWindow):
         return per_pos_ic
 
 
+def expand_seqlets_to_fill_pattern(pattern, track_set,
+                                   left_flank_to_add, right_flank_to_add,
+                                   track_names=None, verbose=True):
+    new_seqlets_and_alnmts = []
+    skipped_seqlets = 0
+    for seqlet_and_alnmt in pattern.seqlets_and_alnmts:
+        seqlet = seqlet_and_alnmt.seqlet
+        alnmt = seqlet_and_alnmt.alnmt
+        left_expansion = alnmt+left_flank_to_add 
+        right_expansion = ((len(pattern) - 
+                           (alnmt+len(seqlet)))+right_flank_to_add)
+        if (seqlet.coor.is_revcomp == False):
+            start = seqlet.coor.start - left_expansion
+            end = seqlet.coor.end + right_expansion
+        else:
+            start = seqlet.coor.start - right_expansion
+            end = seqlet.coor.end + left_expansion
+        if (start >= 0 and
+            end <= track_set.get_example_idx_len(
+                    seqlet.coor.example_idx)):
+            seqlet = track_set.create_seqlet(
+                coor=core.SeqletCoordinates(
+                    example_idx=seqlet.coor.example_idx,
+                    start=start, end=end,
+                    is_revcomp=seqlet.coor.is_revcomp),
+                track_names=track_names) 
+            new_seqlets_and_alnmts.append(
+             core.SeqletAndAlignment(seqlet=seqlet, alnmt=0))
+        else:
+            skipped_seqlets += 1 
+    if verbose and (skipped_seqlets > 0):
+        print("Skipped "+str(skipped_seqlets)+" seqlets that went over the"
+              +" sequence edge during flank expansion") 
+        sys.stdout.flush()
+    if (len(new_seqlets_and_alnmts) > 0):
+        return core.AggregatedSeqlet(seqlets_and_alnmts_arr=
+                                      new_seqlets_and_alnmts)
+    else:
+        return None
+
+
 class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
 
     def __init__(self, track_set, flank_to_add=0,
@@ -92,40 +133,13 @@ class ExpandSeqletsToFillPattern(AbstractAggSeqletPostprocessor):
     def __call__(self, aggregated_seqlets):
         new_aggregated_seqlets = []
         for aggregated_seqlet in aggregated_seqlets:
-            new_seqlets_and_alnmts = []
-            skipped_seqlets = 0
-            for seqlet_and_alnmt in aggregated_seqlet.seqlets_and_alnmts:
-                seqlet = seqlet_and_alnmt.seqlet
-                alnmt = seqlet_and_alnmt.alnmt
-                left_expansion = alnmt+self.flank_to_add 
-                right_expansion = (len(aggregated_seqlet) -
-                                    (alnmt+len(seqlet)))+self.flank_to_add
-                if (seqlet.coor.is_revcomp == False):
-                    start = seqlet.coor.start - left_expansion
-                    end = seqlet.coor.end + right_expansion
-                else:
-                    start = seqlet.coor.start - right_expansion
-                    end = seqlet.coor.end + left_expansion
-                if (start >= 0 and
-                    end <=
-                     self.track_set.get_example_idx_len(
-                           seqlet.coor.example_idx)):
-                    seqlet = self.track_set.create_seqlet(
-                        coor=core.SeqletCoordinates(
-                            example_idx=seqlet.coor.example_idx,
-                            start=start, end=end,
-                            is_revcomp=seqlet.coor.is_revcomp),
-                        track_names=self.track_names) 
-                    new_seqlets_and_alnmts.append(
-                     core.SeqletAndAlignment(seqlet=seqlet, alnmt=0))
-                else:
-                    skipped_seqlets += 1 
-            if self.verbose and (skipped_seqlets > 0):
-                print("Skipped "+str(skipped_seqlets)+" seqlets") 
-                sys.stdout.flush()
-            if (len(new_seqlets_and_alnmts) > 0):
-                new_aggregated_seqlets.append(core.AggregatedSeqlet(
-                    seqlets_and_alnmts_arr=new_seqlets_and_alnmts))
+            new_agg_seqlet = expand_seqlets_to_fill_pattern(
+                pattern=aggregated_seqlet, track_set=self.track_set,
+                left_flank_to_add=self.flank_to_add,
+                right_flank_to_add=self.flank_to_add,
+                track_names=self.track_names, verbose=self.verbose)
+            if new_agg_seqlet is not None:
+                new_aggregated_seqlets.append(new_agg_seqlet)
         return new_aggregated_seqlets 
 
 
@@ -168,6 +182,35 @@ class PearsonCorrIsDissimilarFunc(IsDissimilarFunc):
             threshold=threshold,
             sim_func=pearson_corr,
             verbose=verbose)
+
+
+class DetectSpuriousMerging2(AbstractAggSeqletPostprocessor):
+
+    def __init__(self, subcluster_settings, min_in_subcluster,
+                       similar_patterns_collapser, verbose):
+        self.subcluster_settings = subcluster_settings
+        self.min_in_subcluster = min_in_subcluster
+        self.similar_patterns_collapser = similar_patterns_collapser
+        self.verbose = verbose
+
+    def __call__(self, aggregated_seqlets):
+        to_return = []
+        for i,pattern in enumerate(aggregated_seqlets):
+            if (self.verbose):
+                print("Inspecting pattern",i,"for spurious merging")
+            if (len(pattern.seqlets) > self.min_in_subcluster):
+                pattern.compute_subclusters_and_embedding(
+                    verbose=self.verbose,
+                    compute_embedding=False,
+                    **self.subcluster_settings)
+                subpatterns = pattern.subcluster_to_subpattern.values()
+                #pattern_collapser resturns both the merged patterns as well
+                # as the pattern merge hierarchy; we return the merged patterns
+                to_return.extend(
+                    self.similar_patterns_collapser(subpatterns)[0]) 
+            else:
+                to_return.append(pattern)
+        return to_return
 
 
 class DetectSpuriousMerging(AbstractAggSeqletPostprocessor):
@@ -278,8 +321,7 @@ class ReassignSeqletsFromSmallClusters(AbstractAggSeqletPostprocessor):
             if (len(seqlets_to_assign) > 0):
                 large_patterns, new_assignments =\
                     self.seqlet_assigner(patterns=large_patterns,
-                                         seqlets_to_assign=seqlets_to_assign,
-                                         merge_into_existing_patterns=False)
+                                         seqlets_to_assign=seqlets_to_assign)
             large_patterns = self.postprocessor(large_patterns)
             return large_patterns
         else:
@@ -309,8 +351,7 @@ class ReassignSeqletsTillConvergence(AbstractAggSeqletPostprocessor):
                   for pattern_idx, pattern in enumerate(patterns)]))
             patterns, new_assignments =\
                 self.seqlet_assigner(patterns=patterns,
-                                     seqlets_to_assign=all_seqlets,
-                                     merge_into_existing_patterns=False)
+                                     seqlets_to_assign=all_seqlets)
             patterns = self.postprocessor(patterns)
             changed_assignments = np.sum(
                 1-(np.array(initial_assignments)==np.array(new_assignments)))
@@ -331,6 +372,8 @@ class AssignSeqletsByBestMetric(object):
     def __init__(self, pattern_comparison_settings,
                        individual_aligner_metric,
                        matrix_affinity_metric,
+                       track_set,
+                       track_names=None,
                        min_similarity=0.0,
                        verbose=True):
         self.pattern_comparison_settings = pattern_comparison_settings
@@ -338,11 +381,12 @@ class AssignSeqletsByBestMetric(object):
                     pattern_comparison_settings=pattern_comparison_settings,
                     metric=individual_aligner_metric)
         self.matrix_affinity_metric = matrix_affinity_metric
+        self.track_set = track_set
+        self.track_names = track_names
         self.min_similarity = min_similarity
         self.verbose = verbose
 
-    def __call__(self, patterns, seqlets_to_assign,
-                       merge_into_existing_patterns):
+    def __call__(self, patterns, seqlets_to_assign):
 
         (pattern_fwd_data, pattern_rev_data) =\
             core.get_2d_data_from_patterns(
@@ -375,43 +419,24 @@ class AssignSeqletsByBestMetric(object):
         seqlet_assignments = np.argmax(cross_metrics, axis=0) 
         seqlet_assignment_scores = np.max(cross_metrics, axis=0)
 
-        seqlet_and_alnmnt_grps = [[] for x in patterns]
+        seqlet_grps = [[] for x in patterns]
         discarded_seqlets = 0
         for seqlet_idx, (assignment, score)\
             in enumerate(zip(seqlet_assignments, seqlet_assignment_scores)):
-            if (score >= self.min_similarity):
-                alnmt, revcomp_match, score = self.pattern_aligner(
-                    parent_pattern=patterns[assignment],
-                    child_pattern=seqlets_to_assign[seqlet_idx]) 
-                if (revcomp_match):
-                    seqlet = seqlets_to_assign[seqlet_idx].revcomp()
-                else:
-                    seqlet = seqlets_to_assign[seqlet_idx]
-                seqlet_and_alnmnt_grps[assignment].append(
-                    core.SeqletAndAlignment(
-                        seqlet=seqlets_to_assign[seqlet_idx],
-                        alnmt=alnmt))
-            else:
-                seqlet_assignments[seqlet_idx] = -1
-                discarded_seqlets += 1
+                seqlet_grps[assignment].append(
+                    seqlets_to_assign[seqlet_idx])
 
-        if (self.verbose):
-            if discarded_seqlets > 0:
-                print("Discarded "+str(discarded_seqlets)+" seqlets") 
-                sys.stdout.flush()
-
-        if (merge_into_existing_patterns):
-            new_patterns = patterns
-        else:
-            #Make a copy of each one
-            new_patterns = [
-                core.AggregatedSeqlet(pattern._seqlets_and_alnmts.copy())
-                for pattern in patterns]
-            
-        for pattern,x in zip(new_patterns, seqlet_and_alnmnt_grps):
-            pattern.merge_seqlets_and_alnmts(
-                seqlets_and_alnmts=x,
-                aligner=self.pattern_aligner) 
+        new_patterns = []
+        for pattern,x in zip(patterns, seqlet_grps):
+            new_patterns.append(
+                merge_in_seqlets_filledges(
+                    parent_pattern=pattern,
+                    seqlets_to_merge=x,
+                    aligner=self.pattern_aligner,
+                    track_set=self.track_set,
+                    track_names=self.track_names,
+                    verbose=self.verbose,
+                    min_similarity=self.min_similarity))
 
         return new_patterns, seqlet_assignments
 
@@ -492,32 +517,132 @@ class AbstractSeqletsAggregator(object):
         raise NotImplementedError()
 
 
+def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
+                               aligner, track_set,
+                               track_names=None, verbose=True,
+                               min_similarity=None):
+
+    parent_pattern = parent_pattern.copy()
+
+    skipped_seqlets = 0
+    alt_skipped_seqlets = 0
+    duplicate_seqlets = 0
+    dropped_seqlets = 0
+    for seqlet in seqlets_to_merge:
+        #get the alignment from the aligner 
+        (alnmt, revcomp_match, alnmt_score) =\
+            aligner(parent_pattern=parent_pattern,
+                    child_pattern=seqlet)
+        if (revcomp_match):
+            seqlet = seqlet.revcomp()
+        if (min_similarity is not None and (alnmt_score < min_similarity)):
+            dropped_seqlets +=  1
+            continue
+
+        preexpansion_seqletlen = len(seqlet)
+        #extend seqlet according to the alignment so that it fills the
+        # whole pattern
+        left_expansion = max(alnmt,0)
+        right_expansion = max((len(parent_pattern) - (alnmt+len(seqlet))), 0)
+        assert left_expansion >= 0
+        assert right_expansion >= 0
+        if (seqlet.coor.is_revcomp == False):
+            start = seqlet.coor.start - left_expansion
+            end = seqlet.coor.end + right_expansion
+        else:
+            start = seqlet.coor.start - right_expansion
+            end = seqlet.coor.end + left_expansion
+        if (start >= 0 and
+            end <= track_set.get_example_idx_len(
+                    seqlet.coor.example_idx)):
+            seqlet = track_set.create_seqlet(
+                coor=core.SeqletCoordinates(
+                    example_idx=seqlet.coor.example_idx,
+                    start=start, end=end,
+                    is_revcomp=seqlet.coor.is_revcomp),
+                track_names=track_names) 
+        else:
+            skipped_seqlets += 1
+            continue #don't try adding this seqlet
+
+        #also expand the pattern (if needed) so that the seqlet
+        # doesn't go over the edge
+        parent_left_expansion = max(0, -alnmt)
+        parent_right_expansion = max(0, (alnmt+preexpansion_seqletlen)
+                                         - len(parent_pattern))
+        if ((parent_left_expansion > 0) or (parent_right_expansion > 0)):
+            candidate_parent_pattern = expand_seqlets_to_fill_pattern(
+                pattern=parent_pattern,
+                track_set=track_set, left_flank_to_add=parent_left_expansion,
+                right_flank_to_add=parent_right_expansion,
+                track_names=track_names, verbose=verbose)
+            if (candidate_parent_pattern is not None):
+                parent_pattern = candidate_parent_pattern
+            else: #the flank expansion required to merge in this seqlet got
+                # rid of all the other seqlets in the pattern, so we won't use
+                # this seqlet
+                alt_skipped_seqlets += 1
+                continue
+
+        assert len(seqlet)==len(parent_pattern)
+        #add the seqlet in at alignment 0, assuming it's not already
+        # part of the pattern
+        if (seqlet not in parent_pattern.seqlets_and_alnmts):
+            parent_pattern._add_pattern_with_valid_alnmt(
+                            pattern=seqlet, alnmt=0)
+        else:
+            duplicate_seqlets += 1
+
+    if (verbose):
+        if (skipped_seqlets > 0):
+            print("Skipped",skipped_seqlets,"seqlets that went over sequence"
+                  +" edge during flank expansion")
+        if (alt_skipped_seqlets > 0):
+            print("Skipped",alt_skipped_seqlets,"seqlets that were requiring"
+                  +" other seqlets to go over the edge during flank expansion")
+        if (duplicate_seqlets > 0):
+            print("Skipped",duplicate_seqlets,"due to duplicates")
+        if (dropped_seqlets > 0):
+            print("Dropped",dropped_seqlets,"not passing min_similariy")
+
+    return parent_pattern
+
+
 class GreedySeqletAggregator(AbstractSeqletsAggregator):
 
     def __init__(self, pattern_aligner,
                        seqlet_sort_metric,
+                       track_set,
+                       track_names=None,
                        postprocessor=None):
         self.pattern_aligner = pattern_aligner
         self.seqlet_sort_metric = seqlet_sort_metric
+        self.track_set = track_set
+        self.track_names = track_names
         self.postprocessor = postprocessor
 
     def __call__(self, seqlets):
         sorted_seqlets = sorted(seqlets,
                                 key=self.seqlet_sort_metric) 
-        aggregated_seqlet = core.AggregatedSeqlet.from_seqlet(
+        pattern = core.AggregatedSeqlet.from_seqlet(
                                                    sorted_seqlets[0])
         if (len(sorted_seqlets) > 1):
-            for seqlet in sorted_seqlets[1:]:
-                aggregated_seqlet.merge_aggregated_seqlet(
-                    agg_seqlet=core.AggregatedSeqlet.from_seqlet(seqlet),
-                    aligner=self.pattern_aligner) 
-        to_return = [aggregated_seqlet]
+
+            pattern = merge_in_seqlets_filledges(
+                parent_pattern=pattern,
+                seqlets_to_merge=sorted_seqlets[1:],
+                aligner=self.pattern_aligner,
+                track_set=self.track_set,
+                track_names=self.track_names,
+                verbose=True)
+
+        to_return = [pattern]
         if (self.postprocessor is not None):
             to_return = self.postprocessor(to_return)
 
-        #sort by number of seqlets in each 
-        return sorted(to_return,
-                      key=lambda x: -x.num_seqlets)
+        #sort by number of seqlets in each...for the default postprocessor
+        # there should just be one motif here though 
+        return sorted(to_return, key=lambda x: -x.num_seqlets)
 
 
 class HierarchicalSeqletAggregator(AbstractSeqletsAggregator):
@@ -743,9 +868,11 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                        postprocessor,
                        verbose=True,
                        max_seqlets_subsample=1000,
-                       n_cores=1):
+                       n_cores=1,
+                       track_names=None):
         self.pattern_comparison_settings = pattern_comparison_settings
         self.track_set = track_set
+        self.track_names = track_names
         self.pattern_aligner = pattern_aligner
         self.collapse_condition = collapse_condition
         self.dealbreaker_condition = dealbreaker_condition
@@ -755,22 +882,14 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
         self.max_seqlets_subsample = max_seqlets_subsample
 
     def subsample_pattern(self, pattern):
-        seqlets_and_alnmts_list = list(pattern.seqlets_and_alnmts)
-        subsample = [seqlets_and_alnmts_list[i]
-                     for i in
-                     np.random.RandomState(1234).choice(
-                         a=np.arange(len(seqlets_and_alnmts_list)),
-                         replace=False,
-                         size=self.max_seqlets_subsample)]
-        return core.AggregatedSeqlet(seqlets_and_alnmts_arr=subsample) 
+        return util.subsample_pattern(
+                        pattern,
+                        num_to_subsample=self.max_seqlets_subsample)
 
     def __call__(self, patterns):
 
         patterns = [x.copy() for x in patterns]
 
-        #Let's subsample 'patterns' to prevent runtime from being too
-        # large in calculating pairwise sims. Max 1000, and also add in
-        # parallelization.
         merge_hierarchy_levels = []        
         current_level_nodes = [
             PatternMergeHierarchyNode(pattern=x) for x in patterns]
@@ -799,6 +918,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
             if (self.verbose):
                 print("Numbers for each pattern pre-subsample:",
                       str([len(x.seqlets) for x in patterns]))
+            #Let's subsample 'patterns' to prevent runtime from being too
+            # large in calculating pairwise sims. 
             subsample_patterns = [
                 (x if x.num_seqlets <= self.max_seqlets_subsample
                  else self.subsample_pattern(x)) for x in patterns]
@@ -809,6 +930,9 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
             for i,(pattern1, subsample_pattern1) in enumerate(
                                             zip(patterns, subsample_patterns)):
+                start = time.time()
+                if (self.verbose):
+                    print("Computing sims for pattern",i)
                 #from modisco.visualization import viz_sequence
                 #viz_sequence.plot_weights(pattern1["task0_contrib_scores"].fwd)
                 for j,(pattern2, subsample_pattern2) in enumerate(
@@ -833,7 +957,7 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                     #get realigned pattern2
                     pattern2_coords = [x.coor
                         for x in subsample_pattern2.seqlets]
-                    if (rc):
+                    if (rc): #flip strand if needed to align
                         pattern2_coords  = [x.revcomp()
                          for x in pattern2_coords]
                     #now apply the alignment
@@ -846,14 +970,14 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         track_names=
                          self.pattern_comparison_settings.track_names) 
 
-                    pattern1_fwdseqdata, pattern1_revseqdata =\
+                    pattern1_fwdseqdata, _ =\
                       core.get_2d_data_from_patterns(
                         patterns=subsample_pattern1.seqlets,
                         track_names=
                          self.pattern_comparison_settings.track_names,
                         track_transformer=
                          self.pattern_comparison_settings.track_transformer)
-                    pattern2_fwdseqdata, pattern2_revseqdata =\
+                    pattern2_fwdseqdata, _ =\
                       core.get_2d_data_from_patterns(
                         patterns=pattern2_shifted_seqlets,
                         track_names=
@@ -866,15 +990,6 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         (len(pattern1_fwdseqdata), -1))
                     flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
                         (len(pattern2_fwdseqdata), -1))
-                    if (pattern1_revseqdata is not None):
-                        flat_pattern1_revseqdata = pattern1_revseqdata.reshape(
-                            (len(pattern1_revseqdata), -1))
-                        flat_pattern2_revseqdata = pattern2_revseqdata.reshape(
-                            (len(pattern2_fwdseqdata), -1))
-                    else:
-                        flat_pattern1_revseqdata = None 
-                        flat_pattern2_revseqdata = None 
-                        assert rc==False
 
                     #Do a check for all-zero scores, print warning
                     #do a check about the per-example sum
@@ -896,17 +1011,15 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                                          pattern2_coords]))
 
                     between_pattern_sims =\
-                     compute_continjacc_arr1_vs_arr2fwdandrev(
+                     compute_continjacc_arr1_vs_arr2(
                         arr1=flat_pattern1_fwdseqdata,
-                        arr2fwd=flat_pattern2_fwdseqdata,
-                        arr2rev=flat_pattern2_revseqdata,
+                        arr2=flat_pattern2_fwdseqdata,
                         n_cores=self.n_cores).ravel()
 
                     within_pattern1_sims =\
-                     compute_continjacc_arr1_vs_arr2fwdandrev(
+                     compute_continjacc_arr1_vs_arr2(
                         arr1=flat_pattern1_fwdseqdata,
-                        arr2fwd=flat_pattern1_fwdseqdata,
-                        arr2rev=flat_pattern1_revseqdata,
+                        arr2=flat_pattern1_fwdseqdata,
                         n_cores=self.n_cores).ravel()
 
                     auroc = roc_auc_score(
@@ -931,9 +1044,14 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
 
                     #The symmetrization over i,j and j,i is done later
                     pairwise_aurocs[i,j] = auroc
+                if (self.verbose):
+                    print("Computed sims for pattern",i,
+                          "in",time.time()-start,"s")
 
-
-            patterns_to_patterns_aligner_sim = pairwise_sims
+            #pairwise_sims is not symmetric; differ based on which pattern is
+            # padded with zeros.
+            patterns_to_patterns_aligner_sim =\
+                0.5*(pairwise_sims + pairwise_sims.T)
             cross_contamination = 2*(1-np.maximum(pairwise_aurocs,0.5))
             
             if (self.verbose):
@@ -956,7 +1074,8 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
             #iterate over pairs
             for (i,j,aligner_sim) in sorted_pairs:
                 #symmetrize asymmetric crosscontam
-                cross_contam = 0.5*(cross_contamination[i,j]+
+                # take min rather than avg to avoid aggressive merging
+                cross_contam = min(cross_contamination[i,j],
                                     cross_contamination[j,i])
                 if (self.collapse_condition(prob=cross_contam,
                                             aligner_sim=aligner_sim)):
@@ -1019,10 +1138,13 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                         parent_pattern, child_pattern = pattern2, pattern1
                     else:
                         parent_pattern, child_pattern = pattern1, pattern2
-                    new_pattern = parent_pattern.copy()
-                    new_pattern.merge_aggregated_seqlet(
-                        agg_seqlet=child_pattern,
-                        aligner=self.pattern_aligner) 
+                    new_pattern = merge_in_seqlets_filledges(
+                        parent_pattern=parent_pattern,
+                        seqlets_to_merge=child_pattern.seqlets,
+                        aligner=self.pattern_aligner,
+                        track_set=self.track_set,
+                        track_names=self.track_names,
+                        verbose=self.verbose)
                     new_pattern =\
                         self.postprocessor([new_pattern])
                     assert len(new_pattern)==1
@@ -1072,8 +1194,26 @@ class DynamicDistanceSimilarPatternsCollapser2(object):
                      
 
                 #update the hierarchy
-                next_level_nodes = [PatternMergeHierarchyNode(x)
-                                    for x in patterns]
+                #the current 'top level' will consist of all the current
+                # nodes that didn't get a new parent, plus any new parents
+                # created                
+                next_level_nodes = []
+                for frontier_pattern in patterns:
+                    #either this pattern is in old_pattern_nodes, in which
+                    # case take the old_pattern_node entry, or it's a completely
+                    # new pattern in which case make a node for it
+                    old_pattern_node_found = False
+                    for old_pattern_node in current_level_nodes:
+                        if (old_pattern_node.pattern==frontier_pattern):
+                            #sanity check..there should be only one node
+                            # per pattern
+                            assert old_pattern_node_found==False
+                            next_level_nodes.append(old_pattern_node)
+                            old_pattern_node_found = True 
+                    if (old_pattern_node_found==False):
+                       next_level_nodes.append(
+                        PatternMergeHierarchyNode(frontier_pattern)) 
+
                 for next_level_node in next_level_nodes:
                     #iterate over all the old patterns and their new parent
                     # in order to set up the child nodes correctly

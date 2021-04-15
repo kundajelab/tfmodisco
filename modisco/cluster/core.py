@@ -149,7 +149,7 @@ class LeidenCluster(AbstractAffinityMatClusterer):
 
 
 def run_leiden(fileprefix, use_initclusters, n_vertices,
-               partitiontype, n_leiden_iterations, seed):
+               partitiontype, n_leiden_iterations, seed, refine):
 
     lpath = os.path.join(os.path.dirname(__file__), "run_leiden")
 
@@ -164,9 +164,17 @@ def run_leiden(fileprefix, use_initclusters, n_vertices,
     if (use_initclusters):
         args = args + ["--initial_membership_file",
                        fileprefix+"_initclusters.npy"]
+    if (refine):
+        args.append("--refine")
 
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = p.communicate()
+
+    if (len(err)>0):
+        raise RuntimeError("----\nERROR:\n"
+                           +err.decode()
+                           +"\n----\nSTDOUT:\n"
+                           +out.decode())
 
     parse_membership = False
     membership = []
@@ -186,12 +194,13 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
     def __init__(self, n_jobs,
                  numseedstotry=10, n_leiden_iterations=-1,
                  partitiontype=leidenalg.ModularityVertexPartition,
-                 affmat_transformer=None, verbose=True): 
+                 affmat_transformer=None, refine=False, verbose=True): 
         self.numseedstotry = numseedstotry 
         self.n_leiden_iterations = n_leiden_iterations
         self.partitiontype = partitiontype
         self.n_jobs = n_jobs
         self.affmat_transformer = affmat_transformer
+        self.refine = refine
         self.verbose = verbose
 
     def __call__(self, orig_affinity_mat, initclusters):
@@ -243,8 +252,11 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
 
         if (initclusters is not None):
             np.save(uid+"_initclusters.npy", initclusters)
+            print("initclusters length:",len(initclusters))
 
         for use_initclusters in initclusters_to_try_list:
+
+            print("Affmat shape:",affinity_mat.shape[0])
 
             parallel_leiden_results = (
                 Parallel(n_jobs=self.n_jobs,
@@ -252,7 +264,8 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
                  delayed(run_leiden)(uid, use_initclusters,
                                      affinity_mat.shape[0],
                                      self.partitiontype,
-                                     self.n_leiden_iterations, seed*100)
+                                     self.n_leiden_iterations,
+                                     seed*100, self.refine)
                  for seed in toiterover)) 
 
             for quality,membership in parallel_leiden_results:

@@ -124,7 +124,7 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                                 -self.num_mismatches))
         return np.array(filters), np.array(biases)
 
-    def __call__(self, seqlets):
+    def __call__(self, seqlets, only_compute_fwd=False):
         print("Computing embeddings")
         sys.stdout.flush()
         assert self.require_onehot_match #legacy, now just assume it's True
@@ -133,6 +133,8 @@ class GappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                 patterns=seqlets,
                 track_names=[self.onehot_track_name],
                 track_transformer=None)
+        if (only_compute_fwd):
+            onehot_track_rev = None
             
 
         data_to_embed_fwd = np.zeros(

@@ -501,7 +501,6 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
         self.verbose = verbose
         self.plot_save_dir = plot_save_dir
 
-
     @classmethod
     def from_hdf5(cls, grp):
         sliding = np.array(grp["sliding"]).astype("int")

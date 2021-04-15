@@ -1,5 +1,5 @@
 from __future__ import division, print_function, absolute_import
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from collections import namedtuple
 from collections import defaultdict
 import numpy as np
@@ -732,7 +732,8 @@ class AggregatedSeqlet(Pattern):
                 subpattern.save_hdf5(subpattern_grp)
 
     def compute_subclusters_and_embedding(self, pattern_comparison_settings,
-                                          perplexity, n_jobs, verbose=True):
+                                          perplexity, n_jobs, verbose=True,
+                                          compute_embedding=True):
 
         from . import affinitymat
         from . import cluster
@@ -772,11 +773,12 @@ class AggregatedSeqlet(Pattern):
         distmat_sp = distmat_sp.tocsr()
         distmat_sp.sort_indices()
 
-        twod_embedding = sklearn.manifold.TSNE(
-            perplexity=perplexity,
-            metric='precomputed',
-            verbose=3, random_state=1234).fit_transform(distmat_sp) 
-        self.twod_embedding = twod_embedding
+        if (compute_embedding):
+            twod_embedding = sklearn.manifold.TSNE(
+                perplexity=perplexity,
+                metric='precomputed',
+                verbose=3, random_state=1234).fit_transform(distmat_sp) 
+            self.twod_embedding = twod_embedding
 
         #do density adaptation
         density_adapted_affmat_transformer =\
@@ -799,6 +801,8 @@ class AggregatedSeqlet(Pattern):
                                     initclusters=None)
 
         self.subclusters = cluster_results.cluster_indices
+        if (verbose):
+            print("Got subclusters:",Counter(self.subclusters)) 
         self.update_exemplarmotifs_from_subclusters()
 
     def update_exemplarmotifs_from_subclusters(self):
@@ -1060,22 +1064,31 @@ class AggregatedSeqlet(Pattern):
                 self.add_pattern(pattern=seqlet_and_alnmt.seqlet,
                                  aligner=aligner) 
         
-    def add_pattern(self, pattern, aligner):
-        (alnmt, revcomp_match, alnmt_score) =\
-            aligner(parent_pattern=self, child_pattern=pattern)
-        if (revcomp_match):
-            pattern = pattern.revcomp()
-        if alnmt < 0:
-           self._pad_before(num_zeros=abs(alnmt)) 
-           alnmt=0
-        end_coor_of_pattern = (alnmt + len(pattern))
-        if (end_coor_of_pattern > self.length):
-            self._pad_after(num_zeros=(end_coor_of_pattern - self.length))
-        self._add_pattern_with_valid_alnmt(pattern=pattern, alnmt=alnmt)
+    #def add_pattern(self, pattern, aligner):
+    #    assert False, "Don't call this anymore"
+    #    (alnmt, revcomp_match, alnmt_score) =\
+    #        aligner(parent_pattern=self, child_pattern=pattern)
+    #    if (revcomp_match):
+    #        pattern = pattern.revcomp()
+    #    self._add_pattern_with_alnmt(pattern=pattern, alnmt=alnmt)
+
+    #def _add_pattern_with_alnmt(self, pattern, alnmt):
+    #    assert False, "Don't call this anymore"
+    #    if alnmt < 0:
+    #       self._pad_before(num_zeros=abs(alnmt)) 
+    #       alnmt = 0
+    #    end_coor_of_pattern = (alnmt + len(pattern))
+    #    if (end_coor_of_pattern > self.length):
+    #        self._pad_after(num_zeros=(end_coor_of_pattern - self.length))
+    #    self._add_pattern_with_valid_alnmt(pattern=pattern, alnmt=alnmt)
 
     def _add_pattern_with_valid_alnmt(self, pattern, alnmt):
-        assert alnmt >= 0
-        assert alnmt + len(pattern) <= self.length
+        #assert alnmt >= 0
+        #assert alnmt + len(pattern) <= self.length
+        #Moving to an approach where only seqlets that already fill the
+        # pattern should be added...
+        assert alnmt == 0
+        assert alnmt + len(pattern) == self.length
 
         slice_obj = slice(alnmt, alnmt+len(pattern))
         rev_slice_obj = slice(self.length-(alnmt+len(pattern)),
