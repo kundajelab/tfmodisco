@@ -552,7 +552,16 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 pattern_filterer=pattern_filterer,
                 final_postprocessor=final_postprocessor,
                 verbose=self.verbose,
-                n_cores=self.n_cores)
+                n_cores=self.n_cores,
+                other_config={
+                 'onehot_track_name': onehot_track_name,
+                 'contrib_scores_track_names': contrib_scores_track_names,
+                 'hypothetical_contribs_track_names':
+                    hypothetical_contribs_track_names,
+                 'track_signs': track_signs, 
+                 'other_comparison_track_names':
+                   other_comparison_track_names=[]},
+                )
 
     def save_hdf5(self, grp):
         grp.attrs['jsonable_config'] =\
@@ -568,8 +577,11 @@ class SeqletsToPatternsResults(object):
                  pattern_merge_hierarchy,
                  cluster_results,
                  total_time_taken,
-                 success=True, **kwargs):
+                 other_config={},
+                 success=True,
+                 **kwargs):
         self.each_round_initcluster_motifs = each_round_initcluster_motifs
+        self.other_config = other_config
         self.success = success
         self.patterns = patterns
         self.remaining_patterns = remaining_patterns
@@ -646,6 +658,8 @@ class SeqletsToPatternsResults(object):
 
     def save_hdf5(self, grp):
         grp.attrs["success"] = self.success
+        grp.attrs["other_config"] =\
+            json.dumps(self.other_config, indent=4, separators=(',', ': ')) 
         if (self.success):
             grp.attrs["total_time_taken"] = self.total_time_taken
             if (self.each_round_initcluster_motifs is not None):
