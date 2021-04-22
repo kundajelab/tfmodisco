@@ -957,7 +957,7 @@ class ModularityScorer(object):
 
         assert hits_to_return_per_input >= 1
         #get the top hits_to_return_per_input matches
-        sorted_class_matches = np.argsort(modularity_deltas, axis=-1)[:,
+        sorted_class_matches = np.argsort(-modularity_deltas, axis=-1)[:,
                                               0:hits_to_return_per_input]
         sorted_class_match_scores = modularity_deltas[
             np.arange(len(sorted_class_matches))[:,None],

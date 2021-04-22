@@ -14,8 +14,8 @@ def get_igraph(sources_idxs_file, targets_idxs_file, weights_file, n_vertices):
     weights = np.load(weights_file)
     g = ig.Graph(directed=None) 
     g.add_vertices(n_vertices) # this adds adjacency.shap[0] vertices
-    g.add_edges(list(zip(sources, targets))) 
-    g.es['weight'] = list(weights) 
+    g.add_edges(list(zip(sources.tolist(), targets.tolist()))) 
+    g.es['weight'] = weights.tolist()
     if g.vcount() != n_vertices: 
         print('WARNING: The constructed graph has only ' 
               +str(g.vcount())+' nodes. ' 
@@ -50,7 +50,8 @@ if __name__ == "__main__":
                           else np.load(args.initial_membership_file).tolist())
     seed = args.seed
 
-    weights = np.array(the_graph.es['weight']).astype(np.float64).tolist()
+    #weights = np.array(the_graph.es['weight']).astype(np.float64).tolist()
+    weights = (np.array(the_graph.es['weight']).astype(np.float64)).tolist()
 
     if (args.refine==False):
         partition = leidenalg.find_partition(
@@ -78,21 +79,29 @@ if __name__ == "__main__":
         #Github issue discussing things is here: https://github.com/vtraag/leidenalg/issues/61
         #move_nodes is what is used in the original louvain
         # (as per https://leidenalg.readthedocs.io/en/stable/advanced.html#optimiser)
-        #with move nodes
-        optimiser = leidenalg.Optimiser() 
-        optimiser.set_rng_seed(seed)
-        optimiser.move_nodes_constrained(refined_partition_movenodes,
-                                         constraining_partition)
+        #merge nodes is used for the refinement step of Leiden
+
+        #Due to segfault bug, I'm not doing move nodes:
+        # https://github.com/vtraag/leidenalg/issues/68
+
+        ##with move nodes
+        #optimiser = leidenalg.Optimiser() 
+        #optimiser.set_rng_seed(seed)
+        #optimiser.move_nodes_constrained(refined_partition_movenodes,
+        #                                 constraining_partition)
+
         #with merge nodes
         optimiser = leidenalg.Optimiser() 
         optimiser.set_rng_seed(seed)
         optimiser.merge_nodes_constrained(refined_partition_mergenodes,
                                           constraining_partition)
-        #take the partition with the best quality
-        partition = (refined_partition_movenodes if (
-                          refined_partition_movenodes.quality() >
-                          refined_partition_mergenodes.quality()) 
-                          else refined_partition_mergenodes)
+        partition = refined_partition_mergenodes
+
+        ##take the partition with the best quality
+        #partition = (refined_partition_movenodes if (
+        #                  refined_partition_movenodes.quality() >
+        #                  refined_partition_mergenodes.quality()) 
+        #                  else refined_partition_mergenodes)
 
     quality = partition.quality()
     print("########################")

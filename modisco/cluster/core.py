@@ -186,6 +186,14 @@ def run_leiden(fileprefix, use_initclusters, n_vertices,
         if line.startswith("Membership:"):
             parse_membership = True 
 
+    if (parse_membership==False):
+        raise RuntimeError("----\nERROR:\n"
+                           +err.decode()
+                           +"\n----\nSTDOUT:\n"
+                           +out.decode()
+                           +"\n---\nARGS:\n"
+                           +str(args))
+
     return quality, np.array(membership)
 
 
@@ -234,10 +242,13 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
 
         #if an initclustering is specified, we would want to try the Leiden
         # both with and without that initialization and take the one that
-        # gets the best modularity
-        initclusters_to_try_list = [False]
-        if (initclusters is not None):
-            initclusters_to_try_list.append(True)
+        # gets the best modularity. EXCEPT when refinement is also specified.
+        if (self.refine):
+            initclusters_to_try_list = [True]
+        else:
+            initclusters_to_try_list = [False]
+            if (initclusters is not None):
+                initclusters_to_try_list.append(True)
 
 
         #write out the contents of affinity_mat and initclusters if applicable

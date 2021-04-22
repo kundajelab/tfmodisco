@@ -2,6 +2,8 @@ from __future__ import division, print_function
 from collections import defaultdict, OrderedDict, namedtuple
 import numpy as np
 import time
+import itertools
+from .. import core
 from .. import affinitymat
 from .. import util
 from .. import cluster
@@ -17,10 +19,10 @@ class MakeHitScorer(object):
 
     def __init__(self, patterns, target_seqlet_size,
                        bg_freq,
-                       task_name_and_signs,
+                       task_names_and_signs,
                        n_cores,
-                       additional_trimandsubcluster_kwargs,
-                       additional_seqletscorer_kwargs):
+                       additional_trimandsubcluster_kwargs={},
+                       additional_seqletscorer_kwargs={}):
 
         self.target_seqlet_size = target_seqlet_size
 
@@ -41,7 +43,7 @@ class MakeHitScorer(object):
         print("Preparing seqlet scorer")
 
         self.seqlet_scorer = prepare_seqlet_scorer(
-            patterns=self.trim_and_subcluster_patterns,
+            patterns=self.trimmed_subclustered_patterns,
             onehot_track_name=onehot_track_name,
             task_names_and_signs=task_names_and_signs,
             n_cores=n_cores, **additional_seqletscorer_kwargs)
@@ -58,20 +60,21 @@ class MakeHitScorer(object):
                 core_sliding_window_size, target_fdr,
                 min_passing_windows_frac,
                 max_passing_windows_frac,
-                contrib_scores,
-                null_track=coordproducers.LaplaceNullDist(num_to_samp=10000)):
+                null_track=coordproducers.LaplaceNullDist(num_to_samp=10000),
+                **additional_coordproducer_kwargs):
 
-        assert (target_seqlet_size-core_sliding_window_size)%2==0,\
+        assert (self.target_seqlet_size-core_sliding_window_size)%2==0,\
                 ("Please provide a core_sliding_window_size that is an"
                  +" even number smaller than target_seqlet_size")
 
         self.coordproducer = coordproducers.VariableWindowAroundChunks(
             sliding=[core_sliding_window_size],
-            flank=int((target_seqlet_size-core_sliding_window)/2.0),
-            suppress=core_sliding_window,
+            flank=int((self.target_seqlet_size-core_sliding_window_size)/2.0),
+            suppress=core_sliding_window_size,
             target_fdr=target_fdr,
             min_passing_windows_frac=min_passing_windows_frac,
-            max_passing_windows_frac=max_passing_windows_frac 
+            max_passing_windows_frac=max_passing_windows_frac,
+            **additional_coordproducer_kwargs
         ) 
 
         coordproducer_results = self.coordproducer(
@@ -84,6 +87,8 @@ class MakeHitScorer(object):
         return self 
 
     def __call__(self, contrib_scores, hypothetical_contribs, one_hot,
+                       hits_to_return_per_seqlet=1,
+                       min_mod_precision=0,
                        revcomp=True, coordproducer_settings=None):
         if (coordproducer_settings is None):
             if (self.tnt_results is None):
@@ -96,7 +101,8 @@ class MakeHitScorer(object):
         score_track = self.get_coordproducer_score_track(
                                                 contrib_scores=contrib_scores)
         coords = self.coordproducer(
-                    score_track=score_track, tnt_results=self.tnt_results)
+                    score_track=score_track, tnt_results=self.tnt_results,
+                    null_track=None).coords
         track_set = tfmodisco_workflow.workflow.prep_track_set(
                         task_names=self.task_names,
                         contrib_scores=contrib_scores,
@@ -107,18 +113,23 @@ class MakeHitScorer(object):
         seqlets = track_set.create_seqlets(coords)
 
         (all_seqlet_hits, patternidx_to_matches, exampleidx_to_matches) =\
-            self.seqlet_scorer(seqlets=seqlets) 
+            self.seqlet_scorer(seqlets=seqlets,
+                hits_to_return_per_seqlet=hits_to_return_per_seqlet,
+                min_mod_precision=min_mod_precision) 
 
         exampleidx_to_matcheswithimportance = defaultdict(list)
+        patternidx_to_matcheswithimportance = defaultdict(list)
+
         for exampleidx in exampleidx_to_matches:
-            for motifmatch in exampleidx_to_matches[exampleidx]:
-                importance = np.sum(score_track[exampleidx][
+            for motifmatch in sorted(exampleidx_to_matches[exampleidx],
+                                     key=lambda x: x.start):
+                total_importance = np.sum(score_track[exampleidx][
                               max(motifmatch.start,0):motifmatch.end])
                 #tedious but i want to keep them tuples
                 motifmatch_with_importance = MotifMatchWithImportance(
                     patternidx=motifmatch.patternidx,
-                    pattern_idx_rank=motifmatch.pattern_idx_rank,
-                    total_importance=motifmatch.total_importance,
+                    patternidx_rank=motifmatch.patternidx_rank,
+                    total_importance=total_importance,
                     exampleidx=motifmatch.exampleidx,
                     start=motifmatch.start, end=motifmatch.end,
                     is_revcomp=motifmatch.is_revcomp,
@@ -128,10 +139,14 @@ class MakeHitScorer(object):
                     mod_percentile=motifmatch.mod_percentile,
                     fann_perclasssum_perc=motifmatch.fann_perclasssum_perc,
                     fann_perclassavg_perc=motifmatch.fann_perclassavg_perc)
+
                 exampleidx_to_matcheswithimportance[exampleidx].append(
                     motifmatch_with_importance)
+                patternidx_to_matcheswithimportance[
+                    motifmatch.patternidx].append(motifmatch_with_importance)
 
-        return exampleidx_to_matcheswithimportance
+        return (exampleidx_to_matcheswithimportance,
+                patternidx_to_matcheswithimportance)
 
 
 def trim_and_subcluster_patterns(patterns, window_size, onehot_track_name,
@@ -230,11 +245,11 @@ def prepare_seqlet_scorer(patterns,
             affinitymat.transformers.AffToDistViaInvLogistic(),
         perplexity=crosspattern_perplexity,
         n_cores=n_cores,
-        pattern_aligner=modisco.core.CrossContinJaccardPatternAligner(              
+        pattern_aligner=core.CrossContinJaccardPatternAligner(              
             pattern_comparison_settings=
-                modisco.affinitymat.core.PatternComparisonSettings(
+                affinitymat.core.PatternComparisonSettings(
                    track_names=track_names, 
-                   track_transformer=modisco.affinitymat.L1Normalizer(),
+                   track_transformer=affinitymat.L1Normalizer(),
                    min_overlap=float(min_overlap_size)/target_seqlet_size)),
         pattern_to_superpattern_mapping=subpattern_to_superpattern_mapping,
         superpatterns=patterns,
@@ -263,9 +278,9 @@ class CoreDensityAdaptedSeqletScorer(object):
         if (pattern_to_superpattern_mapping is None):
             pattern_to_superpattern_mapping = dict([
                                           (i,i) for i in range(len(patterns))])
-            self.class_patterns = superpatterns
-        else:
             self.class_patterns = patterns
+        else:
+            self.class_patterns = superpatterns
         self.pattern_to_superpattern_mapping = pattern_to_superpattern_mapping
         self.coarsegrained_seqlet_embedder = coarsegrained_seqlet_embedder
         self.coarsegrained_topn = coarsegrained_topn
@@ -279,7 +294,8 @@ class CoreDensityAdaptedSeqletScorer(object):
         self.verbose = verbose
         self.build()
 
-    def get_classwise_fine_affmat_nn_sumavg(self, fine_affmat_nn):
+    def get_classwise_fine_affmat_nn_sumavg(self,
+            fine_affmat_nn, seqlet_neighbors):
         num_classes = max(self.motifmemberships)+1
         #(not used in the density-adapted scoring) for each class, compute
         # the total fine-grained similarity for each class in the topk
@@ -315,7 +331,8 @@ class CoreDensityAdaptedSeqletScorer(object):
             for i in range(len(self.patterns))
             for j in self.patterns[i].seqlets])
         self.motifmemberships = motifmemberships
-        assert (max(self.motifmemberships)+1) == len(self.class_patterns)
+        assert (max(self.motifmemberships)+1) == len(self.class_patterns),\
+            (max(self.motifmemberships), len(self.class_patterns))
 
         if (self.verbose):
             print("Computing coarse-grained embeddings")
@@ -351,7 +368,8 @@ class CoreDensityAdaptedSeqletScorer(object):
         # similarity WITHOUT the density-adaptation step
         (fann_perclassum, fann_perclassavg) = (
             self.get_classwise_fine_affmat_nn_sumavg(
-                fine_affmat_nn=fine_affmat_nn))
+                fine_affmat_nn=fine_affmat_nn,
+                seqlet_neighbors=seqlet_neighbors))
         self.fann_perclasssum_precscorer = util.ClasswisePrecisionScorer(
             true_classes=motifmemberships,
             class_membership_scores=fann_perclassum) 
@@ -469,7 +487,8 @@ class CoreDensityAdaptedSeqletScorer(object):
             new_rows_densadapted_affmat_nn.append(densadapted_row)
         return new_rows_densadapted_affmat_nn
 
-    def __call__(self, seqlets, hits_to_return_per_seqlet=1):
+    def __call__(self, seqlets, hits_to_return_per_seqlet=1,
+                                min_mod_precision=0):
         
         embedding_fwd, _ =\
             self.coarsegrained_seqlet_embedder(seqlets=seqlets,
@@ -493,7 +512,8 @@ class CoreDensityAdaptedSeqletScorer(object):
 
         (fann_perclassum, fann_perclassavg) = (
             self.get_classwise_fine_affmat_nn_sumavg(
-                fine_affmat_nn=fine_affmat_nn))
+                fine_affmat_nn=fine_affmat_nn,
+                seqlet_neighbors=seqlet_neighbors))
 
         #Map aff to dist
         distmat_nn = self.aff_to_dist_mat(affinity_mat=fine_affmat_nn) 
@@ -522,7 +542,7 @@ class CoreDensityAdaptedSeqletScorer(object):
                 new_rows_betas=betas,
                 new_rows_normfactors=normfactors)
 
-        argmax_classes, mod_precisions, mod_percentiles, mod_deltas =\
+        argmax_classes, mod_percentiles, mod_precisions, mod_deltas =\
             self.modularity_scorer(
                 new_rows_affmat_nn=new_rows_densadapted_affmat_nn,
                 new_rows_nn=seqlet_neighbors,
@@ -546,60 +566,61 @@ class CoreDensityAdaptedSeqletScorer(object):
         for i in range(len(argmax_classes)):
             this_seqlet_hits = []
             for class_rank,class_idx in enumerate(argmax_classes[i]):
-                seqlet = seqlets[i]
-                mappedtomotif = self.class_patterns[class_idx]
-                (alignment, rc, sim) = self.pattern_aligner(
-                    parent_pattern=seqlet, child_pattern=mappedtomotif)
-                motif_hit = MotifMatch(
-                    pattern_idx=class_idx,
-                    pattern_idx_rank=class_rank,
-                    exampleidx=seqlet.coor.example_idx,
-                    start=seqlet.coor.start+alignment,
-                    end=seqlet.coor.end+alignment+len(mappedtomotif),
-                    is_revcomp=rc,
-                    aggregate_sim=sim,
-                    mod_delta=mod_deltas[i][class_idx],
-                    mod_precision=mod_precisions[i][class_idx],
-                    mod_percentile=mod_percentiles[i][class_idx],
-                    fann_perclasssum_perc=fann_perclasssum_perc[i][class_idx],
-                    fann_perclassavg_perc=fann_perclassavg_perc[i][class_idx])
-                this_seqlet_hits.append(motif_hit) 
+                if (mod_precisions[i][class_rank] > min_mod_precision):
+                    seqlet = seqlets[i]
+                    mappedtomotif = self.class_patterns[class_idx]
+                    (alignment, rc, sim) = self.pattern_aligner(
+                        parent_pattern=seqlet, child_pattern=mappedtomotif)
+                    motif_hit = MotifMatch(
+                     patternidx=class_idx,
+                     patternidx_rank=class_rank,
+                     exampleidx=seqlet.coor.example_idx,
+                     start=seqlet.coor.start+alignment,
+                     end=seqlet.coor.start+alignment+len(mappedtomotif),
+                     is_revcomp=rc,
+                     aggregate_sim=sim,
+                     mod_delta=mod_deltas[i][class_rank],
+                     mod_precision=mod_precisions[i][class_rank],
+                     mod_percentile=mod_percentiles[i][class_rank],
+                     fann_perclasssum_perc=fann_perclasssum_perc[i][class_rank],
+                     fann_perclassavg_perc=fann_perclassavg_perc[i][class_rank])
+                    this_seqlet_hits.append(motif_hit) 
             all_seqlet_hits.append(this_seqlet_hits)
 
         #organize by example/patternidx
         #Remove duplicate motif matches that can occur due to overlapping seqlets
         unique_motifmatches = dict()
         duplicates_found = 0
-        for motifmatch in motifmatches:
-            match_identifier = (motifmatch.patternidx, motifmatch.exampleidx,
-                                motifmatch.start, motifmatch.end,
-                                motifmatch.is_revcomp)
-            if match_identifier not in motifmatches_set:
-                unique_motifmatches[match_identifier] = motifmatch
-            else:
-                if (motifmatch.mod_percentile >
-                    unique_motifmatches[match_identifier].mod_percentile):
-                    unique_motifmatches[match_identifier] = motifmatch 
-                duplicates_found += 1
-            motifmatches_set.add(match_identifier)
+        for seqlet_hits in all_seqlet_hits:
+            for motifmatch in seqlet_hits:
+                match_identifier = (motifmatch.patternidx, motifmatch.exampleidx,
+                                    motifmatch.start, motifmatch.end,
+                                    motifmatch.is_revcomp)
+                if match_identifier not in unique_motifmatches:
+                    unique_motifmatches[match_identifier] = motifmatch
+                else:
+                    if (motifmatch.mod_percentile >
+                        unique_motifmatches[match_identifier].mod_percentile):
+                        unique_motifmatches[match_identifier] = motifmatch 
+                    duplicates_found += 1
         print("Removed",duplicates_found,"duplicates")
 
         patternidx_to_matches = defaultdict(list)
         exampleidx_to_matches = defaultdict(list)
-        for motif_match in unique_motifmatches.values():
+        for motifmatch in unique_motifmatches.values():
             patternidx_to_matches[motifmatch.patternidx].append(motifmatch)
             exampleidx_to_matches[motifmatch.exampleidx].append(motifmatch)
 
         return (all_seqlet_hits, patternidx_to_matches, exampleidx_to_matches)
 
 MotifMatch = namedtuple("MotifMatch", 
-    ["patternidx", "pattern_idx_rank", "exampleidx",
+    ["patternidx", "patternidx_rank", "exampleidx",
      "start", "end", "is_revcomp", "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
      "fann_perclasssum_perc", "fann_perclassavg_perc"])
 
 MotifMatchWithImportance = namedtuple("MotifMatchWithImportance", 
-    ["patternidx", "pattern_idx_rank", "total_importance", "exampleidx",
+    ["patternidx", "patternidx_rank", "total_importance", "exampleidx",
      "start", "end", "is_revcomp", "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
      "fann_perclasssum_perc", "fann_perclassavg_perc"])

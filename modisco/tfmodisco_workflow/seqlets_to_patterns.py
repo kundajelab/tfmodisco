@@ -13,6 +13,7 @@ import numpy as np
 import time
 import sys
 import gc
+import json
 from ..util import print_memory_use
 
 
@@ -559,8 +560,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                  'hypothetical_contribs_track_names':
                     hypothetical_contribs_track_names,
                  'track_signs': track_signs, 
-                 'other_comparison_track_names':
-                   other_comparison_track_names=[]},
+                 'other_comparison_track_names': other_comparison_track_names},
                 )
 
     def save_hdf5(self, grp):
@@ -705,6 +705,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                        final_postprocessor,
                        subcluster_settings,
                        n_cores,
+                       other_config={},
                        verbose=True):
 
         self.seqlets_sorter = seqlets_sorter
@@ -733,6 +734,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         self.verbose = verbose
         self.subcluster_settings = subcluster_settings
         self.n_cores = n_cores
+        self.other_config = other_config
 
     def get_cluster_to_aggregate_motif(self, seqlets, cluster_indices,
                                        sign_consistency_check,
