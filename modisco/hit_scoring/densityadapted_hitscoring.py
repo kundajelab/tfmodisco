@@ -627,7 +627,8 @@ MotifMatch = namedtuple("MotifMatch",
 
 MotifMatchWithImportance = namedtuple("MotifMatchWithImportance", 
     ["patternidx", "patternidx_rank", "total_importance", "exampleidx",
-     "start", "end", "is_revcomp", "aggregate_sim",
+     "start", "end", "seqlet_orig_start", "seqlet_orig_end",
+     "is_revcomp", "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
      "fann_perclasssum_perc", "fann_perclassavg_perc"])
 
