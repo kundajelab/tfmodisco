@@ -577,8 +577,12 @@ class CoreDensityAdaptedSeqletScorer(object):
                      patternidx=class_idx,
                      patternidx_rank=class_rank,
                      exampleidx=seqlet.coor.example_idx,
-                     start=seqlet.coor.start+alignment,
-                     end=seqlet.coor.start+alignment+len(mappedtomotif),
+                     start=seqlet.coor.start+alignment
+                           if seqlet.coor.is_revcomp==False
+                           else (seqlet.coor.end-alignment)-len(mappedtomotif),
+                     end=seqlet.coor.start+alignment+len(mappedtomotif)
+                         if seqlet.coor.is_revcomp==False
+                         else (seqlet.coor.end-alignment),
                      seqlet_orig_start=seqlet.coor.start,
                      seqlet_orig_end=seqlet.coor.end,
                      is_revcomp=seqlet.coor.is_revcomp if rc==False
