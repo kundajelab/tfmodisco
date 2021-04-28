@@ -132,6 +132,8 @@ class MakeHitScorer(object):
                     total_importance=total_importance,
                     exampleidx=motifmatch.exampleidx,
                     start=motifmatch.start, end=motifmatch.end,
+                    seqlet_orig_start=motifmatch.seqlet_orig_start,
+                    seqlet_orig_end=motifmatch.seqlet_orig_end,
                     is_revcomp=motifmatch.is_revcomp,
                     aggregate_sim=motifmatch.aggregate_sim,
                     mod_delta=motifmatch.mod_delta,
@@ -577,7 +579,10 @@ class CoreDensityAdaptedSeqletScorer(object):
                      exampleidx=seqlet.coor.example_idx,
                      start=seqlet.coor.start+alignment,
                      end=seqlet.coor.start+alignment+len(mappedtomotif),
-                     is_revcomp=rc,
+                     seqlet_orig_start=seqlet.coor.start,
+                     seqlet_orig_end=seqlet.coor.end,
+                     is_revcomp=seqlet.coor.is_revcomp if rc==False
+                                else (seqlet.coor.is_revcomp==False),
                      aggregate_sim=sim,
                      mod_delta=mod_deltas[i][class_rank],
                      mod_precision=mod_precisions[i][class_rank],
@@ -615,7 +620,8 @@ class CoreDensityAdaptedSeqletScorer(object):
 
 MotifMatch = namedtuple("MotifMatch", 
     ["patternidx", "patternidx_rank", "exampleidx",
-     "start", "end", "is_revcomp", "aggregate_sim",
+     "start", "end", "seqlet_orig_start", "seqlet_orig_end",
+     "is_revcomp", "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
      "fann_perclasssum_perc", "fann_perclassavg_perc"])
 
