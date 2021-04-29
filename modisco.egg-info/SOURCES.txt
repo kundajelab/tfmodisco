@@ -9,6 +9,7 @@ modisco/core.py
 modisco/gammamix.py
 modisco/metaclusterers.py
 modisco/nearest_neighbors.py
+modisco/pattern_filterer.py
 modisco/util.py
 modisco/value_provider.py
 modisco.egg-info/PKG-INFO
@@ -39,6 +40,7 @@ modisco/cluster/phenograph/louvain/osx-hierarchy
 modisco/clusterinit/__init__.py
 modisco/clusterinit/memeinit.py
 modisco/hit_scoring/__init__.py
+modisco/hit_scoring/densityadapted_hitscoring.py
 modisco/hit_scoring/exemplar_based_hitscoring.py
 modisco/hit_scoring/fast_hit_scoring.py
 modisco/seqlet_embedding/__init__.py

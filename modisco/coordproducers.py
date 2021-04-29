@@ -630,7 +630,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                 val_transformer=precision_transformer) 
 
         else:
-            precision_transformer = tnt_results.precision_transformer
+            precision_transformer = tnt_results.val_transformer
             (precisiontransformed_score_track,
              precisiontransformed_bestwindowsizeidxs) =\
                 precision_transformer.transform_score_track(

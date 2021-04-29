@@ -948,20 +948,35 @@ class ModularityScorer(object):
     # where nn is in the space of the original nodes used to define the clusters
     #new_rows_affmat_nn contains the sims to the nearest neighbors,
     # new_rows_nn contains the nearest neighbor indices 
-    def __call__(self, new_rows_affmat_nn, new_rows_nn):
+    def __call__(self, new_rows_affmat_nn, new_rows_nn,
+                       hits_to_return_per_input):
         modularity_deltas = self.get_supercluster_scores(
                                    scores=self.get_modularity_deltas(
                                        new_rows_affmat_nn=new_rows_affmat_nn,
                                        new_rows_nn=new_rows_nn))
-        argmax_classes = np.argmax(modularity_deltas, axis=-1)
-        argmax_class_scores = modularity_deltas[np.arange(len(argmax_classes)),argmax_classes] 
+
+        assert hits_to_return_per_input >= 1
+        #get the top hits_to_return_per_input matches
+        sorted_class_matches = np.argsort(-modularity_deltas, axis=-1)[:,
+                                              0:hits_to_return_per_input]
+        sorted_class_match_scores = modularity_deltas[
+            np.arange(len(sorted_class_matches))[:,None],
+            sorted_class_matches]
+
         precisions = self.precision_scorer(
-                                     score=argmax_class_scores,
-                                     top_class=argmax_classes)
+           score=sorted_class_match_scores.ravel(),
+           top_class=sorted_class_matches.ravel()).reshape(
+                sorted_class_matches.shape)
+
         percentiles = self.precision_scorer.score_percentile(
-                                     score=argmax_class_scores,
-                                     top_class=argmax_classes)
-        return (argmax_classes, precisions, percentiles,
-                modularity_deltas)
+           score=sorted_class_match_scores.ravel(),
+           top_class=sorted_class_matches.ravel()).reshape(
+                sorted_class_matches.shape)
+
+        #argmax_classes = np.argmax(modularity_deltas, axis=-1)
+        #argmax_class_scores = modularity_deltas[
+        #     np.arange(len(argmax_classes)),argmax_classes] 
+        return (sorted_class_matches, percentiles, precisions,
+                sorted_class_match_scores)
 
 
