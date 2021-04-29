@@ -134,6 +134,7 @@ class MakeHitScorer(object):
                     start=motifmatch.start, end=motifmatch.end,
                     seqlet_orig_start=motifmatch.seqlet_orig_start,
                     seqlet_orig_end=motifmatch.seqlet_orig_end,
+                    seqlet_orig_revcomp=motifmatch.seqlet_orig_revcomp,
                     is_revcomp=motifmatch.is_revcomp,
                     aggregate_sim=motifmatch.aggregate_sim,
                     mod_delta=motifmatch.mod_delta,
@@ -583,10 +584,11 @@ class CoreDensityAdaptedSeqletScorer(object):
                      end=seqlet.coor.start+alignment+len(mappedtomotif)
                          if seqlet.coor.is_revcomp==False
                          else (seqlet.coor.end-alignment),
-                     seqlet_orig_start=seqlet.coor.start,
-                     seqlet_orig_end=seqlet.coor.end,
                      is_revcomp=seqlet.coor.is_revcomp if rc==False
                                 else (seqlet.coor.is_revcomp==False),
+                     seqlet_orig_start=seqlet.coor.start,
+                     seqlet_orig_end=seqlet.coor.end,
+                     seqlet_orig_revcomp=seqlet.coor.is_revcomp,
                      aggregate_sim=sim,
                      mod_delta=mod_deltas[i][class_rank],
                      mod_precision=mod_precisions[i][class_rank],
@@ -624,15 +626,17 @@ class CoreDensityAdaptedSeqletScorer(object):
 
 MotifMatch = namedtuple("MotifMatch", 
     ["patternidx", "patternidx_rank", "exampleidx",
-     "start", "end", "seqlet_orig_start", "seqlet_orig_end",
-     "is_revcomp", "aggregate_sim",
+     "start", "end", "is_revcomp",
+     "seqlet_orig_start", "seqlet_orig_end", "seqlet_orig_revcomp",
+     "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
      "fann_perclasssum_perc", "fann_perclassavg_perc"])
 
 MotifMatchWithImportance = namedtuple("MotifMatchWithImportance", 
     ["patternidx", "patternidx_rank", "total_importance", "exampleidx",
-     "start", "end", "seqlet_orig_start", "seqlet_orig_end",
-     "is_revcomp", "aggregate_sim",
+     "start", "end", "is_revcomp",
+     "seqlet_orig_start", "seqlet_orig_end", "seqlet_orig_revcomp",
+     "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
      "fann_perclasssum_perc", "fann_perclassavg_perc"])
 
