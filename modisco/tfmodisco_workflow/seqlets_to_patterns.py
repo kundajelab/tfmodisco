@@ -126,7 +126,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                        min_ic_windowsize=6,
                        ppm_pseudocount=0.001,
 
-                       final_flank_to_add=10,
+                       final_flank_to_add=0,
 
                        verbose=True, seed=1234):
 
@@ -1150,9 +1150,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
         final_patterns, remaining_patterns = self.pattern_filterer(
                                                     merged_patterns)
         #reassigned_patterns = self.seqlet_reassigner(merged_patterns)
-        #final_patterns = self.final_postprocessor(reassigned_patterns)
-        #final_remaining_patterns =\
-        #    self.final_postprocessor(merged_patterns)
+        final_patterns = self.final_postprocessor(final_patterns)
+        remaining_patterns =\
+            self.final_postprocessor(remaining_patterns)
 
         if (self.verbose):
             print("Got "+str(len(final_patterns))
