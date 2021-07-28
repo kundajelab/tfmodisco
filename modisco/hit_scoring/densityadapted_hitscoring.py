@@ -196,7 +196,8 @@ def prepare_seqlet_scorer(patterns,
                           min_overlap_size=10,
                           crosspattern_perplexity=10,
                           n_neighbors=500,
-                          verbose=True):
+                          verbose=True,
+                          seqlet_batch_size=1000):
 
     assert len(set([len(x) for x in patterns]))==1, (
         "patterns should be of equal lengths - are: "
@@ -301,7 +302,8 @@ def prepare_seqlet_scorer(patterns,
                    min_overlap=min_overlap)),
         pattern_to_superpattern_mapping=subpattern_to_superpattern_mapping,
         superpatterns=patterns,
-        verbose=verbose
+        verbose=verbose,
+        seqlet_batch_size=seqlet_batch_size
     )
 
     return seqlet_scorer
@@ -320,7 +322,7 @@ class CoreDensityAdaptedSeqletScorer2(object):
                        pattern_to_superpattern_mapping=None,
                        superpatterns=None,
                        leiden_numseedstotry=50,
-                       verbose=True, seqlet_batch_size=100): 
+                       verbose=True, seqlet_batch_size=1000): 
         self.patterns = patterns
         if (pattern_to_superpattern_mapping is None):
             pattern_to_superpattern_mapping = dict([
