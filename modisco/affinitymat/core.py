@@ -536,7 +536,7 @@ class AffmatFromSeqletsWithNNpairs(object):
                      things_to_scan=all_fwd_data,
                      min_overlap=(
                       self.pattern_comparison_settings.min_overlap
-                      if min_overlap_override is not None else
+                      if min_overlap_override is None else
                       min_overlap_override),
                      return_sparse=return_sparse) 
         if (filters_all_rev_data is not None):
@@ -546,7 +546,7 @@ class AffmatFromSeqletsWithNNpairs(object):
                  things_to_scan=all_fwd_data,
                  min_overlap=(
                       self.pattern_comparison_settings.min_overlap
-                      if min_overlap_override is not None else
+                      if min_overlap_override is None else
                       min_overlap_override),
                  return_sparse=return_sparse) 
         else:

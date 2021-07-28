@@ -8,6 +8,7 @@ import traceback
 import scipy.sparse
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.isotonic import IsotonicRegression
+from joblib import Parallel, delayed
 
 
 def print_memory_use():
