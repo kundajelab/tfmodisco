@@ -506,7 +506,8 @@ class AffmatFromSeqletsWithNNpairs(object):
         self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
 
     def __call__(self, seqlets, filter_seqlets=None,
-                       seqlet_neighbors=None, return_sparse=False):
+                       seqlet_neighbors=None, return_sparse=False,
+                       min_overlap_override=None):
 
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
@@ -533,14 +534,20 @@ class AffmatFromSeqletsWithNNpairs(object):
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_fwd_data,
                      things_to_scan=all_fwd_data,
-                     min_overlap=self.pattern_comparison_settings.min_overlap,
+                     min_overlap=(
+                      self.pattern_comparison_settings.min_overlap
+                      if min_overlap_override is not None else
+                      min_overlap_override),
                      return_sparse=return_sparse) 
         if (filters_all_rev_data is not None):
             affmat_rev = self.sim_metric_on_nn_pairs(
                  neighbors_of_things_to_scan=seqlet_neighbors,
                  filters=filters_all_rev_data,
                  things_to_scan=all_fwd_data,
-                 min_overlap=self.pattern_comparison_settings.min_overlap,
+                 min_overlap=(
+                      self.pattern_comparison_settings.min_overlap
+                      if min_overlap_override is not None else
+                      min_overlap_override),
                  return_sparse=return_sparse) 
         else:
             affmat_rev = None

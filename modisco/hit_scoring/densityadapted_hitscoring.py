@@ -375,11 +375,13 @@ class CoreDensityAdaptedSeqletScorer2(object):
         #The alignment holds the seqlet fixed and
         # slides the pattern across it. is_fwd==False means the pattern was
         # reverse-complemented. The seqlet is what is padded.
+        full_length=len(self.patterns[0])
         all_pattern_alnmnts =\
             self.affmat_from_seqlets_with_alignments(
                 seqlets=seqlets_foralignment,
                 seqlets_alignment_mask=alignment_mask,
-                filter_seqlets=self.patterns)
+                filter_seqlets=self.patterns,
+                min_overlap_override=float(trim_to_central)/full_length)
         all_pattern_alnmnts[:,:,1] += trim_amount
 
         pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
@@ -393,7 +395,6 @@ class CoreDensityAdaptedSeqletScorer2(object):
         del _
 
         assert all_seqlet_fwd_data.shape[1]==len(self.patterns[0])
-        full_length=len(self.patterns[0])
 
         num_motifseqlets = sum([len(x) for x in
                                 self.pattern_innerseqletdata.values()])
