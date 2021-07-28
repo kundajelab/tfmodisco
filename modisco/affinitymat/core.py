@@ -507,6 +507,7 @@ class AffmatFromSeqletsWithNNpairs(object):
 
     def __call__(self, seqlets, filter_seqlets=None,
                        seqlet_neighbors=None, return_sparse=False):
+
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
@@ -545,13 +546,17 @@ class AffmatFromSeqletsWithNNpairs(object):
             affmat_rev = None
         if (return_sparse==False):
             if (len(affmat_fwd.shape)==3):
-                #dims are N x N x 2, where first entry of last idx is sim,
-                # and the second entry is the alignment.
+                #dims are N x M x 2, where first entry of last idx is sim,
+                # and the second entry is the alignment. The alignment is
+                # the offset of the filter w.r.t. things_to_scan. Also,
+                # thigns_to_scan is what is padded
                 if (affmat_rev is None):
                     affmat = affmat_fwd
                 else:
-                    #will return something that's N x N x 3, where the third
+                    #will return something that's N x M x 3, where the third
                     # entry in last dim is is_fwd 
+                    #is_fwd==False means the alignment and sim returned is
+                    # for the reverse-complement filter
                     is_fwd = (affmat_fwd[:,:,0] > affmat_rev[:,:,0])*1.0
                     affmat = np.zeros((affmat_fwd.shape[0],
                                        affmat_fwd.shape[1],3))

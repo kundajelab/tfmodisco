@@ -70,12 +70,13 @@ class MakeHitScorer(object):
         self.coordproducer = coordproducers.VariableWindowAroundChunks(
             sliding=[core_sliding_window_size],
             flank=int((self.target_seqlet_size-core_sliding_window_size)/2.0),
-            suppress=core_sliding_window_size,
+            suppress=core_sliding_window_size-0.5,
             target_fdr=target_fdr,
             min_passing_windows_frac=min_passing_windows_frac,
             max_passing_windows_frac=max_passing_windows_frac,
             **additional_coordproducer_kwargs
         ) 
+        self.core_sliding_window_size = core_sliding_window_size
 
         coordproducer_results = self.coordproducer(
             score_track=self.get_coordproducer_score_track(
@@ -115,7 +116,8 @@ class MakeHitScorer(object):
         (all_seqlet_hits, patternidx_to_matches, exampleidx_to_matches) =\
             self.seqlet_scorer(seqlets=seqlets,
                 hits_to_return_per_seqlet=hits_to_return_per_seqlet,
-                min_mod_precision=min_mod_precision) 
+                min_mod_precision=min_mod_precision,
+                trim_to_central=self.core_sliding_window_size) 
 
         exampleidx_to_matcheswithimportance = defaultdict(list)
         patternidx_to_matcheswithimportance = defaultdict(list)
@@ -183,7 +185,7 @@ def prepare_seqlet_scorer(patterns,
                           max_seqlets_per_submotif=100,
                           min_overlap_size=10,
                           crosspattern_perplexity=10,
-                          coarsegrained_topn=500,
+                          n_neighbors=500,
                           verbose=True):
 
     assert len(set([len(x) for x in patterns]))==1, (
@@ -220,30 +222,64 @@ def prepare_seqlet_scorer(patterns,
     track_names = ([x[0]+"_contrib_scores" for x in task_names_and_signs]
                 +[x[0]+"_hypothetical_contribs" for x in task_names_and_signs])
 
-    seqlet_scorer = CoreDensityAdaptedSeqletScorer(
+    #seqlet_scorer = CoreDensityAdaptedSeqletScorer(
+    #    patterns=subpatterns,
+    #    coarsegrained_seqlet_embedder=(
+    #        seqlet_embedding.advanced_gapped_kmer
+    #           .AdvancedGappedKmerEmbedderFactory()(
+    #               onehot_track_name=onehot_track_name,
+    #               toscore_track_names_and_signs=[
+    #                    (x[0]+"_hypothetical_contribs", x[1])
+    #                    for x in task_names_and_signs],
+    #               n_jobs=n_cores)),
+    #    coarsegrained_topn=n_neighb, #set to 500 for real seqs
+    #    affmat_from_seqlets_with_nn_pairs=
+    #      affinitymat.core.AffmatFromSeqletsWithNNpairs(
+    #        pattern_comparison_settings=
+    #         affinitymat.core.PatternComparisonSettings( 
+    #            track_names=track_names, 
+    #            #L1 norm is important for contin jaccard sim
+    #            track_transformer=affinitymat.L1Normalizer(), 
+    #            min_overlap=float(min_overlap_size/target_seqlet_size)),
+    #        sim_metric_on_nn_pairs=\
+    #            affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
+    #              n_cores=n_cores,
+    #              cross_metric_single_region=
+    #               affinitymat.core.CrossContinJaccardSingleRegion())),
+    #    aff_to_dist_mat=
+    #        affinitymat.transformers.AffToDistViaInvLogistic(),
+    #    perplexity=crosspattern_perplexity,
+    #    n_cores=n_cores,
+    #    pattern_aligner=core.CrossContinJaccardPatternAligner(              
+    #        pattern_comparison_settings=
+    #            affinitymat.core.PatternComparisonSettings(
+    #               track_names=track_names, 
+    #               track_transformer=affinitymat.L1Normalizer(),
+    #               min_overlap=float(min_overlap_size)/target_seqlet_size)),
+    #    pattern_to_superpattern_mapping=subpattern_to_superpattern_mapping,
+    #    superpatterns=patterns,
+    #    verbose=verbose
+    #)
+
+    min_overlap=float(min_overlap_size/target_seqlet_size)
+    seqlet_scorer = CoreDensityAdaptedSeqletScorer2(
         patterns=subpatterns,
-        coarsegrained_seqlet_embedder=(
-            seqlet_embedding.advanced_gapped_kmer
-               .AdvancedGappedKmerEmbedderFactory()(
-                   onehot_track_name=onehot_track_name,
-                   toscore_track_names_and_signs=[
-                        (x[0]+"_hypothetical_contribs", x[1])
-                        for x in task_names_and_signs],
-                   n_jobs=n_cores)),
-        coarsegrained_topn=coarsegrained_topn, #set to 500 for real seqs
-        affmat_from_seqlets_with_nn_pairs=
-          affinitymat.core.AffmatFromSeqletsWithNNpairs(
-            pattern_comparison_settings=
-             affinitymat.core.PatternComparisonSettings( 
-                track_names=track_names, 
-                #L1 norm is important for contin jaccard sim
-                track_transformer=affinitymat.L1Normalizer(), 
-                min_overlap=float(min_overlap_size/target_seqlet_size)),
-            sim_metric_on_nn_pairs=\
-                affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
-                  n_cores=n_cores,
-                  cross_metric_single_region=
-                   affinitymat.core.CrossContinJaccardSingleRegion())),
+        n_neighbors=n_neighbors,
+
+        affmat_from_seqlets_with_alignments=
+         affinitymat.core.AffmatFromSeqletsWithNNpairs(
+           pattern_comparison_settings=
+            affinitymat.core.PatternComparisonSettings( 
+               track_names=track_names, 
+               #L1 norm is important for contin jaccard sim
+               track_transformer=affinitymat.L1Normalizer(), 
+               min_overlap=float(min_overlap_size/target_seqlet_size)),
+           sim_metric_on_nn_pairs=\
+               affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
+                 n_cores=n_cores,
+                 cross_metric_single_region=
+                  affinitymat.core.CrossContinJaccardSingleRegionWithArgmax())),
+
         aff_to_dist_mat=
             affinitymat.transformers.AffToDistViaInvLogistic(),
         perplexity=crosspattern_perplexity,
@@ -253,13 +289,461 @@ def prepare_seqlet_scorer(patterns,
                 affinitymat.core.PatternComparisonSettings(
                    track_names=track_names, 
                    track_transformer=affinitymat.L1Normalizer(),
-                   min_overlap=float(min_overlap_size)/target_seqlet_size)),
+                   min_overlap=min_overlap)),
         pattern_to_superpattern_mapping=subpattern_to_superpattern_mapping,
         superpatterns=patterns,
         verbose=verbose
     )
 
     return seqlet_scorer
+
+ 
+class CoreDensityAdaptedSeqletScorer2(object):
+
+    #patterns should already be subsampled 
+    def __init__(self, patterns,
+                       n_neighbors,
+                       affmat_from_seqlets_with_alignments,
+                       aff_to_dist_mat,
+                       perplexity,
+                       n_cores,
+                       seqlet_to_motif_aligner,
+                       pattern_aligner,
+                       pattern_to_superpattern_mapping=None,
+                       superpatterns=None,
+                       leiden_numseedstotry=50,
+                       verbose=True, seqlet_batch_size=100): 
+        self.patterns = patterns
+        if (pattern_to_superpattern_mapping is None):
+            pattern_to_superpattern_mapping = dict([
+                                          (i,i) for i in range(len(patterns))])
+            self.class_patterns = patterns
+        else:
+            self.class_patterns = superpatterns
+        self.n_neighbors = n_neighbors
+        self.affmat_from_seqlets_with_alignments =\
+            affmat_from_seqlets_with_alignments
+        self.pattern_to_superpattern_mapping = pattern_to_superpattern_mapping
+        self.aff_to_dist_mat = aff_to_dist_mat
+        self.perplexity = perplexity
+        self.n_cores = n_cores
+        self.pattern_aligner = pattern_aligner
+        self.leiden_numseedstotry = leiden_numseedstotry
+        self.verbose = verbose
+        self.seqlet_batch_size = seqlet_batch_size
+        self.build()
+
+    def get_classwise_fine_affmat_nn_sumavg(self,
+            fine_affmat_nn, seqlet_neighbors):
+        num_classes = max(self.motifmemberships)+1
+        #(not used in the density-adapted scoring) for each class, compute
+        # the total fine-grained similarity for each class in the topk
+        # nearest neighbors. Will be used to instantiate a class-wise
+        # precision scorer
+        fine_affmat_nn_perclassum = np.zeros(
+            (len(fine_affmat_nn), num_classes))
+        fine_affmat_nn_perclassavg = np.zeros(
+            (len(fine_affmat_nn), num_classes))
+        for i in range(len(fine_affmat_nn)):
+            for classidx in range(num_classes):
+                class_entries = [fine_affmat_nn[i][j] for
+                   j in range(len(fine_affmat_nn[i]))
+                   if self.motifmemberships[seqlet_neighbors[i][j]]==classidx]
+                if (len(class_entries) > 0):
+                    fine_affmat_nn_perclassum[i][classidx] =\
+                        np.sum(class_entries)
+                    fine_affmat_nn_perclassavg[i][classidx] =\
+                        np.mean(class_entries)
+        return (fine_affmat_nn_perclassum, fine_affmat_nn_perclassavg)
+
+    def get_similarities_to_motifseqlets(self,
+        seqlets, alignment_mask, trim_to_central=None):
+
+        if (trim_to_central is None):
+            seqlets_foralignment = seqlets
+            trim_amount = 0
+        else:
+            trim_amount = int(0.5*(len(seqlets[0])-trim_to_central))
+            assert len(set([len(x) for x in seqlets]))==1
+            seqlets_foralignment = [seqlet.trim(
+                                        start_idx=trim_amount,
+                                        end_idx=len(seqlet)-trim_amount)
+                                    for seqlet in seqlets]
+        #all_pattern_alnmnts has dims of num_seqlets x num_patterns x 3
+        # first entry of last index is the sim,
+        # second index is the alignment, third entry is is_fwd.
+        #The alignment holds the seqlet fixed and
+        # slides the pattern across it. is_fwd==False means the pattern was
+        # reverse-complemented. The seqlet is what is padded.
+        all_pattern_alnmnts =\
+            self.affmat_from_seqlets_with_alignments(
+                seqlets=seqlets_foralignment,
+                seqlets_alignment_mask=alignment_mask,
+                filter_seqlets=self.patterns)
+        all_pattern_alnmnts[:,:,1] += trim_amount
+
+        pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
+                                           .pattern_comparison_settings)
+        (all_seqlet_fwd_data, all_seqlet_rev_data) =\
+            core.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)
+        del _
+
+        assert all_seqlet_fwd_data.shape[1]==len(self.patterns[0])
+        full_length=len(self.patterns[0])
+
+        num_motifseqlets = sum([len(x) for x in
+                                self.pattern_innerseqletdata.values()])
+
+        seqlet_neighbors = []
+        affmat_nn = []
+
+        for seqlet_batch_start in range(0,len(seqlets),self.seqlet_batch_size):
+            this_batch_size = (min(len(seqlets),
+              seqlet_batch_start+self.seqlet_batch_size)-seqlet_batch_start)
+            batch_allpatterns_pairwise_sims = np.zeros((self.seqlet_batch_size,
+                                               num_motifseqlets))
+
+            pattern_innerseqlet_startidx = 0
+            for pattern_idx in range(len(self.patterns)): 
+                compareto_seqlets = []
+                for seqlet_idx in range(seqlet_batch_start,
+                                        seqlet_batch_start+this_batch_size):
+                    pattern_alnmt_offset, pattern_alnmt_isfwd =\
+                     all_pattern_alnmnts[seqlet_idx, pattern_idx]
+                    if (pattern_alnmet_isfwd):
+                        compareto_seqlet = np.pad(
+                          array=all_seqlet_fwd_data[seqlet_idx][
+                              max(pattern_alnmt_offset,0):
+                              min(pattern_alnmt_offset+full_length,
+                                  full_length)],
+                          pad_width=[(max(-pattern_alnmt_offset,0),
+                                      max(pattern_alnmt_offset,0) )])
+                    else:
+                        compareto_seqlet = np.pad(
+                          array=all_seqlet_rev_data[seqlet_idx][
+                              max(-pattern_alnmt_offset,0):
+                              min(full_length-pattern_alnmt_offset,
+                                  full_length)],
+                          pad_width=[(max(pattern_alnmt_offset,0),
+                                      max(-pattern_alnmt_offset,0) )])
+                    compareto_seqlets.append(compareto_seqlet)
+
+                compareto_seqlets = np.array(compareto_seqlets)
+                (pattern_innerseqlet_fwd_data, _) =\
+                    self.pattern_innerseqletdata[pattern_idx] 
+
+                batch_pattern_pairwise_sims =\
+                    util.compute_pairwise_continjacc_sims(
+                     vecs1=compareto_seqlets.reshape(
+                             (len(compareto_seqlets),-1)),
+                     vecs2=pattern_innerseqlet_fwd_data.reshape(
+                             (len(pattern_innerseqlet_fwd_data),-1)),
+                     n_jobs=self.n_cores,
+                     vecs2_weighting=None) 
+                batch_allpatterns_pairwise_sims[:,
+                  pattern_innerseqlet_startidx:
+                   (pattern_innerseqlet_startidx
+                     +len(pattern_innerseqlet_fwd_data))] =(
+                  batch_pattern_pairwise_sims) 
+                pattern_innerseqlet_startidx +=\
+                    len(pattern_innerseqlet_fwd_data)
+                
+            batch_seqlet_neighbors = np.argsort(
+              -batch_allpatterns_pairwise_sims, axis=-1)[:self.n_neighbors] 
+            seqlet_neighbors.extend(batch_seqlet_neighbors)
+
+            batch_affmat_nn = np.array([sims[neighbors]
+               for sims,neighbors in
+               zip(batch_allpatterns_pairwise_sims,
+                   batch_seqlet_neighbors)])
+            affmat_nn.extend(batch_affmat_nn)
+
+        affmat_nn = np.array(affmat_nn)
+        seqlet_neighbors = np.array(seqlet_neighbors)
+
+        return affmat_nn, seqlet_neighbors
+        
+    def build(self):
+
+        motifmemberships = np.array([
+            self.pattern_to_superpattern_mapping[i]
+            for i in range(len(self.patterns))
+            for j in self.patterns[i].seqlets])
+        self.motifmemberships = motifmemberships
+        assert (max(self.motifmemberships)+1) == len(self.class_patterns),\
+            (max(self.motifmemberships), len(self.class_patterns))
+
+        if (self.verbose):
+            print("Computing best alignments for all motifseqlets")
+
+        motifseqlets = [seqlet for pattern in self.patterns
+                               for seqlet in pattern.seqlets]
+
+        #fetch the pattern inner seqlet data
+        pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
+                                           .pattern_comparison_settings)
+        self.pattern_innerseqletdata = [core.get_2d_data_from_patterns(
+                patterns=pattern.seqlets,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)
+                for pattern in patterns]
+
+        #Compute best alignment and similarities for each seqlet
+        #logic for why we don't take the cluter membership of each motif
+        # seqlet as the best alignment: we want to represent the
+        # process of a new seqlet coming in as accurately as possible;
+        # we won't know th best alignment for a new seqlet coming in
+        fine_affmat_nn, seqlet_neighbors =\
+            self.get_similarities_to_motifseqlets(seqlets=motifseqlets)
+
+        #fann = fine affmat nn. This is not used for density-adaptive
+        # scoring; rather it's a way to get a sense of within-motif
+        # similarity WITHOUT the density-adaptation step
+        (fann_perclassum, fann_perclassavg) = (
+            self.get_classwise_fine_affmat_nn_sumavg(
+                fine_affmat_nn=fine_affmat_nn,
+                seqlet_neighbors=seqlet_neighbors))
+        self.fann_perclasssum_precscorer = util.ClasswisePrecisionScorer(
+            true_classes=motifmemberships,
+            class_membership_scores=fann_perclassum) 
+        self.fann_perclassavg_precscorer = util.ClasswisePrecisionScorer(
+            true_classes=motifmemberships,
+            class_membership_scores=fann_perclassavg) 
+                
+        if (self.verbose):
+            print("Mapping affinity to distmat")
+
+        #Map aff to dist
+        distmat_nn = self.aff_to_dist_mat(affinity_mat=fine_affmat_nn) 
+
+        if (self.verbose):
+            print("Symmetrizing nearest neighbors")
+
+        #Note: the fine-grained similarity metric isn't actually symmetric
+        # because a different input will get padded with zeros depending
+        # on which seqlets are specified as the filters and which seqlets
+        # are specified as the 'thing to scan'. So explicit symmetrization
+        # is worthwhile
+        sym_seqlet_neighbors, sym_distmat_nn = util.symmetrize_nn_distmat(
+            distmat_nn=distmat_nn, nn=seqlet_neighbors,
+            average_with_transpose=True)
+        del distmat_nn
+        del seqlet_neighbors
+        
+        if (self.verbose):
+            print("Computing betas for density adaptation")
+
+        #Compute beta values for the density adaptation. *store it*
+        betas_and_ps = Parallel(n_jobs=self.n_cores)(
+                 delayed(util.binary_search_perplexity)(
+                      self.perplexity, distances)
+                 for distances in sym_distmat_nn)
+        self.motifseqlet_betas = np.array([x[0] for x in betas_and_ps])
+        del betas_and_ps
+
+        if (self.verbose):
+            print("Computing normalizing denominators")
+
+        #also compute the normalization factor needed to get probs to sum to 1
+        #note: sticking to lists here because different rows of
+        # sym_distmat_nn may have different lengths after adding in
+        # the symmetric pairs
+        densadapted_affmat_nn_unnorm = [np.exp(-np.array(distmat_row)/beta)
+            for distmat_row, beta in
+            zip(sym_distmat_nn, self.motifseqlet_betas)]
+        normfactors = np.array([max(np.sum(x),1e-8) for x in
+                                densadapted_affmat_nn_unnorm])
+        self.motifseqlet_normfactors = normfactors
+        del normfactors
+
+        if (self.verbose):
+            print("Computing density-adapted nn affmat")
+
+        #Do density-adaptation using average of self-Beta and other-Beta.
+        sym_densadapted_affmat_nn = self.densadapt_wrt_motifseqlets(
+                            new_rows_distmat_nn=sym_distmat_nn,
+                            new_rows_nn=sym_seqlet_neighbors,
+                            new_rows_betas=self.motifseqlet_betas,
+                            new_rows_normfactors=self.motifseqlet_normfactors)
+
+        #Make csr matrix
+        csr_sym_density_adapted_affmat = util.coo_matrix_from_neighborsformat(
+            entries=sym_densadapted_affmat_nn,
+            neighbors=sym_seqlet_neighbors,
+            ncols=len(sym_densadapted_affmat_nn)).tocsr()
+
+        #Run Leiden to get clusters based on sym_densadapted_affmat_nn
+        clusterer = cluster.core.LeidenClusterParallel(
+                n_jobs=self.n_cores, 
+                affmat_transformer=None,
+                numseedstotry=self.leiden_numseedstotry,
+                n_leiden_iterations=-1,
+                refine=True,
+                verbose=self.verbose)
+        recluster_idxs = clusterer(
+                            orig_affinity_mat=csr_sym_density_adapted_affmat,
+                            initclusters=motifmemberships).cluster_indices
+        if (self.verbose):
+            print("Number of reclustered idxs:", len(set(recluster_idxs)))
+
+        oldandreclust_pairs = set(zip(recluster_idxs, motifmemberships))
+        #sanity check that 'recluster_idxs' are a stict subset of the original
+        # motif memberships
+        print(oldandreclust_pairs)
+        assert len(oldandreclust_pairs)==len(set(recluster_idxs))
+        reclusteridxs_to_motifidx = dict([
+            (pair[0], pair[1])
+            for pair in oldandreclust_pairs]) 
+        assert np.max(np.abs(np.array([reclusteridxs_to_motifidx[x]
+                      for x in recluster_idxs])-motifmemberships))==0
+
+        if (self.verbose):
+            print("Preparing modularity scorer")
+
+        #Set up machinery needed to score modularity delta.
+        self.modularity_scorer = util.ModularityScorer( 
+            clusters=recluster_idxs, nn=sym_seqlet_neighbors,
+            affmat_nn=sym_densadapted_affmat_nn,
+            cluster_to_supercluster_mapping=reclusteridxs_to_motifidx
+        )
+
+    def densadapt_wrt_motifseqlets(self, new_rows_distmat_nn, new_rows_nn,
+                                         new_rows_betas, new_rows_normfactors):
+        new_rows_densadapted_affmat_nn = []
+        for i in range(len(new_rows_distmat_nn)):
+            densadapted_row = []
+            for j,distance in zip(new_rows_nn[i], new_rows_distmat_nn[i]):
+                densadapted_row.append(np.sqrt(
+                  (np.exp(-distance/new_rows_betas[i])/new_rows_normfactors[i])
+                 *(np.exp(-distance/self.motifseqlet_betas[j])/
+                   self.motifseqlet_normfactors[j]))) 
+            new_rows_densadapted_affmat_nn.append(densadapted_row)
+        return new_rows_densadapted_affmat_nn
+
+    def __call__(self, seqlets, alignment_mask=None,
+                       hits_to_return_per_seqlet=1,
+                       min_mod_precision=0, trim_to_central=None):
+        
+        fine_affmat_nn, seqlet_neighbors =\
+            self.get_similarities_to_motifseqlets(
+                   seqlets=seqlets, alignment_mask=alignment_mask,
+                   trim_to_central=trim_to_central)
+
+        (fann_perclassum, fann_perclassavg) = (
+            self.get_classwise_fine_affmat_nn_sumavg(
+                fine_affmat_nn=fine_affmat_nn,
+                seqlet_neighbors=seqlet_neighbors))
+
+        #Map aff to dist
+        distmat_nn = self.aff_to_dist_mat(affinity_mat=fine_affmat_nn) 
+
+        betas_and_ps = Parallel(n_jobs=self.n_cores)(
+                 delayed(util.binary_search_perplexity)(
+                      self.perplexity, distances)
+                 for distances in distmat_nn)
+        betas = np.array([x[0] for x in betas_and_ps])
+        del betas_and_ps
+
+        #also compute the normalization factor needed to get probs to sum to 1
+        #note: sticking to lists here because in the future I could
+        # have an implementation where different rows of
+        # distmat_nn may have different lengths (e.g. when considering
+        # a set of initial cluster assigments produced by another method) 
+        densadapted_affmat_nn_unnorm = [np.exp(-np.array(distmat)/beta)
+                                        for distmat, beta in
+                                        zip(distmat_nn, betas)]
+        normfactors = np.array([max(np.sum(x),1e-8)
+                                for x in densadapted_affmat_nn_unnorm])
+
+        new_rows_densadapted_affmat_nn = self.densadapt_wrt_motifseqlets(
+                new_rows_distmat_nn=distmat_nn,
+                new_rows_nn=seqlet_neighbors,
+                new_rows_betas=betas,
+                new_rows_normfactors=normfactors)
+
+        argmax_classes, mod_percentiles, mod_precisions, mod_deltas =\
+            self.modularity_scorer(
+                new_rows_affmat_nn=new_rows_densadapted_affmat_nn,
+                new_rows_nn=seqlet_neighbors,
+                hits_to_return_per_input=hits_to_return_per_seqlet) 
+
+        fann_perclasssum_perc = (self.fann_perclasssum_precscorer.
+            score_percentile(score=
+                fann_perclassum[np.arange(len(argmax_classes))[:,None],
+                                argmax_classes].ravel(),
+                top_class=argmax_classes.ravel()).reshape(
+                    argmax_classes.shape))
+        
+        fann_perclassavg_perc = (self.fann_perclassavg_precscorer.
+            score_percentile(score=
+                fann_perclassavg[np.arange(len(argmax_classes))[:,None],
+                                argmax_classes].ravel(),
+                top_class=argmax_classes.ravel()).reshape(
+                    argmax_classes.shape))
+
+        all_seqlet_hits = []
+        for i in range(len(argmax_classes)):
+            this_seqlet_hits = []
+            for class_rank,class_idx in enumerate(argmax_classes[i]):
+                if (mod_precisions[i][class_rank] > min_mod_precision):
+                    seqlet = seqlets[i]
+                    mappedtomotif = self.class_patterns[class_idx]
+                    (alignment, rc, sim) = self.pattern_aligner(
+                        parent_pattern=seqlet, child_pattern=mappedtomotif)
+                    motif_hit = MotifMatch(
+                     patternidx=class_idx,
+                     patternidx_rank=class_rank,
+                     exampleidx=seqlet.coor.example_idx,
+                     start=seqlet.coor.start+alignment
+                           if seqlet.coor.is_revcomp==False
+                           else (seqlet.coor.end-alignment)-len(mappedtomotif),
+                     end=seqlet.coor.start+alignment+len(mappedtomotif)
+                         if seqlet.coor.is_revcomp==False
+                         else (seqlet.coor.end-alignment),
+                     is_revcomp=seqlet.coor.is_revcomp if rc==False
+                                else (seqlet.coor.is_revcomp==False),
+                     seqlet_orig_start=seqlet.coor.start,
+                     seqlet_orig_end=seqlet.coor.end,
+                     seqlet_orig_revcomp=seqlet.coor.is_revcomp,
+                     aggregate_sim=sim,
+                     mod_delta=mod_deltas[i][class_rank],
+                     mod_precision=mod_precisions[i][class_rank],
+                     mod_percentile=mod_percentiles[i][class_rank],
+                     fann_perclasssum_perc=fann_perclasssum_perc[i][class_rank],
+                     fann_perclassavg_perc=fann_perclassavg_perc[i][class_rank])
+                    this_seqlet_hits.append(motif_hit) 
+            all_seqlet_hits.append(this_seqlet_hits)
+
+        #organize by example/patternidx
+        #Remove duplicate motif matches that can occur due to overlapping seqlets
+        unique_motifmatches = dict()
+        duplicates_found = 0
+        for seqlet_hits in all_seqlet_hits:
+            for motifmatch in seqlet_hits:
+                match_identifier = (motifmatch.patternidx, motifmatch.exampleidx,
+                                    motifmatch.start, motifmatch.end,
+                                    motifmatch.is_revcomp)
+                if match_identifier not in unique_motifmatches:
+                    unique_motifmatches[match_identifier] = motifmatch
+                else:
+                    if (motifmatch.mod_percentile >
+                        unique_motifmatches[match_identifier].mod_percentile):
+                        unique_motifmatches[match_identifier] = motifmatch 
+                    duplicates_found += 1
+        print("Removed",duplicates_found,"duplicates")
+
+        patternidx_to_matches = defaultdict(list)
+        exampleidx_to_matches = defaultdict(list)
+        for motifmatch in unique_motifmatches.values():
+            patternidx_to_matches[motifmatch.patternidx].append(motifmatch)
+            exampleidx_to_matches[motifmatch.exampleidx].append(motifmatch)
+
+        return (all_seqlet_hits, patternidx_to_matches, exampleidx_to_matches)
 
     
 class CoreDensityAdaptedSeqletScorer(object):

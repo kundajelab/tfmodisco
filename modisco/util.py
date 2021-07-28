@@ -980,3 +980,22 @@ class ModularityScorer(object):
                 sorted_class_match_scores)
 
 
+def compute_continjacc_sims_1vmany(vec1, vecs2, vecs2_weighting):
+    sign_vec1, signs_vecs2 = np.sign(vec1), np.sign(vecs2)
+    abs_vec1, abs_vecs2 = np.abs(vec1), np.abs(vecs2)
+    intersection = np.sum((np.minimum(abs_vec1[None,:], abs_vecs2[:,:])
+                 *sign_vec1[None,:]*signs_vecs2[:,:])*vecs2_weighting, axis=-1)
+    union = np.sum(np.maximum(abs_vec1[None,:],
+                   abs_vecs2[:,:])*vecs2_weighting, axis=-1)
+    return intersection/union
+
+
+def compute_pairwise_continjacc_sims(vecs1, vecs2, n_jobs,
+                                     vecs2_weighting=None):
+    #normalize vecs2_weighting to sum to 1
+    if (vecs2_weighting is None):
+        vecs2_weighting = np.ones_like(vecs2)
+    assert np.min(vecs2_weighting) >= 0
+    return np.array(Parallel(n_jobs=n_jobs, verbose=True)(
+            delayed(compute_continjacc_sims_1vmany)(
+                     vec1, vecs2, vecs2_weighting) for vec1 in vecs1))
