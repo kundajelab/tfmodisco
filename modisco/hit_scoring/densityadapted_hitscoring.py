@@ -21,6 +21,7 @@ class MakeHitScorer(object):
                        bg_freq,
                        task_names_and_signs,
                        n_cores,
+                       run_trim_and_subcluster=True,
                        additional_trimandsubcluster_kwargs={},
                        additional_seqletscorer_kwargs={}):
 
@@ -32,13 +33,15 @@ class MakeHitScorer(object):
         self.task_names = task_names
         self.task_names_and_signs = task_names_and_signs
 
-        print("Getting trimmed patterns, subclustering them")
-
-        self.trimmed_subclustered_patterns = trim_and_subcluster_patterns(
-            patterns=patterns, window_size=target_seqlet_size,
-            onehot_track_name=onehot_track_name,
-            task_names=task_names, bg_freq=bg_freq,
-            n_cores=n_cores, **additional_trimandsubcluster_kwargs)
+        if (run_trim_and_subcluster):
+            print("Getting trimmed patterns, subclustering them")
+            self.trimmed_subclustered_patterns = trim_and_subcluster_patterns(
+                patterns=patterns, window_size=target_seqlet_size,
+                onehot_track_name=onehot_track_name,
+                task_names=task_names, bg_freq=bg_freq,
+                n_cores=n_cores, **additional_trimandsubcluster_kwargs)
+        else:
+            self.trimmed_subclustered_patterns = patterns
 
         print("Preparing seqlet scorer")
 
