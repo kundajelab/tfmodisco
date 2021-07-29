@@ -734,9 +734,16 @@ class CrossContinJaccardSingleRegionWithArgmax(object):
                  np.sum(np.maximum(np.abs(snapshot[None,:,:]),
                                    np.abs(filters[:,:,:])),axis=(1,2)))
         argmax_positions = np.argmax(full_crossmetric, axis=1)
-        return np.array([full_crossmetric[np.arange(len(argmax_positions)),
-                                          argmax_positions],
-                         argmax_positions])
+        try:
+            return np.array([full_crossmetric[np.arange(len(argmax_positions)),
+                                              argmax_positions],
+                             argmax_positions])
+        except e:
+            print(full_crossmetric.shape)
+            print(type(full_crossmetric))
+            print(full_crossmetric)
+            print(argmax_positions)
+            raise e
 
 
 class CrossContinJaccardSingleRegion(CrossContinJaccardSingleRegionWithArgmax):

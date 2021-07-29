@@ -762,7 +762,8 @@ class ClasswisePrecisionScorer(object):
         #class_membership_scores has dims num_examples x classes
         self.num_classes = max(true_classes)+1
         assert len(set(true_classes))==self.num_classes
-        assert len(true_classes)==len(class_membership_scores)
+        assert len(true_classes)==len(class_membership_scores),\
+            (len(true_classes), len(class_membership_scores))
         assert class_membership_scores.shape[1] == self.num_classes
 
         argmax_class_from_scores = np.argmax(
@@ -992,11 +993,12 @@ def compute_continjacc_sims_1vmany(vec1, vecs2, vecs2_weighting):
 
 
 def compute_pairwise_continjacc_sims(vecs1, vecs2, n_jobs,
-                                     vecs2_weighting=None):
+                                     vecs2_weighting=None,
+                                     verbose=True):
     #normalize vecs2_weighting to sum to 1
     if (vecs2_weighting is None):
         vecs2_weighting = np.ones_like(vecs2)
     assert np.min(vecs2_weighting) >= 0
-    return np.array(Parallel(n_jobs=n_jobs, verbose=True)(
+    return np.array(Parallel(n_jobs=n_jobs, verbose=verbose)(
             delayed(compute_continjacc_sims_1vmany)(
                      vec1, vecs2, vecs2_weighting) for vec1 in vecs1))

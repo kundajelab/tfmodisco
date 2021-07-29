@@ -12,6 +12,7 @@ from .. import seqlet_embedding
 from .. import affinitymat
 from .. import coordproducers
 from .. import tfmodisco_workflow
+import sys
 from joblib import Parallel, delayed
 
 
@@ -197,7 +198,7 @@ def prepare_seqlet_scorer(patterns,
                           crosspattern_perplexity=10,
                           n_neighbors=500,
                           verbose=True,
-                          seqlet_batch_size=1000):
+                          seqlet_batch_size=5000):
 
     assert len(set([len(x) for x in patterns]))==1, (
         "patterns should be of equal lengths - are: "
@@ -322,7 +323,7 @@ class CoreDensityAdaptedSeqletScorer2(object):
                        pattern_to_superpattern_mapping=None,
                        superpatterns=None,
                        leiden_numseedstotry=50,
-                       verbose=True, seqlet_batch_size=1000): 
+                       verbose=True, seqlet_batch_size=5000): 
         self.patterns = patterns
         if (pattern_to_superpattern_mapping is None):
             pattern_to_superpattern_mapping = dict([
@@ -414,11 +415,18 @@ class CoreDensityAdaptedSeqletScorer2(object):
         for seqlet_batch_start in range(0,len(seqlets),self.seqlet_batch_size):
             this_batch_size = (min(len(seqlets),
               seqlet_batch_start+self.seqlet_batch_size)-seqlet_batch_start)
+            if (self.verbose):
+                print("On seqlets",seqlet_batch_start,"to",
+                      seqlet_batch_start+this_batch_size,"out of",
+                      len(seqlets))
+                sys.stdout.flush() 
             batch_allpatterns_pairwise_sims = np.zeros((this_batch_size,
                                                num_motifseqlets))
 
             pattern_innerseqlet_startidx = 0
             for pattern_idx in range(len(self.patterns)): 
+                if (self.verbose):
+                    print("On pattern",pattern_idx,"out of",len(self.patterns))
                 compareto_seqlets = []
                 for seqlet_idx in range(seqlet_batch_start,
                                         seqlet_batch_start+this_batch_size):
@@ -457,7 +465,8 @@ class CoreDensityAdaptedSeqletScorer2(object):
                      vecs2=this_pattern_innerseqlet_fwd_data.reshape(
                              (len(this_pattern_innerseqlet_fwd_data),-1)),
                      n_jobs=self.n_cores,
-                     vecs2_weighting=None) 
+                     vecs2_weighting=None,
+                     verbose=False) 
                 batch_allpatterns_pairwise_sims[:,
                   pattern_innerseqlet_startidx:
                    (pattern_innerseqlet_startidx
@@ -467,7 +476,7 @@ class CoreDensityAdaptedSeqletScorer2(object):
                     len(this_pattern_innerseqlet_fwd_data)
                 
             batch_seqlet_neighbors = np.argsort(
-              -batch_allpatterns_pairwise_sims, axis=-1)[:self.n_neighbors] 
+              -batch_allpatterns_pairwise_sims, axis=-1)[:,:self.n_neighbors] 
             seqlet_neighbors.extend(batch_seqlet_neighbors)
 
             batch_affmat_nn = np.array([sims[neighbors]
