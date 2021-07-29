@@ -14,6 +14,7 @@ from .. import coordproducers
 from .. import tfmodisco_workflow
 import sys
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 
 class MakeHitScorer(object):
@@ -338,7 +339,8 @@ class CoreDensityAdaptedSeqletScorer2(object):
         self.aff_to_dist_mat = aff_to_dist_mat
         self.perplexity = perplexity
         self.n_cores = n_cores
-        self.pattern_aligner = pattern_aligner
+        #Use the pre-existing centralized alignments!
+        #self.pattern_aligner = pattern_aligner
         self.leiden_numseedstotry = leiden_numseedstotry
         self.verbose = verbose
         self.seqlet_batch_size = seqlet_batch_size
@@ -411,6 +413,7 @@ class CoreDensityAdaptedSeqletScorer2(object):
 
         seqlet_neighbors = []
         affmat_nn = []
+        pattern_aggregate_sims = []
 
         for seqlet_batch_start in range(0,len(seqlets),self.seqlet_batch_size):
             this_batch_size = (min(len(seqlets),
@@ -422,11 +425,13 @@ class CoreDensityAdaptedSeqletScorer2(object):
                 sys.stdout.flush() 
             batch_allpatterns_pairwise_sims = np.zeros((this_batch_size,
                                                num_motifseqlets))
-
+            batch_allpatterns_aggregate_sims = np.zeros((this_batch_size,
+                                                         len(self.patterns)))
             pattern_innerseqlet_startidx = 0
-            for pattern_idx in range(len(self.patterns)): 
-                if (self.verbose):
-                    print("On pattern",pattern_idx,"out of",len(self.patterns))
+            
+            for pattern_idx in (range(len(self.patterns)) if
+                                self.verbose==False
+                                else tqdm(range(len(self.patterns))) ): 
                 compareto_seqlets = []
                 for seqlet_idx in range(seqlet_batch_start,
                                         seqlet_batch_start+this_batch_size):
@@ -455,9 +460,21 @@ class CoreDensityAdaptedSeqletScorer2(object):
 
                 compareto_seqlets = np.concatenate([x[None,:]
                             for x in compareto_seqlets], axis=0)
+                flatten_compareto_seqlets = compareto_seqlets.reshape(
+                                             (len(compareto_seqlets),-1))
+
+                #aggregate sims
+                batch_pattern_aggregate_sims =\
+                 util.compute_continjacc_sims_1vmany(
+                     vec1=self.pattern_aggregatedata[pattern_idx].ravel(),
+                     vecs2=flatten_compareto_seqlets,
+                     vecs2_weighting=np.ones_like(flatten_compareto_seqlets))
+                batch_allpatterns_aggregate_sims[:,pattern_idx] =\
+                    batch_pattern_aggregate_sims
+
+                #pairwise sims to the things in the pattern
                 this_pattern_innerseqlet_fwd_data =\
                     self.pattern_innerseqletdata[pattern_idx] 
-
                 batch_pattern_pairwise_sims =\
                     util.compute_pairwise_continjacc_sims(
                      vecs1=compareto_seqlets.reshape(
@@ -509,6 +526,12 @@ class CoreDensityAdaptedSeqletScorer2(object):
         #fetch the pattern inner seqlet data
         pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
                                            .pattern_comparison_settings)
+
+        self.pattern_aggregatedata = core.get_2d_data_from_patterns(
+                patterns=self.patterns,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)[0] 
         self.pattern_innerseqletdata = [core.get_2d_data_from_patterns(
                 patterns=pattern.seqlets,
                 track_names=pattern_comparison_settings.track_names,
