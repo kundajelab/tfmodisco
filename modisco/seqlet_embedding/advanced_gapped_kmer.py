@@ -115,11 +115,13 @@ def prepare_gapped_kmer_from_contribs(contrib_scores, topn, min_k,
     #print(sorted(gappedkmersandimp_2)[-10:])
     #assert tuple(sorted(gappedkmersandimp))==tuple(sorted(gappedkmersandimp_2))
     
-    #condense this by total imp on gapped gkmers across sequence
+    #condense this by total average imp on gapped gkmers across sequence
     gapped_kmer_to_totalseqimp = {}
     for gapped_kmer_rep, gapped_kmer_imp in gappedkmersandimp:
         assert gapped_kmer_rep[0][0]==0 #no superfluous pre-padding
         if (len(gapped_kmer_rep) >= min_k):
+            #note the division by len(gapped_kmer_rep), which divides by
+            # the number of non-gap positions - hence "total *average* imp"
             gapped_kmer_to_totalseqimp[gapped_kmer_rep] = (
                 gapped_kmer_to_totalseqimp.get(gapped_kmer_rep, 0)
                 + gapped_kmer_imp/len(gapped_kmer_rep)

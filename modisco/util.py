@@ -8,6 +8,7 @@ import traceback
 import scipy.sparse
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.isotonic import IsotonicRegression
+from joblib import Parallel, delayed
 
 
 def print_memory_use():
@@ -481,6 +482,9 @@ def get_ic_trimming_indices(ppm, background, threshold, pseudocount=0.001):
     per_position_ic = compute_per_position_ic(
                        ppm=ppm, background=background, pseudocount=pseudocount)
     passing_positions = np.where(per_position_ic >= threshold)
+    if (len(passing_positions[0])==0):
+        raise RuntimeError("No positions meet the ic threshold "
+                           +str(threshold))
     return (passing_positions[0][0], passing_positions[0][-1]+1)
 
 
@@ -761,7 +765,8 @@ class ClasswisePrecisionScorer(object):
         #class_membership_scores has dims num_examples x classes
         self.num_classes = max(true_classes)+1
         assert len(set(true_classes))==self.num_classes
-        assert len(true_classes)==len(class_membership_scores)
+        assert len(true_classes)==len(class_membership_scores),\
+            (len(true_classes), len(class_membership_scores))
         assert class_membership_scores.shape[1] == self.num_classes
 
         argmax_class_from_scores = np.argmax(
@@ -980,3 +985,23 @@ class ModularityScorer(object):
                 sorted_class_match_scores)
 
 
+def compute_continjacc_sims_1vmany(vec1, vecs2, vecs2_weighting):
+    sign_vec1, signs_vecs2 = np.sign(vec1), np.sign(vecs2)
+    abs_vec1, abs_vecs2 = np.abs(vec1), np.abs(vecs2)
+    intersection = np.sum((np.minimum(abs_vec1[None,:], abs_vecs2[:,:])
+                 *sign_vec1[None,:]*signs_vecs2[:,:])*vecs2_weighting, axis=-1)
+    union = np.sum(np.maximum(abs_vec1[None,:],
+                   abs_vecs2[:,:])*vecs2_weighting, axis=-1)
+    return intersection/union
+
+
+def compute_pairwise_continjacc_sims(vecs1, vecs2, n_jobs,
+                                     vecs2_weighting=None,
+                                     verbose=True):
+    #normalize vecs2_weighting to sum to 1
+    if (vecs2_weighting is None):
+        vecs2_weighting = np.ones_like(vecs2)
+    assert np.min(vecs2_weighting) >= 0
+    return np.array(Parallel(n_jobs=n_jobs, verbose=verbose)(
+            delayed(compute_continjacc_sims_1vmany)(
+                     vec1, vecs2, vecs2_weighting) for vec1 in vecs1))

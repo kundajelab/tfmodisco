@@ -12,7 +12,9 @@ from .. import seqlet_embedding
 from .. import affinitymat
 from .. import coordproducers
 from .. import tfmodisco_workflow
+import sys
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 
 class MakeHitScorer(object):
@@ -21,6 +23,7 @@ class MakeHitScorer(object):
                        bg_freq,
                        task_names_and_signs,
                        n_cores,
+                       run_trim_and_subcluster=True,
                        additional_trimandsubcluster_kwargs={},
                        additional_seqletscorer_kwargs={}):
 
@@ -32,13 +35,15 @@ class MakeHitScorer(object):
         self.task_names = task_names
         self.task_names_and_signs = task_names_and_signs
 
-        print("Getting trimmed patterns, subclustering them")
-
-        self.trimmed_subclustered_patterns = trim_and_subcluster_patterns(
-            patterns=patterns, window_size=target_seqlet_size,
-            onehot_track_name=onehot_track_name,
-            task_names=task_names, bg_freq=bg_freq,
-            n_cores=n_cores, **additional_trimandsubcluster_kwargs)
+        if (run_trim_and_subcluster):
+            print("Getting trimmed patterns, subclustering them")
+            self.trimmed_subclustered_patterns = trim_and_subcluster_patterns(
+                patterns=patterns, window_size=target_seqlet_size,
+                onehot_track_name=onehot_track_name,
+                task_names=task_names, bg_freq=bg_freq,
+                n_cores=n_cores, **additional_trimandsubcluster_kwargs)
+        else:
+            self.trimmed_subclustered_patterns = patterns
 
         print("Preparing seqlet scorer")
 
@@ -46,7 +51,8 @@ class MakeHitScorer(object):
             patterns=self.trimmed_subclustered_patterns,
             onehot_track_name=onehot_track_name,
             task_names_and_signs=task_names_and_signs,
-            n_cores=n_cores, **additional_seqletscorer_kwargs)
+            n_cores=n_cores,
+            bg_freq=bg_freq, **additional_seqletscorer_kwargs)
 
         self.tnt_results = None
 
@@ -57,25 +63,38 @@ class MakeHitScorer(object):
         return np.sum(combined_contribs, axis=-1)
 
     def set_coordproducer(self, contrib_scores,
-                core_sliding_window_size, target_fdr,
+                core_sliding_window_size,
+                target_fdr,
                 min_passing_windows_frac,
                 max_passing_windows_frac,
                 null_track=coordproducers.LaplaceNullDist(num_to_samp=10000),
+                bp_to_suppress_around_core=None,
+                sign_to_return=1, #should take values of 1, -1 or None
                 **additional_coordproducer_kwargs):
+
+        assert sign_to_return in [1, -1, None]
 
         assert (self.target_seqlet_size-core_sliding_window_size)%2==0,\
                 ("Please provide a core_sliding_window_size that is an"
                  +" even number smaller than target_seqlet_size")
 
-        self.coordproducer = coordproducers.VariableWindowAroundChunks(
-            sliding=[core_sliding_window_size],
+        if (bp_to_suppress_around_core is None):
+            bp_to_suppress_around_core = core_sliding_window_size
+
+        self.coordproducer = coordproducers.FixedWindowAroundChunks(
+            #sliding=[core_sliding_window_size],
+            sliding=core_sliding_window_size,
             flank=int((self.target_seqlet_size-core_sliding_window_size)/2.0),
-            suppress=core_sliding_window_size,
+            #the -0.5 is there for nitty-gritty reasons re. how the
+            # suppression window is imposed
+            suppress=bp_to_suppress_around_core-0.5,
             target_fdr=target_fdr,
             min_passing_windows_frac=min_passing_windows_frac,
             max_passing_windows_frac=max_passing_windows_frac,
+            sign_to_return=sign_to_return,
             **additional_coordproducer_kwargs
         ) 
+        self.core_sliding_window_size = core_sliding_window_size
 
         coordproducer_results = self.coordproducer(
             score_track=self.get_coordproducer_score_track(
@@ -115,7 +134,8 @@ class MakeHitScorer(object):
         (all_seqlet_hits, patternidx_to_matches, exampleidx_to_matches) =\
             self.seqlet_scorer(seqlets=seqlets,
                 hits_to_return_per_seqlet=hits_to_return_per_seqlet,
-                min_mod_precision=min_mod_precision) 
+                min_mod_precision=min_mod_precision,
+                trim_to_central=self.core_sliding_window_size) 
 
         exampleidx_to_matcheswithimportance = defaultdict(list)
         patternidx_to_matcheswithimportance = defaultdict(list)
@@ -132,6 +152,8 @@ class MakeHitScorer(object):
                     total_importance=total_importance,
                     exampleidx=motifmatch.exampleidx,
                     start=motifmatch.start, end=motifmatch.end,
+                    trim_start=motifmatch.trim_start,
+                    trim_end=motifmatch.trim_end,
                     seqlet_orig_start=motifmatch.seqlet_orig_start,
                     seqlet_orig_end=motifmatch.seqlet_orig_end,
                     seqlet_orig_revcomp=motifmatch.seqlet_orig_revcomp,
@@ -180,11 +202,14 @@ def prepare_seqlet_scorer(patterns,
                           onehot_track_name,
                           task_names_and_signs,
                           n_cores,
+                          bg_freq,
                           max_seqlets_per_submotif=100,
                           min_overlap_size=10,
                           crosspattern_perplexity=10,
-                          coarsegrained_topn=500,
-                          verbose=True):
+                          n_neighbors=500,
+                          ic_trim_threshold=0.3,
+                          verbose=True,
+                          seqlet_batch_size=5000):
 
     assert len(set([len(x) for x in patterns]))==1, (
         "patterns should be of equal lengths - are: "
@@ -220,63 +245,58 @@ def prepare_seqlet_scorer(patterns,
     track_names = ([x[0]+"_contrib_scores" for x in task_names_and_signs]
                 +[x[0]+"_hypothetical_contribs" for x in task_names_and_signs])
 
-    seqlet_scorer = CoreDensityAdaptedSeqletScorer(
+    min_overlap=float(min_overlap_size/target_seqlet_size)
+    seqlet_scorer = CoreDensityAdaptedSeqletScorer2(
         patterns=subpatterns,
-        coarsegrained_seqlet_embedder=(
-            seqlet_embedding.advanced_gapped_kmer
-               .AdvancedGappedKmerEmbedderFactory()(
-                   onehot_track_name=onehot_track_name,
-                   toscore_track_names_and_signs=[
-                        (x[0]+"_hypothetical_contribs", x[1])
-                        for x in task_names_and_signs],
-                   n_jobs=n_cores)),
-        coarsegrained_topn=coarsegrained_topn, #set to 500 for real seqs
-        affmat_from_seqlets_with_nn_pairs=
-          affinitymat.core.AffmatFromSeqletsWithNNpairs(
-            pattern_comparison_settings=
-             affinitymat.core.PatternComparisonSettings( 
-                track_names=track_names, 
-                #L1 norm is important for contin jaccard sim
-                track_transformer=affinitymat.L1Normalizer(), 
-                min_overlap=float(min_overlap_size/target_seqlet_size)),
-            sim_metric_on_nn_pairs=\
-                affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
-                  n_cores=n_cores,
-                  cross_metric_single_region=
-                   affinitymat.core.CrossContinJaccardSingleRegion())),
+        n_neighbors=n_neighbors,
+        affmat_from_seqlets_with_alignments=
+         affinitymat.core.AffmatFromSeqletsWithNNpairs(
+           pattern_comparison_settings=
+            affinitymat.core.PatternComparisonSettings( 
+               track_names=track_names, 
+               #L1 norm is important for contin jaccard sim
+               track_transformer=affinitymat.L1Normalizer(), 
+               min_overlap=float(min_overlap_size/target_seqlet_size)),
+           sim_metric_on_nn_pairs=\
+               affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
+                 n_cores=n_cores,
+                 cross_metric_single_region=
+                  affinitymat.core.CrossContinJaccardSingleRegionWithArgmax())),
         aff_to_dist_mat=
             affinitymat.transformers.AffToDistViaInvLogistic(),
         perplexity=crosspattern_perplexity,
         n_cores=n_cores,
-        pattern_aligner=core.CrossContinJaccardPatternAligner(              
-            pattern_comparison_settings=
-                affinitymat.core.PatternComparisonSettings(
-                   track_names=track_names, 
-                   track_transformer=affinitymat.L1Normalizer(),
-                   min_overlap=float(min_overlap_size)/target_seqlet_size)),
         pattern_to_superpattern_mapping=subpattern_to_superpattern_mapping,
         superpatterns=patterns,
-        verbose=verbose
+        bg_freq=bg_freq,
+        ic_trim_threshold=ic_trim_threshold,
+        onehot_track_name=onehot_track_name,
+        verbose=verbose,
+        seqlet_batch_size=seqlet_batch_size
     )
 
     return seqlet_scorer
 
-    
-class CoreDensityAdaptedSeqletScorer(object):
+ 
+class CoreDensityAdaptedSeqletScorer2(object):
 
     #patterns should already be subsampled 
     def __init__(self, patterns,
-                       coarsegrained_seqlet_embedder,
-                       coarsegrained_topn,
-                       affmat_from_seqlets_with_nn_pairs,
+                       n_neighbors,
+                       affmat_from_seqlets_with_alignments,
                        aff_to_dist_mat,
                        perplexity,
                        n_cores,
-                       pattern_aligner,
+                       bg_freq,
+                       #ic_trim_threshold is further trimming beyond the width
+                       # of the seqlet to hone in on core motif region; done
+                       # only at the end.
+                       ic_trim_threshold,
+                       onehot_track_name,
                        pattern_to_superpattern_mapping=None,
                        superpatterns=None,
                        leiden_numseedstotry=50,
-                       verbose=True): 
+                       verbose=True, seqlet_batch_size=5000): 
         self.patterns = patterns
         if (pattern_to_superpattern_mapping is None):
             pattern_to_superpattern_mapping = dict([
@@ -284,17 +304,19 @@ class CoreDensityAdaptedSeqletScorer(object):
             self.class_patterns = patterns
         else:
             self.class_patterns = superpatterns
+        self.n_neighbors = n_neighbors
+        self.affmat_from_seqlets_with_alignments =\
+            affmat_from_seqlets_with_alignments
         self.pattern_to_superpattern_mapping = pattern_to_superpattern_mapping
-        self.coarsegrained_seqlet_embedder = coarsegrained_seqlet_embedder
-        self.coarsegrained_topn = coarsegrained_topn
-        self.affmat_from_seqlets_with_nn_pairs =\
-            affmat_from_seqlets_with_nn_pairs
         self.aff_to_dist_mat = aff_to_dist_mat
         self.perplexity = perplexity
         self.n_cores = n_cores
-        self.pattern_aligner = pattern_aligner
+        self.bg_freq = bg_freq
+        self.ic_trim_threshold = ic_trim_threshold
+        self.onehot_track_name = onehot_track_name
         self.leiden_numseedstotry = leiden_numseedstotry
         self.verbose = verbose
+        self.seqlet_batch_size = seqlet_batch_size
         self.build()
 
     def get_classwise_fine_affmat_nn_sumavg(self,
@@ -320,14 +342,232 @@ class CoreDensityAdaptedSeqletScorer(object):
                         np.mean(class_entries)
         return (fine_affmat_nn_perclassum, fine_affmat_nn_perclassavg)
 
-    def build(self):
-        #for all the seqlets in the patterns, use the       
-        # coarsegrained_seqlet_embedder to compute the embeddings for fwd and
-        # rev sequences. *store it*
+    def pad_seqletdata_to_align(self, fwdseqletdata, revseqletdata,
+                                      alignmentinfo):
+        full_length = len(fwdseqletdata)
+        _, pattern_alnmt_offset, pattern_alnmt_isfwd = alignmentinfo
+        pattern_alnmt_offset = int(pattern_alnmt_offset)
+        if (pattern_alnmt_isfwd):
+            compareto_seqlet = np.pad(
+              array=fwdseqletdata[max(pattern_alnmt_offset,0):
+                               min(pattern_alnmt_offset+full_length,
+                               full_length)],
+              pad_width=[(max(-pattern_alnmt_offset,0),
+                          max(pattern_alnmt_offset,0)),
+                         (0,0)])
+        else:
+            compareto_seqlet = np.pad(
+              array=revseqletdata[
+                  max(-pattern_alnmt_offset,0):
+                  min(full_length-pattern_alnmt_offset,
+                      full_length)],
+              pad_width=[(max(pattern_alnmt_offset,0),
+                          max(-pattern_alnmt_offset,0)), 
+                         (0,0)])
+        return compareto_seqlet
 
-        motifseqlets = [seqlet for pattern in self.patterns
-                               for seqlet in pattern.seqlets]
-        self.motifseqlets = motifseqlets
+    def get_similarities_to_classpatterns(self, seqlets, trim_to_central):
+        full_length=len(self.class_patterns[0])
+        assert len(seqlets[0])==full_length
+
+        if (trim_to_central is None):
+            seqlets_foralignment = seqlets
+            trim_to_central = full_length
+            trim_amount = 0
+        else:
+            trim_amount = int(0.5*(len(seqlets[0])-trim_to_central))
+            assert len(set([len(x) for x in seqlets]))==1
+            seqlets_foralignment = [seqlet.trim(
+                                        start_idx=trim_amount,
+                                        end_idx=len(seqlet)-trim_amount)
+                                    for seqlet in seqlets]
+        #all_pattern_alnmnts has dims of num_seqlets x num_patterns x 3
+        # first entry of last index is the sim,
+        # second index is the alignment, third entry is is_fwd.
+        #The alignment holds the seqlet fixed and
+        # slides the pattern across it. is_fwd==False means the pattern was
+        # reverse-complemented. The seqlet is what is padded.
+        all_pattern_alnmnts =\
+            self.affmat_from_seqlets_with_alignments(
+                seqlets=seqlets_foralignment,
+                filter_seqlets=self.class_patterns,
+                min_overlap_override=float(trim_to_central)/full_length)
+        all_pattern_alnmnts[:,:,1] += trim_amount
+
+        pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
+                                           .pattern_comparison_settings)
+        (all_seqlet_fwd_data, all_seqlet_rev_data) =\
+            core.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)
+
+        assert all_seqlet_fwd_data.shape[1]==len(self.class_patterns[0])
+
+        pattern_aggregate_sims = []
+
+        for seqlet_batch_start in range(0,len(seqlets),self.seqlet_batch_size):
+            this_batch_size = (min(len(seqlets),
+              seqlet_batch_start+self.seqlet_batch_size)-seqlet_batch_start)
+            if (self.verbose):
+                print("On seqlets",seqlet_batch_start,"to",
+                      seqlet_batch_start+this_batch_size,"out of",
+                      len(seqlets))
+                sys.stdout.flush() 
+            batch_allpatterns_aggregate_sims = np.zeros((this_batch_size,
+                                                     len(self.class_patterns)))
+            for pattern_idx in (range(len(self.class_patterns)) if
+                                self.verbose==False
+                                else tqdm(range(len(self.class_patterns))) ): 
+                compareto_seqlets = []
+                for seqlet_idx in range(seqlet_batch_start,
+                                        seqlet_batch_start+this_batch_size):
+                    compareto_seqlet = self.pad_seqletdata_to_align(
+                       fwdseqletdata=all_seqlet_fwd_data[seqlet_idx],
+                       revseqletdata=all_seqlet_rev_data[seqlet_idx],
+                       alignmentinfo=
+                        all_pattern_alnmnts[seqlet_idx, pattern_idx]) 
+                    compareto_seqlets.append(compareto_seqlet)
+
+                compareto_seqlets = np.concatenate([x[None,:]
+                            for x in compareto_seqlets], axis=0)
+                flatten_compareto_seqlets = compareto_seqlets.reshape(
+                                             (len(compareto_seqlets),-1))
+                #aggregate sims
+                batch_pattern_aggregate_sims =\
+                 util.compute_continjacc_sims_1vmany(
+                     vec1=self.classpattern_aggregatedata[pattern_idx].ravel(),
+                     vecs2=flatten_compareto_seqlets,
+                     vecs2_weighting=np.ones_like(flatten_compareto_seqlets))
+                batch_allpatterns_aggregate_sims[:,pattern_idx] =\
+                    batch_pattern_aggregate_sims
+                
+            pattern_aggregate_sims.extend(batch_allpatterns_aggregate_sims)
+
+        pattern_aggregate_sims = np.array(pattern_aggregate_sims)
+        all_pattern_alnmnts[:,:,0] = pattern_aggregate_sims 
+        return all_pattern_alnmnts
+
+    def get_similarities_to_motifseqlets(self, seqlets, trim_to_central):
+        full_length=len(self.patterns[0])
+        assert len(seqlets[0])==full_length
+
+        if (trim_to_central is None):
+            seqlets_foralignment = seqlets
+            trim_to_central = full_length
+            trim_amount = 0
+        else:
+            trim_amount = int(0.5*(len(seqlets[0])-trim_to_central))
+            assert len(set([len(x) for x in seqlets]))==1
+            seqlets_foralignment = [seqlet.trim(
+                                        start_idx=trim_amount,
+                                        end_idx=len(seqlet)-trim_amount)
+                                    for seqlet in seqlets]
+        #all_pattern_alnmnts has dims of num_seqlets x num_patterns x 3
+        # first entry of last index is the sim,
+        # second index is the alignment, third entry is is_fwd.
+        #The alignment holds the seqlet fixed and
+        # slides the pattern across it. is_fwd==False means the pattern was
+        # reverse-complemented. The seqlet is what is padded.
+        all_pattern_alnmnts =\
+            self.affmat_from_seqlets_with_alignments(
+                seqlets=seqlets_foralignment,
+                filter_seqlets=self.patterns,
+                min_overlap_override=float(trim_to_central)/full_length)
+        all_pattern_alnmnts[:,:,1] += trim_amount
+
+        pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
+                                           .pattern_comparison_settings)
+        (all_seqlet_fwd_data, all_seqlet_rev_data) =\
+            core.get_2d_data_from_patterns(
+                patterns=seqlets,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)
+
+        assert all_seqlet_fwd_data.shape[1]==len(self.patterns[0])
+
+        num_motifseqlets = sum([len(x) for x in
+                                self.pattern_innerseqletdata])
+
+        seqlet_neighbors = []
+        affmat_nn = []
+
+        for seqlet_batch_start in range(0,len(seqlets),self.seqlet_batch_size):
+            this_batch_size = (min(len(seqlets),
+              seqlet_batch_start+self.seqlet_batch_size)-seqlet_batch_start)
+            if (self.verbose):
+                print("On seqlets",seqlet_batch_start,"to",
+                      seqlet_batch_start+this_batch_size,"out of",
+                      len(seqlets))
+                sys.stdout.flush() 
+            batch_allpatterns_pairwise_sims = np.zeros((this_batch_size,
+                                               num_motifseqlets))
+            pattern_innerseqlet_startidx = 0
+            
+            for pattern_idx in (range(len(self.patterns)) if
+                                self.verbose==False
+                                else tqdm(range(len(self.patterns))) ): 
+                compareto_seqlets = []
+                for seqlet_idx in range(seqlet_batch_start,
+                                        seqlet_batch_start+this_batch_size):
+                    compareto_seqlet = self.pad_seqletdata_to_align(
+                       fwdseqletdata=all_seqlet_fwd_data[seqlet_idx],
+                       revseqletdata=all_seqlet_rev_data[seqlet_idx],
+                       alignmentinfo=
+                        all_pattern_alnmnts[seqlet_idx, pattern_idx]) 
+                    compareto_seqlets.append(compareto_seqlet)
+
+                compareto_seqlets = np.concatenate([x[None,:]
+                            for x in compareto_seqlets], axis=0)
+                flatten_compareto_seqlets = compareto_seqlets.reshape(
+                                             (len(compareto_seqlets),-1))
+
+                #pairwise sims to the things in the pattern
+                this_pattern_innerseqlet_fwd_data =\
+                    self.pattern_innerseqletdata[pattern_idx] 
+                batch_pattern_pairwise_sims =\
+                    util.compute_pairwise_continjacc_sims(
+                     vecs1=compareto_seqlets.reshape(
+                             (len(compareto_seqlets),-1)),
+                     vecs2=this_pattern_innerseqlet_fwd_data.reshape(
+                             (len(this_pattern_innerseqlet_fwd_data),-1)),
+                     n_jobs=self.n_cores,
+                     vecs2_weighting=None,
+                     verbose=False) 
+                batch_allpatterns_pairwise_sims[:,
+                  pattern_innerseqlet_startidx:
+                   (pattern_innerseqlet_startidx
+                     +len(this_pattern_innerseqlet_fwd_data))] =(
+                  batch_pattern_pairwise_sims) 
+                pattern_innerseqlet_startidx +=\
+                    len(this_pattern_innerseqlet_fwd_data)
+                
+            batch_seqlet_neighbors = np.argsort(
+              -batch_allpatterns_pairwise_sims, axis=-1)[:,:self.n_neighbors] 
+            seqlet_neighbors.extend(batch_seqlet_neighbors)
+
+            batch_affmat_nn = np.array([sims[neighbors]
+               for sims,neighbors in
+               zip(batch_allpatterns_pairwise_sims,
+                   batch_seqlet_neighbors)])
+            affmat_nn.extend(batch_affmat_nn)
+
+        affmat_nn = np.array(affmat_nn)
+        seqlet_neighbors = np.array(seqlet_neighbors)
+
+        return affmat_nn, seqlet_neighbors
+        
+    def build(self):
+
+        #do ic trimming to get the offsets for adjusting the motif hit
+        # locations
+        self.classpattern_trimindices = [util.get_ic_trimming_indices(
+            ppm=classpattern[self.onehot_track_name].fwd,
+            background=self.bg_freq,
+            threshold=self.ic_trim_threshold)
+         for classpattern in self.class_patterns]
 
         motifmemberships = np.array([
             self.pattern_to_superpattern_mapping[i]
@@ -338,33 +578,35 @@ class CoreDensityAdaptedSeqletScorer(object):
             (max(self.motifmemberships), len(self.class_patterns))
 
         if (self.verbose):
-            print("Computing coarse-grained embeddings")
+            print("Computing best alignments for all motifseqlets")
 
-        orig_embedding_fwd, orig_embedding_rev =\
-            self.coarsegrained_seqlet_embedder(seqlets=motifseqlets)
-        self.orig_embedding_fwd = orig_embedding_fwd
-        self.orig_embedding_rev = orig_embedding_rev
+        motifseqlets = [seqlet for pattern in self.patterns
+                               for seqlet in pattern.seqlets]
 
-        if (self.verbose):
-            print("Computing coarse top k nn via cosine sim")
+        #fetch the pattern inner seqlet data
+        pattern_comparison_settings = (self.affmat_from_seqlets_with_alignments
+                                           .pattern_comparison_settings)
 
-        #then find the topk nearest neighbors by cosine sim,
-        coarse_affmat_nn, seqlet_neighbors  =\
-            affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
-                n_neighbors=self.coarsegrained_topn, verbose=self.verbose)(
-                    fwd_vecs=self.orig_embedding_fwd,
-                    rev_vecs=self.orig_embedding_rev,
-                    initclusters=None)
+        self.classpattern_aggregatedata = core.get_2d_data_from_patterns(
+                patterns=self.class_patterns,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)[0] 
+        self.pattern_innerseqletdata = [core.get_2d_data_from_patterns(
+                patterns=pattern.seqlets,
+                track_names=pattern_comparison_settings.track_names,
+                track_transformer=
+                    pattern_comparison_settings.track_transformer)[0]
+                for pattern in self.patterns]
 
-        if (self.verbose):
-            print("Computing fine-grained sim for top k")
-
-        #and finegrained sims for the topk nearest neighbors.
-        fine_affmat_nn = self.affmat_from_seqlets_with_nn_pairs(
-                            seqlets=motifseqlets,
-                            filter_seqlets=None,
-                            seqlet_neighbors=seqlet_neighbors,
-                            return_sparse=True)
+        #Compute best alignment and similarities for each seqlet
+        #logic for why we don't take the cluter membership of each motif
+        # seqlet as the best alignment: we want to represent the
+        # process of a new seqlet coming in as accurately as possible;
+        # we won't know th best alignment for a new seqlet coming in
+        fine_affmat_nn, seqlet_neighbors =\
+            self.get_similarities_to_motifseqlets(
+             seqlets=motifseqlets, trim_to_central=None)
 
         #fann = fine affmat nn. This is not used for density-adaptive
         # scoring; rather it's a way to get a sense of within-motif
@@ -491,27 +733,15 @@ class CoreDensityAdaptedSeqletScorer(object):
         return new_rows_densadapted_affmat_nn
 
     def __call__(self, seqlets, hits_to_return_per_seqlet=1,
-                                min_mod_precision=0):
+                       min_mod_precision=0, trim_to_central=None):
         
-        embedding_fwd, _ =\
-            self.coarsegrained_seqlet_embedder(seqlets=seqlets,
-                                               only_compute_fwd=True)
-
-        #then find the topk nearest neighbors by cosine sim
-        coarse_affmat_nn, seqlet_neighbors  =\
-            affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
-                n_neighbors=self.coarsegrained_topn, verbose=self.verbose)(
-                    fwd_vecs=self.orig_embedding_fwd,
-                    rev_vecs=self.orig_embedding_rev,
-                    initclusters=None,
-                    fwd_vecs2=embedding_fwd)
-
-        #and finegrained sims for the topk nearest neighbors.
-        fine_affmat_nn = self.affmat_from_seqlets_with_nn_pairs(
-                            seqlets=seqlets,
-                            filter_seqlets=self.motifseqlets,
-                            seqlet_neighbors=seqlet_neighbors,
-                            return_sparse=True)
+        fine_affmat_nn, seqlet_neighbors =\
+            self.get_similarities_to_motifseqlets(
+                   seqlets=seqlets, 
+                   trim_to_central=trim_to_central)
+        classpattern_simsandalnmnts = self.get_similarities_to_classpatterns(
+                                seqlets=seqlets,
+                                trim_to_central=trim_to_central)
 
         (fann_perclassum, fann_perclassavg) = (
             self.get_classwise_fine_affmat_nn_sumavg(
@@ -572,19 +802,33 @@ class CoreDensityAdaptedSeqletScorer(object):
                 if (mod_precisions[i][class_rank] > min_mod_precision):
                     seqlet = seqlets[i]
                     mappedtomotif = self.class_patterns[class_idx]
-                    (alignment, rc, sim) = self.pattern_aligner(
-                        parent_pattern=seqlet, child_pattern=mappedtomotif)
+                    (sim, alignment, isfwd) =\
+                        classpattern_simsandalnmnts[i][class_idx]
+                    rc = (isfwd==False)
+                    alignment = int(alignment)
+                    trim_indices = self.classpattern_trimindices[class_idx]
+                    #give the start and end in terms of the forward strand
+                    fullpattern_start = (seqlet.coor.start+alignment
+                           if seqlet.coor.is_revcomp==False
+                           else (seqlet.coor.end-alignment)-len(mappedtomotif))
+                    fullpattern_end = fullpattern_start+len(mappedtomotif)
+                    if ((not rc) and seqlet.coor.is_revcomp==False
+                        or (rc and seqlet.coor.is_revcomp)):
+                        #if the fwd strand of the seqlet would have aligned
+                        # to the forward motif...
+                        trim_start = fullpattern_start + trim_indices[0]
+                    else:
+                        trim_start = fullpattern_start + (
+                            len(mappedtomotif)-trim_indices[1])
                     motif_hit = MotifMatch(
                      patternidx=class_idx,
                      patternidx_rank=class_rank,
                      exampleidx=seqlet.coor.example_idx,
-                     start=seqlet.coor.start+alignment
-                           if seqlet.coor.is_revcomp==False
-                           else (seqlet.coor.end-alignment)-len(mappedtomotif),
-                     end=seqlet.coor.start+alignment+len(mappedtomotif)
-                         if seqlet.coor.is_revcomp==False
-                         else (seqlet.coor.end-alignment),
-                     is_revcomp=seqlet.coor.is_revcomp if rc==False
+                     start=fullpattern_start,
+                     end=fullpattern_end,
+                     trim_start=trim_start,
+                     trim_end=trim_start+(trim_indices[1]-trim_indices[0]),
+                     is_revcomp=seqlet.coor.is_revcomp if (not rc)
                                 else (seqlet.coor.is_revcomp==False),
                      seqlet_orig_start=seqlet.coor.start,
                      seqlet_orig_end=seqlet.coor.end,
@@ -624,9 +868,10 @@ class CoreDensityAdaptedSeqletScorer(object):
 
         return (all_seqlet_hits, patternidx_to_matches, exampleidx_to_matches)
 
+    
 MotifMatch = namedtuple("MotifMatch", 
     ["patternidx", "patternidx_rank", "exampleidx",
-     "start", "end", "is_revcomp",
+     "start", "end", "trim_start", "trim_end", "is_revcomp",
      "seqlet_orig_start", "seqlet_orig_end", "seqlet_orig_revcomp",
      "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",
@@ -634,7 +879,7 @@ MotifMatch = namedtuple("MotifMatch",
 
 MotifMatchWithImportance = namedtuple("MotifMatchWithImportance", 
     ["patternidx", "patternidx_rank", "total_importance", "exampleidx",
-     "start", "end", "is_revcomp",
+     "start", "end", "trim_start", "trim_end", "is_revcomp",
      "seqlet_orig_start", "seqlet_orig_end", "seqlet_orig_revcomp",
      "aggregate_sim",
      "mod_delta", "mod_precision", "mod_percentile",

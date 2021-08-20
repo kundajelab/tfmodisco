@@ -1008,7 +1008,6 @@ class AggregatedSeqlet(Pattern):
                             if (rev_nonzero_count is not None) else None) ,
                        has_pos_axis=has_pos_axis)
 
-
     def _pad_before(self, num_zeros):
         assert num_zeros > 0
         self.length += num_zeros

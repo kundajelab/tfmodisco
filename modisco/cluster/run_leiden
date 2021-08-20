@@ -81,27 +81,27 @@ if __name__ == "__main__":
         # (as per https://leidenalg.readthedocs.io/en/stable/advanced.html#optimiser)
         #merge nodes is used for the refinement step of Leiden
 
-        #Due to segfault bug, I'm not doing move nodes:
+        #With Leiden 0.8.4, due to segfault bug, can't do move nodes:
         # https://github.com/vtraag/leidenalg/issues/68
 
-        ##with move nodes
-        #optimiser = leidenalg.Optimiser() 
-        #optimiser.set_rng_seed(seed)
-        #optimiser.move_nodes_constrained(refined_partition_movenodes,
-        #                                 constraining_partition)
+        #with move nodes
+        optimiser = leidenalg.Optimiser() 
+        optimiser.set_rng_seed(seed)
+        optimiser.move_nodes_constrained(refined_partition_movenodes,
+                                         constraining_partition)
 
         #with merge nodes
         optimiser = leidenalg.Optimiser() 
         optimiser.set_rng_seed(seed)
         optimiser.merge_nodes_constrained(refined_partition_mergenodes,
                                           constraining_partition)
-        partition = refined_partition_mergenodes
+        #partition = refined_partition_mergenodes
 
-        ##take the partition with the best quality
-        #partition = (refined_partition_movenodes if (
-        #                  refined_partition_movenodes.quality() >
-        #                  refined_partition_mergenodes.quality()) 
-        #                  else refined_partition_mergenodes)
+        #take the partition with the best quality
+        partition = (refined_partition_movenodes if (
+                          refined_partition_movenodes.quality() >
+                          refined_partition_mergenodes.quality()) 
+                          else refined_partition_mergenodes)
 
     quality = partition.quality()
     print("########################")

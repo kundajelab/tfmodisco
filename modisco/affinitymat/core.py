@@ -506,7 +506,9 @@ class AffmatFromSeqletsWithNNpairs(object):
         self.sim_metric_on_nn_pairs = sim_metric_on_nn_pairs
 
     def __call__(self, seqlets, filter_seqlets=None,
-                       seqlet_neighbors=None, return_sparse=False):
+                       seqlet_neighbors=None, return_sparse=False,
+                       min_overlap_override=None):
+
         (all_fwd_data, all_rev_data) =\
             modiscocore.get_2d_data_from_patterns(
                 patterns=seqlets,
@@ -532,26 +534,36 @@ class AffmatFromSeqletsWithNNpairs(object):
                      neighbors_of_things_to_scan=seqlet_neighbors,
                      filters=filters_all_fwd_data,
                      things_to_scan=all_fwd_data,
-                     min_overlap=self.pattern_comparison_settings.min_overlap,
+                     min_overlap=(
+                      self.pattern_comparison_settings.min_overlap
+                      if min_overlap_override is None else
+                      min_overlap_override),
                      return_sparse=return_sparse) 
         if (filters_all_rev_data is not None):
             affmat_rev = self.sim_metric_on_nn_pairs(
                  neighbors_of_things_to_scan=seqlet_neighbors,
                  filters=filters_all_rev_data,
                  things_to_scan=all_fwd_data,
-                 min_overlap=self.pattern_comparison_settings.min_overlap,
+                 min_overlap=(
+                      self.pattern_comparison_settings.min_overlap
+                      if min_overlap_override is None else
+                      min_overlap_override),
                  return_sparse=return_sparse) 
         else:
             affmat_rev = None
         if (return_sparse==False):
             if (len(affmat_fwd.shape)==3):
-                #dims are N x N x 2, where first entry of last idx is sim,
-                # and the second entry is the alignment.
+                #dims are N x M x 2, where first entry of last idx is sim,
+                # and the second entry is the alignment. The alignment is
+                # the offset of the filter w.r.t. things_to_scan. Also,
+                # thigns_to_scan is what is padded
                 if (affmat_rev is None):
                     affmat = affmat_fwd
                 else:
-                    #will return something that's N x N x 3, where the third
+                    #will return something that's N x M x 3, where the third
                     # entry in last dim is is_fwd 
+                    #is_fwd==False means the alignment and sim returned is
+                    # for the reverse-complement filter
                     is_fwd = (affmat_fwd[:,:,0] > affmat_rev[:,:,0])*1.0
                     affmat = np.zeros((affmat_fwd.shape[0],
                                        affmat_fwd.shape[1],3))
@@ -722,9 +734,16 @@ class CrossContinJaccardSingleRegionWithArgmax(object):
                  np.sum(np.maximum(np.abs(snapshot[None,:,:]),
                                    np.abs(filters[:,:,:])),axis=(1,2)))
         argmax_positions = np.argmax(full_crossmetric, axis=1)
-        return np.array([full_crossmetric[np.arange(len(argmax_positions)),
-                                          argmax_positions],
-                         argmax_positions])
+        try:
+            return np.array([full_crossmetric[np.arange(len(argmax_positions)),
+                                              argmax_positions],
+                             argmax_positions])
+        except e:
+            print(full_crossmetric.shape)
+            print(type(full_crossmetric))
+            print(full_crossmetric)
+            print(argmax_positions)
+            raise e
 
 
 class CrossContinJaccardSingleRegion(CrossContinJaccardSingleRegionWithArgmax):

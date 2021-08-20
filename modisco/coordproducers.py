@@ -486,6 +486,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
                        min_passing_windows_frac, max_passing_windows_frac,
                        separate_pos_neg_thresholds,
                        max_seqlets_total,
+                       sign_to_return=None,
                        progress_update=5000,
                        verbose=True, plot_save_dir="figures"): 
         self.sliding = sliding
@@ -497,6 +498,7 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
         self.max_passing_windows_frac = max_passing_windows_frac
         self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
         self.max_seqlets_total = None
+        self.sign_to_return = sign_to_return
         self.progress_update = progress_update
         self.verbose = verbose
         self.plot_save_dir = plot_save_dir
@@ -654,7 +656,8 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
             verbose=self.verbose,
             other_info_tracks={'best_window_idx':
              [x[left_padding_to_remove:-right_padding_to_remove] for x in
-              precisiontransformed_bestwindowsizeidxs]})
+              precisiontransformed_bestwindowsizeidxs]},
+            sign_to_return=self.sign_to_return)
 
         VariableWindowAroundChunks.count += 1
         
@@ -667,7 +670,10 @@ class VariableWindowAroundChunks(AbstractCoordProducer):
 # with sliding windows of size window_size
 def identify_coords(score_track, pos_threshold, neg_threshold,
                     window_size, flank, suppress,
-                    max_seqlets_total, verbose, other_info_tracks={}):
+                    max_seqlets_total, sign_to_return,
+                    verbose, other_info_tracks={}):
+
+    assert sign_to_return in [1, -1, None]
 
     for other_info_track in other_info_tracks.values():
         assert all([x.shape==y.shape for x,y
@@ -680,11 +686,29 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
     #Note that the threshold comparisons need to be >= and not just > for
     # cases where there are lots of ties at the high end (e.g. with an IR
     # tranformation that gives a lot of values that have a precision of 1.0)
-    cp_score_track = [
-        np.array([np.abs(y) if (y >= pos_threshold
-                        or y <= neg_threshold)
-                       else -np.inf for y in x])
-        for x in cp_score_track]
+    if (sign_to_return is None):
+        cp_score_track = [
+            np.array([np.abs(y) if (y >= pos_threshold
+                            or y <= neg_threshold)
+                           else -np.inf for y in x])
+            for x in cp_score_track]
+    elif (sign_to_return==1):
+        if (verbose):
+            print("Only returning positive coords!")
+        cp_score_track = [
+            np.array([np.abs(y) if (y >= pos_threshold)
+                           else -np.inf for y in x])
+            for x in cp_score_track]
+    elif (sign_to_return==-1):
+        if (verbose):
+            print("Only returning negative coords!")
+        cp_score_track = [
+            np.array([np.abs(y) if (y <= neg_threshold)
+                           else -np.inf for y in x])
+            for x in cp_score_track]
+    else:
+        raise RuntimeError("Invalid value for sign_to_return: "
+                           +str(sign_to_return))
 
     coords = []
     for example_idx,single_score_track in enumerate(cp_score_track):
@@ -705,7 +729,8 @@ def identify_coords(score_track, pos_threshold, neg_threshold,
             #need to be able to expand without going off the edge
             if ((argmax >= flank) and
                 (argmax < (len(single_score_track)-flank))): 
-
+                #print("coord at ",argmax,"to",argmax+window_size, "val",max_val)
+                #print("flank is",flank)
                 coord = SeqletCoordsFWAP(
                     example_idx=example_idx,
                     start=argmax-flank,
@@ -841,6 +866,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
                        max_passing_windows_frac,
                        separate_pos_neg_thresholds=False,
                        max_seqlets_total=None,
+                       sign_to_return=None,
                        progress_update=5000,
                        verbose=True,
                        plot_save_dir="figures"):
@@ -853,6 +879,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
         self.max_passing_windows_frac = max_passing_windows_frac
         self.separate_pos_neg_thresholds = separate_pos_neg_thresholds
         self.max_seqlets_total = None
+        self.sign_to_return = sign_to_return
         self.progress_update = progress_update
         self.verbose = verbose
         self.plot_save_dir = plot_save_dir
@@ -1005,6 +1032,7 @@ class FixedWindowAroundChunks(AbstractCoordProducer):
             flank=self.flank,
             suppress=self.suppress,
             max_seqlets_total=self.max_seqlets_total,
+            sign_to_return=self.sign_to_return,
             verbose=self.verbose)
 
         return CoordProducerResults(
