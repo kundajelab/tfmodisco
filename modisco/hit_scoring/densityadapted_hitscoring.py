@@ -615,12 +615,26 @@ class CoreDensityAdaptedSeqletScorer2(object):
             self.get_classwise_fine_affmat_nn_sumavg(
                 fine_affmat_nn=fine_affmat_nn,
                 seqlet_neighbors=seqlet_neighbors))
+        if (self.verbose):
+            print("Insantiating a precision scorer based on fann_perclasssum")
         self.fann_perclasssum_precscorer = util.ClasswisePrecisionScorer(
             true_classes=motifmemberships,
             class_membership_scores=fann_perclassum) 
+        if (self.verbose):
+            print("Insantiating a precision scorer based on fann_perclassavg")
         self.fann_perclassavg_precscorer = util.ClasswisePrecisionScorer(
             true_classes=motifmemberships,
             class_membership_scores=fann_perclassavg) 
+
+        #As a baseline, compare to a scorer that uses aggregate similarity
+        classpattern_simsandalnmnts = self.get_similarities_to_classpatterns(
+                                seqlets=motifseqlets,
+                                trim_to_central=0)
+        if (self.verbose):
+            print("Insantiating a precision scorer based on aggregate sim")
+        self.aggsim_precscorer = util.ClasswisePrecisionScorer(
+            true_classes=motifmemberships,
+            class_membership_scores=classpattern_simsandalnmnts[:,:,0]) 
                 
         if (self.verbose):
             print("Mapping affinity to distmat")
