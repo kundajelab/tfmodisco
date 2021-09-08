@@ -482,6 +482,9 @@ def get_ic_trimming_indices(ppm, background, threshold, pseudocount=0.001):
     per_position_ic = compute_per_position_ic(
                        ppm=ppm, background=background, pseudocount=pseudocount)
     passing_positions = np.where(per_position_ic >= threshold)
+    if (len(passing_positions[0])==0):
+        raise RuntimeError("No positions meet the ic threshold "
+                           +str(threshold))
     return (passing_positions[0][0], passing_positions[0][-1]+1)
 
 
