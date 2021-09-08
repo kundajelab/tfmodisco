@@ -332,14 +332,20 @@ class CoreDensityAdaptedSeqletScorer2(object):
             (len(fine_affmat_nn), num_classes))
         fine_affmat_nn_perclassavg = np.zeros(
             (len(fine_affmat_nn), num_classes))
+
+        if (exclude_self):
+            self_not_in_nn = 0 #keep a count for sanity-check purposes
+
         for i in range(len(fine_affmat_nn)):
+            if (exclude_self): 
+                #exclude_self means exclude the self-similarity
+                # (which would be 1.0 assuming the alignment works out),
+                # for the case where we are just sanity-checking
+                # how this score
+                # works on the original motif seqlets themselves.
+                if (i not in seqlet_neighbors[i]):
+                    self_not_in_nn += 1
             for classidx in range(num_classes):
-                if (exclude_self): 
-                    #exclude_self means exclude the self-similarity
-                    # (which would be 1.0), for the
-                    # case where we are just sanity-checking how this score
-                    # works on the original motif seqlets themselves.
-                    assert i in seqlet_neighbors[i]
                 class_entries = [fine_affmat_nn[i][j] for
                    j in range(len(fine_affmat_nn[i]))
                    if ((self.motifmemberships[
@@ -351,6 +357,12 @@ class CoreDensityAdaptedSeqletScorer2(object):
                         np.sum(class_entries)
                     fine_affmat_nn_perclassavg[i][classidx] =\
                         np.mean(class_entries)
+
+        if (exclude_self):
+            print(self_not_in_nn,"seqlets out of",len(fine_affmat_nn),
+                  "did not have themselves in their nearest neighbs, likely"
+                  "due to alignment issues") 
+
         return (fine_affmat_nn_perclassum, fine_affmat_nn_perclassavg)
 
     def pad_seqletdata_to_align(self, fwdseqletdata, revseqletdata,
