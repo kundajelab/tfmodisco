@@ -319,8 +319,10 @@ class CoreDensityAdaptedSeqletScorer2(object):
         self.seqlet_batch_size = seqlet_batch_size
         self.build()
 
+    #fine_affmat_nn and seqlet_neighbors are lists of lists, indicating which
+    # seqlets were the closest ones
     def get_classwise_fine_affmat_nn_sumavg(self,
-            fine_affmat_nn, seqlet_neighbors):
+            fine_affmat_nn, seqlet_neighbors, exclude_self=False):
         num_classes = max(self.motifmemberships)+1
         #(not used in the density-adapted scoring) for each class, compute
         # the total fine-grained similarity for each class in the topk
@@ -332,9 +334,18 @@ class CoreDensityAdaptedSeqletScorer2(object):
             (len(fine_affmat_nn), num_classes))
         for i in range(len(fine_affmat_nn)):
             for classidx in range(num_classes):
+                if (exclude_self): 
+                    #exclude_self means exclude the self-similarity
+                    # (which would be 1.0), for the
+                    # case where we are just sanity-checking how this score
+                    # works on the original motif seqlets themselves.
+                    assert i in seqlet_neighbors[i]
                 class_entries = [fine_affmat_nn[i][j] for
                    j in range(len(fine_affmat_nn[i]))
-                   if self.motifmemberships[seqlet_neighbors[i][j]]==classidx]
+                   if ((self.motifmemberships[
+                              seqlet_neighbors[i][j]]==classidx)
+                       and (exclude_self==False
+                            or seqlet_neighbors[i][j] != i) )]
                 if (len(class_entries) > 0):
                     fine_affmat_nn_perclassum[i][classidx] =\
                         np.sum(class_entries)
@@ -614,7 +625,8 @@ class CoreDensityAdaptedSeqletScorer2(object):
         (fann_perclassum, fann_perclassavg) = (
             self.get_classwise_fine_affmat_nn_sumavg(
                 fine_affmat_nn=fine_affmat_nn,
-                seqlet_neighbors=seqlet_neighbors))
+                seqlet_neighbors=seqlet_neighbors,
+                exclude_self=True))
         self.fann_perclasssum_precscorer = util.ClasswisePrecisionScorer(
             true_classes=motifmemberships,
             class_membership_scores=fann_perclassum) 
