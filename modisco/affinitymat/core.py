@@ -713,6 +713,43 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         return to_return
 
 
+class CosineSingleRegionWithArgmax(object):
+
+    def __init__(self):
+        self.returns_pos = True
+
+    def __call__(self, filters, thing_to_scan):
+        assert len(thing_to_scan.shape)==2
+        assert len(filters.shape)==3
+        len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
+        full_crossmetric = np.zeros((filters.shape[0],len_output))
+
+        magnitude_filters = np.sqrt(
+            np.sum(np.square(filters), axis=(1,2)))
+    
+        for idx in range(len_output):
+            #cross-correlation is the same as the cosine similarity of the
+            # mean-normalized vectors
+            snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
+            magnitude_snapshot = np.sqrt(np.sum(np.square(snapshot)))
+            
+            full_crossmetric[:,idx] = np.sum(
+                snapshot[None,:,:]*filters, axis=(1,2))/(
+                  magnitude_snapshot*magnitude_filters)
+
+        argmax_positions = np.argmax(full_crossmetric, axis=1)
+        try:
+            return np.array([full_crossmetric[np.arange(len(argmax_positions)),
+                                              argmax_positions],
+                             argmax_positions])
+        except e:
+            print(full_crossmetric.shape)
+            print(type(full_crossmetric))
+            print(full_crossmetric)
+            print(argmax_positions)
+            raise e
+
+
 class CrossCorrSingleRegionWithArgmax(object):
 
     def __init__(self):
