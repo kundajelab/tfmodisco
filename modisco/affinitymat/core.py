@@ -801,6 +801,17 @@ class CrossCorrSingleRegion(CrossCorrSingleRegionWithArgmax):
         return max_vals
 
 
+class CosineSingleRegion(CosineSingleRegionWithArgmax):
+
+    def __init__(self):
+        self.returns_pos = False
+
+    def __call__(self, filters, thing_to_scan):
+        max_vals, argmax_pos = CosineSingleRegionWithArgmax.__call__(
+                self, filters, thing_to_scan)
+        return max_vals
+
+
 class CrossContinJaccardSingleRegionWithArgmax(object):
 
     def __init__(self):
