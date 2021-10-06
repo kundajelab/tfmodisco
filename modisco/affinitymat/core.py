@@ -726,7 +726,7 @@ class CrossCorrSingleRegionWithArgmax(object):
 
         meannorm_filters = filters - np.mean(filters, axis=(1,2))[:,None,None]
         magnitude_meannorm_filters = np.sqrt(
-            np.sum(np.square(meannorm_filters), axis=(1,2))
+            np.sum(np.square(meannorm_filters), axis=(1,2)))
     
         for idx in range(len_output):
             #cross-correlation is the same as the cosine similarity of the
