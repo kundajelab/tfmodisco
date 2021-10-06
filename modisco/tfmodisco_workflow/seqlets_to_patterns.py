@@ -769,8 +769,9 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                         cluster_to_eliminated_motif[i] = motif
         return cluster_to_motif, cluster_to_eliminated_motif
 
-    def do_density_adaptation(self, new_rows_distmat_nn, new_rows_nn,
-                                    new_rows_betas, new_rows_normfactors):
+    @staticmethod
+    def do_density_adaptation(new_rows_distmat_nn, new_rows_nn,
+                              new_rows_betas, new_rows_normfactors):
         new_rows_densadapted_affmat_nn = []
         for i in range(len(new_rows_distmat_nn)):
             densadapted_row = []

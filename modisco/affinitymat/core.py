@@ -713,6 +713,57 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         return to_return
 
 
+class CrossCorrSingleRegionWithArgmax(object):
+
+    def __init__(self):
+        self.returns_pos = True
+
+    def __call__(self, filters, thing_to_scan):
+        assert len(thing_to_scan.shape)==2
+        assert len(filters.shape)==3
+        len_output = 1+thing_to_scan.shape[0]-filters.shape[1] 
+        full_crossmetric = np.zeros((filters.shape[0],len_output))
+
+        meannorm_filters = filters - np.mean(filters, axis=(1,2))[:,None,None]
+        magnitude_meannorm_filters = np.sqrt(
+            np.sum(np.square(meannorm_filters), axis=(1,2))
+    
+        for idx in range(len_output):
+            #cross-correlation is the same as the cosine similarity of the
+            # mean-normalized vectors
+            snapshot = thing_to_scan[idx:idx+filters.shape[1],:]
+            meannorm_snapshot = (snapshot - np.mean(snapshot))
+            magnitude_meannorm_snapshot = np.sqrt(np.sum(
+                                           np.square(meannorm_snapshot)))
+            
+            full_crossmetric[:,idx] = np.sum(
+                meannorm_snapshot[None,:,:]*meannorm_filters, axis=(1,2))/(
+                  magnitude_meannorm_snapshot*magnitude_meannorm_filters)
+
+        argmax_positions = np.argmax(full_crossmetric, axis=1)
+        try:
+            return np.array([full_crossmetric[np.arange(len(argmax_positions)),
+                                              argmax_positions],
+                             argmax_positions])
+        except e:
+            print(full_crossmetric.shape)
+            print(type(full_crossmetric))
+            print(full_crossmetric)
+            print(argmax_positions)
+            raise e
+
+
+class CrossCorrSingleRegion(CrossCorrSingleRegionWithArgmax):
+
+    def __init__(self):
+        self.returns_pos = False
+
+    def __call__(self, filters, thing_to_scan):
+        max_vals, argmax_pos = CrossCorrSingleRegionWithArgmax.__call__(
+                self, filters, thing_to_scan)
+        return max_vals
+
+
 class CrossContinJaccardSingleRegionWithArgmax(object):
 
     def __init__(self):
@@ -753,8 +804,8 @@ class CrossContinJaccardSingleRegion(CrossContinJaccardSingleRegionWithArgmax):
 
     def __call__(self, filters, thing_to_scan):
         max_vals, argmax_pos =\
-            super(CrossContinJaccardSingleRegion, self).__call__(
-                                                       filters, thing_to_scan)
+            CrossContinJaccardSingleRegionWithArgmax.__call__(self,
+                                                   filters, thing_to_scan)
         return max_vals
 
 
