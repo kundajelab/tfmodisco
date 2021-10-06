@@ -713,7 +713,7 @@ class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
         return to_return
 
 
-class CosineSingleRegionWithArgmax(object):
+class CrossCosineSingleRegionWithArgmax(object):
 
     def __init__(self):
         self.returns_pos = True
@@ -801,13 +801,13 @@ class CrossCorrSingleRegion(CrossCorrSingleRegionWithArgmax):
         return max_vals
 
 
-class CosineSingleRegion(CosineSingleRegionWithArgmax):
+class CrossCosineSingleRegion(CrossCosineSingleRegionWithArgmax):
 
     def __init__(self):
         self.returns_pos = False
 
     def __call__(self, filters, thing_to_scan):
-        max_vals, argmax_pos = CosineSingleRegionWithArgmax.__call__(
+        max_vals, argmax_pos = CrossCosineSingleRegionWithArgmax.__call__(
                 self, filters, thing_to_scan)
         return max_vals
 
