@@ -20,6 +20,7 @@ if __name__== '__main__':
                             'matplotlib>=2.2.5'],
           extras_require={
             'tensorflow': ['tensorflow>=1.7'],
-            'tensorflow with gpu': ['tensorflow-gpu>=1.7']},
+            'tensorflow with gpu': ['tensorflow-gpu>=1.7'],
+            'pynn': ['pynndescent']},
           scripts=['modisco/cluster/run_leiden'],
           name='modisco')

@@ -269,6 +269,9 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
                     # should be the nearest neighbors
                     if (len(sims_this_ex)==self.n_neighbors):
                         break
+                assert len(neighbors_seen)==self.n_neighbors
+                sims.append(sims_this_ex)
+                neighbors_this_ex.append(neighbors_this_ex)
                 
         else:
             #Need to subtract from 1 because pynndescent returns 1 - cosinesim
