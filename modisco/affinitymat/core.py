@@ -212,12 +212,17 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
 
         #build the index
         if (self.verbose):
-            print(datetime.now(),"Building the index")
-            sys.stdout.flush()
+            print(datetime.now(),"Building the index"); sys.stdout.flush()
+
         index = NNDescent(fwd_vecs2, metric="cosine", n_jobs=self.n_jobs)
+
         if (self.verbose):
-            print(datetime.now(),"Index built")
-            sys.stdout.flush()
+            print(datetime.now(),"Preparing the index"); sys.stdout.flush()
+
+        index.prepare()
+
+        if (self.verbose):
+            print(datetime.now(),"Index ready"); sys.stdout.flush()
 
         if (self.verbose):
             print(datetime.now(),"Querying neighbors for fwd")
