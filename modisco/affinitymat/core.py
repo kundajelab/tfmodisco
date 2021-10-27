@@ -270,8 +270,10 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
                     if (len(sims_this_ex)==self.n_neighbors):
                         break
                 assert len(neighbors_seen)==self.n_neighbors
-                sims.append(sims_this_ex)
-                neighbors.append(neighbors_this_ex)
+                sims.append(np.array(sims_this_ex))
+                #neighbors need to be converted to integers as they'll
+                # be used later for indexing
+                neighbors.append(np.array(neighbors_this_ex).astype("int"))
                 
         else:
             #Need to subtract from 1 because pynndescent returns 1 - cosinesim
