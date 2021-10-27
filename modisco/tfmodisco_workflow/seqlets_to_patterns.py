@@ -89,6 +89,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                         .AdvancedGappedKmerEmbedderFactory()),
 
                        nearest_neighbors_to_compute=500,
+                       use_pynnd=False,
 
                        affmat_correlation_threshold=0.15,
                        filter_beyond_first_round=False,
@@ -143,6 +144,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
         self.embedder_factory = embedder_factory
 
         self.nearest_neighbors_to_compute = nearest_neighbors_to_compute
+        self.use_pynnd = use_pynnd
 
         self.affmat_correlation_threshold = affmat_correlation_threshold
         self.filter_beyond_first_round = filter_beyond_first_round
@@ -288,14 +290,22 @@ class TfModiscoSeqletsToPatternsFactory(object):
                 n_jobs=self.n_cores)
 
         #affinity matrix from embeddings
-        coarse_affmat_computer =\
-            affinitymat.core.SparseAffmatFromFwdAndRevSeqletEmbeddings(
-                seqlets_to_1d_embedder=seqlets_to_1d_embedder,
-                sparse_affmat_from_fwdnrev1dvecs=\
-                    affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
+        if (self.use_pynnd):
+            sparse_affmat_from_fwdnrev1dvecs = (
+             affinitymat.core.PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
+                n_neighbors=self.nearest_neighbors_to_compute,
+                verbose=self.verbose,
+                n_jobs=self.n_cores))
+        else:
+            sparse_affmat_from_fwdnrev1dvecs =\
+                affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
                         n_neighbors=self.nearest_neighbors_to_compute, 
-                        verbose=self.verbose),
-                verbose=self.verbose)
+                        verbose=self.verbose)
+        coarse_affmat_computer =\
+          affinitymat.core.SparseAffmatFromFwdAndRevSeqletEmbeddings(
+            seqlets_to_1d_embedder=seqlets_to_1d_embedder,
+            sparse_affmat_from_fwdnrev1dvecs=sparse_affmat_from_fwdnrev1dvecs,
+            verbose=self.verbose)
 
         affmat_from_seqlets_with_nn_pairs =\
             affinitymat.core.AffmatFromSeqletsWithNNpairs(
