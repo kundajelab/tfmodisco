@@ -254,7 +254,7 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
                 #iterate in order of similarities in the fwd/rev sim search
                 for j in fwdrev_dists_argsort[i]:
                     #get the neighbor
-                    neighbor = fwdrev_neighbs[j]
+                    neighbor = fwdrev_neighbs[i][j]
                     #make sure it hasn't appeared before (this can happen if
                     # a point is a neighbor according to both the fwd and
                     # the rev search)
@@ -263,7 +263,7 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
                         neighbors_this_ex.append(neighbor)
                         #Need to subtract from 1 because pynndescent returns
                         # 1 - cosinesim
-                        sims_this_ex.append(1 - fwdrev_dists[j])
+                        sims_this_ex.append(1 - fwdrev_dists[i][j])
                     #leave once we have n_neighbors neighbors; since we
                     # iterated over the distances in ascending order, these
                     # should be the nearest neighbors
