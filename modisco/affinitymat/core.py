@@ -214,7 +214,7 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
         if (self.verbose):
             print(datetime.now(),"Building the index"); sys.stdout.flush()
 
-        index = NNDescent(fwd_vecs2, metric="cosine", n_jobs=self.n_jobs)
+        index = NNDescent(fwd_vecs2, metric="cosine")
 
         if (self.verbose):
             print(datetime.now(),"Preparing the index"); sys.stdout.flush()
