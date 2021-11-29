@@ -58,8 +58,7 @@ jobs:
       - run:
           command: | #this seems necessary for multi-line commands
             source activate test-environment
-            pip install .
-            pip install tensorflow
+            pip install -e .[tensorflow]
       - run: pwd
       - run: ls
       #Actually run the tests
