@@ -11,6 +11,8 @@ jobs:
       - run: echo $HOME
       - run: bash miniconda.sh -b -p $HOME/miniconda
       - run: export PATH="$HOME/miniconda/bin:$PATH"
+      - run: echo $PATH
+      - run: ls $HOME/miniconda/bin
       - run: hash -r
       - run: conda config --set always_yes yes --set changeps1 no
       - run: conda update -q conda
