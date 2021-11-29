@@ -15,7 +15,7 @@ if __name__== '__main__':
           setup_requires=[],
           install_requires=['numpy>=1.9', 'joblib>=0.11', 
                             'scikit-learn>=0.19',
-                            'h5py>=2.5', 'leidenalg>=0.7.0',
+                            'h5py>=2.5', 'leidenalg>=0.8.7',
                             'tqdm>=4.38.0', 'psutil>=5.4.8',
                             'matplotlib>=2.2.5'],
           extras_require={
