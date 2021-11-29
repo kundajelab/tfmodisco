@@ -18,7 +18,10 @@ jobs:
       - run: conda update -q conda
       - run: conda info -a
       - run: conda create -q -n test-environment python=3.8 numpy pytest h5py nose
-      - run: which pytest
+      - run:
+          command: |
+            source activate test-environment
+            which pytest
       - run:
           command: |
             source activate test-environment
