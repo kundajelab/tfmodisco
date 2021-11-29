@@ -1,4 +1,4 @@
-version: 2.1 #I copied this from https://github.com/kundajelab/basepairmodels/blob/941d354f4526f7dd86c51fed0e22ef5b7dd75c38/.circleci/config.yml
+version: 2.1
 
 jobs:
   build-and-test:
@@ -9,7 +9,7 @@ jobs:
       #Install miniconda and create the testing environment
       - run: wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
       - run: bash miniconda.sh -b -p $HOME/miniconda
-      #writing to $BASH_ENV is apparently the way to preserv an environment var between steps
+      #writing to $BASH_ENV is apparently the way to preserve an environment variable between "run" steps
       - run: echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> $BASH_ENV
       - run: echo $PATH
       - run: ls $HOME/miniconda/bin
@@ -17,7 +17,7 @@ jobs:
       - run: conda config --set always_yes yes --set changeps1 no
       - run: conda update -q conda
       - run: conda info -a
-      - run: conda create -q -n test-environment python=3.8 numpy pytest h5py nose
+      - run: conda create -q -n test-environment python=3.8 pytest
       #MEME installation
       - run: sudo apt-get install -y ghostscript-x
       - run: mkdir -p ~/.config/matplotlib/
@@ -41,12 +41,12 @@ jobs:
       - run:
           command: | #this seems necessary for multi-line commands
             cd meme-5.1.1
-            ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
+            ./configure --prefix=$HOME/meme --with-url=http://meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
       - run:
           command: | #this seems necessary for multi-line commands
             cd meme-5.1.1
             make
-      #- make test; skip the tests since some of them are buggy and stall the build
+      #skip the MEME tests since some of them are buggy and stall the build
       # (see: https://groups.google.com/forum/#!topic/meme-suite/D3XR7Ws1gec)
       - run:
           command: | #this seems necessary for multi-line commands
@@ -54,7 +54,7 @@ jobs:
             make install
       - run: echo 'export PATH="$HOME/meme/bin:$PATH"' >> $BASH_ENV
       - run: echo $PATH
-      #Actually run the tests
+      #Install modisco (and associated dependencies) - note that tensorflow is not automatically installed, so we install separately
       - run:
           command: | #this seems necessary for multi-line commands
             source activate test-environment
@@ -62,27 +62,11 @@ jobs:
             pip install tensorflow
       - run: pwd
       - run: ls
+      #Actually run the tests
       - run:
           command: |
             source activate test-environment
-            pytest         
-#      - restore_cache:
-#      # Read about caching dependencies: https://circleci.com/docs/2.0/caching/
-#          key: deps9-{{ .Branch }}-{{ checksum "Pipfile.lock" }}
-#      - run:
-#          command: |
-#            sudo pip install pipenv
-#            pipenv install
-#      - save_cache: # cache Python dependencies using checksum of Pipfile as the cache-key
-#          key: deps9-{{ .Branch }}-{{ checksum "Pipfile.lock" }}
-#          paths:
-#            - "venv"
-#            - "/usr/local/bin"
-#            - "/usr/local/lib/python3.7/site-packages"
-#      - run:
-#          command: |
-#            pipenv run python -m pytest
-#          name: Test
+            pytest 
 
 workflows:
   main:
