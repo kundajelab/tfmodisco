@@ -12,6 +12,7 @@ import gc
 import sklearn
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from datetime import datetime
 
 
 def print_memory_use():
@@ -175,6 +176,111 @@ def top_k_fwdandrev_dot_prod(fwd_vecs2, fwd_vecs, rev_vecs,
     #sorted_topk_indices = np.take_along_axis(arr=top_k_indices,
     #                                       indices=sims_argsort_result, axis=1)
     return (sorted_topk_indices, sorted_topk_sims)
+
+
+class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
+        AbstractSparseAffmatFromFwdAndRevOneDVecs):
+
+    def __init__(self, n_neighbors, n_jobs, verbose):
+        self.n_neighbors = n_neighbors   
+        self.n_jobs = n_jobs
+        self.verbose = verbose
+        if (self.verbose):
+            print("Using pynnd for nearest neighbor cosine sims")
+
+    def __call__(self, fwd_vecs, rev_vecs, initclusters, fwd_vecs2=None):
+
+        from pynndescent import NNDescent
+
+        assert initclusters is None, ("Currently I haven't built support"
+          +" for initclusters; use SparseNumpyCosineSimFromFwdAndRevOneDVecs"
+          +" instead")
+
+        #fwd_vecs2 is used when you don't just want to compute self-similarities
+
+        #normalize the vectors 
+        fwd_vecs = magnitude_norm_sparsemat(sparse_mat=fwd_vecs)
+        if (rev_vecs is not None):
+            rev_vecs = magnitude_norm_sparsemat(sparse_mat=rev_vecs)
+        else:
+            rev_vecs = None
+
+        if (fwd_vecs2 is None):
+            fwd_vecs2 = fwd_vecs
+        else:
+            fwd_vecs2 = magnitude_norm_sparsemat(sparse_mat=fwd_vecs2)
+
+        #build the index
+        if (self.verbose):
+            print(datetime.now(),"Building the index"); sys.stdout.flush()
+
+        index = NNDescent(fwd_vecs2, metric="cosine")
+
+        if (self.verbose):
+            print(datetime.now(),"Preparing the index"); sys.stdout.flush()
+
+        index.prepare()
+
+        if (self.verbose):
+            print(datetime.now(),"Index ready"); sys.stdout.flush()
+
+        if (self.verbose):
+            print(datetime.now(),"Querying neighbors for fwd")
+            sys.stdout.flush()
+
+        fwd_neighbs, fwd_dists = index.query(fwd_vecs, k=self.n_neighbors) 
+
+        if (rev_vecs is not None):
+            if (self.verbose):
+                print(datetime.now(),"Querying neighbors for rev")
+                sys.stdout.flush()
+            rev_neighbs, rev_dists = index.query(fwd_vecs, k=self.n_neighbors) 
+            if (self.verbose):
+                print(datetime.now(),"Unifying fwd and rev")
+                sys.stdout.flush()
+
+            
+            fwdrev_neighbs = np.concatenate([fwd_neighbs, rev_neighbs], axis=1)
+            fwdrev_dists = np.concatenate([fwd_dists, rev_dists], axis=1)
+            fwdrev_dists_argsort = np.argsort(fwdrev_dists, axis=1)
+
+            #need to remove redundancy
+            sims = [] 
+            neighbors = []
+            for i in range(len(fwdrev_dists_argsort)):
+                sims_this_ex = []
+                neighbors_this_ex = []
+                neighbors_seen = set()
+                #iterate in order of similarities in the fwd/rev sim search
+                for j in fwdrev_dists_argsort[i]:
+                    #get the neighbor
+                    neighbor = fwdrev_neighbs[i][j]
+                    #make sure it hasn't appeared before (this can happen if
+                    # a point is a neighbor according to both the fwd and
+                    # the rev search)
+                    if neighbor not in neighbors_seen:
+                        neighbors_seen.add(neighbor)
+                        neighbors_this_ex.append(neighbor)
+                        #Need to subtract from 1 because pynndescent returns
+                        # 1 - cosinesim
+                        sims_this_ex.append(1 - fwdrev_dists[i][j])
+                    #leave once we have n_neighbors neighbors; since we
+                    # iterated over the distances in ascending order, these
+                    # should be the nearest neighbors
+                    if (len(sims_this_ex)==self.n_neighbors):
+                        break
+                assert len(neighbors_seen)==self.n_neighbors
+                sims.append(np.array(sims_this_ex))
+                #neighbors need to be converted to integers as they'll
+                # be used later for indexing
+                neighbors.append(np.array(neighbors_this_ex).astype("int"))
+                
+        else:
+            #Need to subtract from 1 because pynndescent returns 1 - cosinesim
+            sims = 1.0 - fwd_dists 
+            neighbors = fwd_neighbs 
+
+        return sims, neighbors
 
 
 class SparseNumpyCosineSimFromFwdAndRevOneDVecs(

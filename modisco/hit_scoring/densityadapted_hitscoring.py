@@ -319,8 +319,10 @@ class CoreDensityAdaptedSeqletScorer2(object):
         self.seqlet_batch_size = seqlet_batch_size
         self.build()
 
+    #fine_affmat_nn and seqlet_neighbors are lists of lists, indicating which
+    # seqlets were the closest ones
     def get_classwise_fine_affmat_nn_sumavg(self,
-            fine_affmat_nn, seqlet_neighbors):
+            fine_affmat_nn, seqlet_neighbors, exclude_self=False):
         num_classes = max(self.motifmemberships)+1
         #(not used in the density-adapted scoring) for each class, compute
         # the total fine-grained similarity for each class in the topk
@@ -330,16 +332,37 @@ class CoreDensityAdaptedSeqletScorer2(object):
             (len(fine_affmat_nn), num_classes))
         fine_affmat_nn_perclassavg = np.zeros(
             (len(fine_affmat_nn), num_classes))
+
+        if (exclude_self):
+            self_not_in_nn = 0 #keep a count for sanity-check purposes
+
         for i in range(len(fine_affmat_nn)):
+            if (exclude_self): 
+                #exclude_self means exclude the self-similarity
+                # (which would be 1.0 assuming the alignment works out),
+                # for the case where we are just sanity-checking
+                # how this score
+                # works on the original motif seqlets themselves.
+                if (i not in seqlet_neighbors[i]):
+                    self_not_in_nn += 1
             for classidx in range(num_classes):
                 class_entries = [fine_affmat_nn[i][j] for
                    j in range(len(fine_affmat_nn[i]))
-                   if self.motifmemberships[seqlet_neighbors[i][j]]==classidx]
+                   if ((self.motifmemberships[
+                              seqlet_neighbors[i][j]]==classidx)
+                       and (exclude_self==False
+                            or seqlet_neighbors[i][j] != i) )]
                 if (len(class_entries) > 0):
                     fine_affmat_nn_perclassum[i][classidx] =\
                         np.sum(class_entries)
                     fine_affmat_nn_perclassavg[i][classidx] =\
                         np.mean(class_entries)
+
+        if (exclude_self):
+            print(self_not_in_nn,"seqlets out of",len(fine_affmat_nn),
+                  "did not have themselves in their nearest neighbs, likely"
+                  "due to alignment issues") 
+
         return (fine_affmat_nn_perclassum, fine_affmat_nn_perclassavg)
 
     def pad_seqletdata_to_align(self, fwdseqletdata, revseqletdata,
@@ -614,13 +637,28 @@ class CoreDensityAdaptedSeqletScorer2(object):
         (fann_perclassum, fann_perclassavg) = (
             self.get_classwise_fine_affmat_nn_sumavg(
                 fine_affmat_nn=fine_affmat_nn,
-                seqlet_neighbors=seqlet_neighbors))
+                seqlet_neighbors=seqlet_neighbors,
+                exclude_self=True))
+        if (self.verbose):
+            print("Insantiating a precision scorer based on fann_perclasssum")
         self.fann_perclasssum_precscorer = util.ClasswisePrecisionScorer(
             true_classes=motifmemberships,
             class_membership_scores=fann_perclassum) 
+        if (self.verbose):
+            print("Insantiating a precision scorer based on fann_perclassavg")
         self.fann_perclassavg_precscorer = util.ClasswisePrecisionScorer(
             true_classes=motifmemberships,
             class_membership_scores=fann_perclassavg) 
+
+        #As a baseline, compare to a scorer that uses aggregate similarity
+        classpattern_simsandalnmnts = self.get_similarities_to_classpatterns(
+                                seqlets=motifseqlets,
+                                trim_to_central=0)
+        if (self.verbose):
+            print("Insantiating a precision scorer based on aggregate sim")
+        self.aggsim_precscorer = util.ClasswisePrecisionScorer(
+            true_classes=motifmemberships,
+            class_membership_scores=classpattern_simsandalnmnts[:,:,0]) 
                 
         if (self.verbose):
             print("Mapping affinity to distmat")
