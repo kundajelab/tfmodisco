@@ -7,6 +7,8 @@ jobs:
     steps:
       - checkout
       - run: wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+      - run: export HOME=~
+      - run: echo $HOME
       - run: bash miniconda.sh -b -p $HOME/miniconda
       - run: export PATH="$HOME/miniconda/bin:$PATH"
       - run: hash -r
