@@ -18,19 +18,20 @@ jobs:
       - run: conda update -q conda
       - run: conda info -a
       - run: conda create -q -n test-environment python=3.8 numpy pytest h5py nose
-      - run: source activate test-environment
-      #Install needed dependencies
-      - run: pip install tensorflow==2.3.0
-      - run: pip install joblib
-      - run: pip install scikit-learn
-      - run: pip install leidenalg
-      - run: pip install tqdm
-      - run: pip install psutil
-      - run: pip install matplotlib
+      - run:
+          command: |
+            source activate test-environment
+            pip install tensorflow==2.3.0
+            pip install joblib
+            pip install scikit-learn
+            pip install leidenalg
+            pip install tqdm
+            pip install psutil
+            pip install matplotlib
       - run: echo $PWD
       - run: echo $PYTHONPATH
       #Actually run the tests
-      - run: PYTHONPATH=$PWD:$PYTHONPATH py.test 
+      - run: source activate test-environment | PYTHONPATH=$PWD:$PYTHONPATH py.test 
       #MEME installation
       - run: sudo apt-get install -y ghostscript-x
       - run: mkdir -p ~/.config/matplotlib/
