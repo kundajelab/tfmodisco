@@ -6,8 +6,10 @@ jobs:
       - image: circleci/python:3.8
     steps:
       - checkout
+      #Install miniconda and create the testing environment
       - run: wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
       - run: bash miniconda.sh -b -p $HOME/miniconda
+      #writing to $BASH_ENV is apparently the way to preserv an environment var between steps
       - run: echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> $BASH_ENV
       - run: echo $PATH
       - run: ls $HOME/miniconda/bin
@@ -17,6 +19,7 @@ jobs:
       - run: conda info -a
       - run: conda create -q -n test-environment python=3.8 numpy pytest h5py nose
       - run: source activate test-environment
+      #Install needed dependencies
       - run: pip install tensorflow==2.3.0
       - run: pip install joblib
       - run: pip install scikit-learn
@@ -24,16 +27,17 @@ jobs:
       - run: pip install tqdm
       - run: pip install psutil
       - run: pip install matplotlib
+      - run: echo $PWD
+      - run: echo $PYTHONPATH
+      #Actually run the tests
+      - run: PYTHONPATH=$PWD:$PYTHONPATH py.test 
       #MEME installation
       - run: sudo apt-get install -y ghostscript-x
       - run: mkdir -p ~/.config/matplotlib/
       - run: "echo backend : Agg >  ~/.config/matplotlib/matplotlibrc"
       - run: cat ~/.config/matplotlib/matplotlibrc
       - run: which gs
-      - run: wget http://meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
-      - run: tar zxf meme-5.1.1.tar.gz
-      - run: cd meme-5.1.1
-      - run: export PERL5LIB=$HOME/perl5/lib/perl5:$PERL5LIB
+      - run: echo 'export PERL5LIB="$HOME/perl5/lib/perl5:$PERL5LIB"' >> $BASH_ENV
       - run: curl -L http://cpanmin.us | perl - File::Which
       - run: curl -L http://cpanmin.us | perl - HTML::PullParser
       - run: curl -L http://cpanmin.us | perl - HTML::Template
@@ -41,16 +45,18 @@ jobs:
       - run: curl -L http://cpanmin.us | perl - JSON
       - run: curl -L http://cpanmin.us | perl - XML::Simple
       - run: curl -L http://cpanmin.us | perl - XML::Parser::Expat
-      - run: perl scripts/dependencies.pl
-      - run: ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
-      - run: make
+      - run: wget http://meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
+      - run: tar zxf meme-5.1.1.tar.gz
+      - run: cd meme-5.1.1 | perl scripts/dependencies.pl
+      - run: cd meme-5.1.1 | ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
+      - run: cd meme-5.1.1 | make
       #- make test; skip the tests since some of them are buggy and stall the build
       # (see: https://groups.google.com/forum/#!topic/meme-suite/D3XR7Ws1gec)
-      - run: make install
-      - run: cd ..
-      - run: export PATH="$HOME/meme/bin:$PATH"
+      - run: cd meme-5.1.1 | make install
+      - run: echo 'export PATH="$HOME/meme/bin:$PATH"' >> $BASH_ENV
       - run: echo $PWD
       - run: echo $PYTHONPATH
+      #Actually run the tests
       - run: PYTHONPATH=$PWD:$PYTHONPATH py.test           
 #      - restore_cache:
 #      # Read about caching dependencies: https://circleci.com/docs/2.0/caching/
