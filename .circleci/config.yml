@@ -34,15 +34,26 @@ jobs:
       - run: curl -L http://cpanmin.us | perl - XML::Parser::Expat
       - run: wget http://meme-suite.org/meme-software/5.1.1/meme-5.1.1.tar.gz
       - run: tar zxf meme-5.1.1.tar.gz
-      - run: cd meme-5.1.1 | perl scripts/dependencies.pl
-      - run: cd meme-5.1.1 | ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
-      - run: cd meme-5.1.1 | make
+      - run:
+          command: | #this seems necessary for multi-line commands
+            cd meme-5.1.1
+            perl scripts/dependencies.pl
+      - run:
+          command: | #this seems necessary for multi-line commands
+            cd meme-5.1.1
+            ./configure --prefix=$HOME/meme --with-url=http://alternate.meme-suite.org/  --enable-serial --enable-build-libxml2 --enable-build-libxslt
+      - run:
+          command: | #this seems necessary for multi-line commands
+            cd meme-5.1.1
+            make
       #- make test; skip the tests since some of them are buggy and stall the build
       # (see: https://groups.google.com/forum/#!topic/meme-suite/D3XR7Ws1gec)
-      - run: cd meme-5.1.1 | make install
+      - run:
+          command: | #this seems necessary for multi-line commands
+            cd meme-5.1.1
+            make install
       - run: echo 'export PATH="$HOME/meme/bin:$PATH"' >> $BASH_ENV
-      - run: echo $PWD
-      - run: echo $PYTHONPATH
+      - run: echo $PATH
       #Actually run the tests
       - run:
           command: | #this seems necessary for multi-line commands
