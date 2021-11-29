@@ -18,17 +18,6 @@ jobs:
       - run: conda update -q conda
       - run: conda info -a
       - run: conda create -q -n test-environment python=3.8 numpy pytest h5py nose
-      #Actually run the tests
-      - run:
-          command: |
-            source activate test-environment
-            pip install .
-      - run: pwd
-      - run: ls
-      - run:
-          command: |
-            source activate test-environment
-            pytest
       #MEME installation
       - run: sudo apt-get install -y ghostscript-x
       - run: mkdir -p ~/.config/matplotlib/
@@ -55,7 +44,17 @@ jobs:
       - run: echo $PWD
       - run: echo $PYTHONPATH
       #Actually run the tests
-      - run: PYTHONPATH=$PWD:$PYTHONPATH py.test           
+      - run:
+          command: | #this seems necessary for multi-line commands
+            source activate test-environment
+            pip install .
+            pip install tensorflow
+      - run: pwd
+      - run: ls
+      - run:
+          command: |
+            source activate test-environment
+            pytest         
 #      - restore_cache:
 #      # Read about caching dependencies: https://circleci.com/docs/2.0/caching/
 #          key: deps9-{{ .Branch }}-{{ checksum "Pipfile.lock" }}
