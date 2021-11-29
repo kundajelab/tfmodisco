@@ -17,7 +17,7 @@ jobs:
       - run: conda config --set always_yes yes --set changeps1 no
       - run: conda update -q conda
       - run: conda info -a
-      - run: conda create -q -n test-environment python=3.8 pytest
+      - run: conda create -q -n test-environment python=3.8 pytest nose
       #MEME installation
       - run: sudo apt-get install -y ghostscript-x
       - run: mkdir -p ~/.config/matplotlib/
