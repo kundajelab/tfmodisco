@@ -178,6 +178,65 @@ def top_k_fwdandrev_dot_prod(fwd_vecs2, fwd_vecs, rev_vecs,
     return (sorted_topk_indices, sorted_topk_sims)
 
 
+def do_fwd_and_rev_index_query(index, fwd_vecs, rev_vecs, k, verbose):
+
+    if (verbose):
+        print(datetime.now(),"Querying neighbors for fwd")
+        sys.stdout.flush()
+
+    fwd_neighbs, fwd_dists = index.query(fwd_vecs, k=k) 
+
+    if (rev_vecs is not None):
+        if (verbose):
+            print(datetime.now(),"Querying neighbors for rev")
+            sys.stdout.flush()
+        rev_neighbs, rev_dists = index.query(fwd_vecs, k=k) 
+        if (verbose):
+            print(datetime.now(),"Unifying fwd and rev")
+            sys.stdout.flush()
+        
+        fwdrev_neighbs = np.concatenate([fwd_neighbs, rev_neighbs], axis=1)
+        fwdrev_dists = np.concatenate([fwd_dists, rev_dists], axis=1)
+        fwdrev_dists_argsort = np.argsort(fwdrev_dists, axis=1)
+
+        #need to remove redundancy
+        dists = [] 
+        neighbors = []
+        for i in range(len(fwdrev_dists_argsort)):
+            dists_this_ex = []
+            neighbors_this_ex = []
+            neighbors_seen = set()
+            #iterate in order of similarities in the fwd/rev sim search
+            for j in fwdrev_dists_argsort[i]:
+                #get the neighbor
+                neighbor = fwdrev_neighbs[i][j]
+                #make sure it hasn't appeared before (this can happen if
+                # a point is a neighbor according to both the fwd and
+                # the rev search)
+                if neighbor not in neighbors_seen:
+                    neighbors_seen.add(neighbor)
+                    neighbors_this_ex.append(neighbor)
+                    #Need to subtract from 1 because pynndescent returns
+                    # 1 - cosinesim
+                    dists_this_ex.append(1 - fwdrev_dists[i][j])
+                #leave once we have n_neighbors neighbors; since we
+                # iterated over the distances in ascending order, these
+                # should be the nearest neighbors
+                if (len(dists_this_ex)==n_neighbors):
+                    break
+            assert len(neighbors_seen)==n_neighbors
+            dists.append(np.array(dists_this_ex))
+            #neighbors need to be converted to integers as they'll
+            # be used later for indexing
+            neighbors.append(np.array(neighbors_this_ex).astype("int"))
+            
+    else:
+        dists = fwd_dists 
+        neighbors = fwd_neighbs 
+
+    return dists, neighbors
+
+
 class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
         AbstractSparseAffmatFromFwdAndRevOneDVecs):
 
@@ -224,63 +283,13 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
         if (self.verbose):
             print(datetime.now(),"Index ready"); sys.stdout.flush()
 
-        if (self.verbose):
-            print(datetime.now(),"Querying neighbors for fwd")
-            sys.stdout.flush()
-
-        fwd_neighbs, fwd_dists = index.query(fwd_vecs, k=self.n_neighbors) 
-
-        if (rev_vecs is not None):
-            if (self.verbose):
-                print(datetime.now(),"Querying neighbors for rev")
-                sys.stdout.flush()
-            rev_neighbs, rev_dists = index.query(fwd_vecs, k=self.n_neighbors) 
-            if (self.verbose):
-                print(datetime.now(),"Unifying fwd and rev")
-                sys.stdout.flush()
-
-            
-            fwdrev_neighbs = np.concatenate([fwd_neighbs, rev_neighbs], axis=1)
-            fwdrev_dists = np.concatenate([fwd_dists, rev_dists], axis=1)
-            fwdrev_dists_argsort = np.argsort(fwdrev_dists, axis=1)
-
-            #need to remove redundancy
-            sims = [] 
-            neighbors = []
-            for i in range(len(fwdrev_dists_argsort)):
-                sims_this_ex = []
-                neighbors_this_ex = []
-                neighbors_seen = set()
-                #iterate in order of similarities in the fwd/rev sim search
-                for j in fwdrev_dists_argsort[i]:
-                    #get the neighbor
-                    neighbor = fwdrev_neighbs[i][j]
-                    #make sure it hasn't appeared before (this can happen if
-                    # a point is a neighbor according to both the fwd and
-                    # the rev search)
-                    if neighbor not in neighbors_seen:
-                        neighbors_seen.add(neighbor)
-                        neighbors_this_ex.append(neighbor)
-                        #Need to subtract from 1 because pynndescent returns
-                        # 1 - cosinesim
-                        sims_this_ex.append(1 - fwdrev_dists[i][j])
-                    #leave once we have n_neighbors neighbors; since we
-                    # iterated over the distances in ascending order, these
-                    # should be the nearest neighbors
-                    if (len(sims_this_ex)==self.n_neighbors):
-                        break
-                assert len(neighbors_seen)==self.n_neighbors
-                sims.append(np.array(sims_this_ex))
-                #neighbors need to be converted to integers as they'll
-                # be used later for indexing
-                neighbors.append(np.array(neighbors_this_ex).astype("int"))
-                
-        else:
-            #Need to subtract from 1 because pynndescent returns 1 - cosinesim
-            sims = 1.0 - fwd_dists 
-            neighbors = fwd_neighbs 
-
-        return sims, neighbors
+        dists, neighbors = do_fwd_and_rev_index_query(
+                                index=index, fwd_vecs=fwd_vecs,
+                                rev_vecs=rev_vecs,
+                                k=self.n_neighbors,
+                                verbose=self.verbose) 
+        #do 1.0 - dists because pynnd returns 1-cosinesim
+        return (1.0 - dists, neighbors)
 
 
 class SparseNumpyCosineSimFromFwdAndRevOneDVecs(
@@ -489,6 +498,76 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
         return (np.maximum(affinity_mat_fwd, affinity_mat_rev) 
                 if (affinity_mat_rev is not None)
                 else np.array(affinity_mat_fwd))
+
+
+class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
+
+    def __init__(self, n_neighbors, toscore_track_names, min_overlap, verbose):
+        self.n_neighbors = n_neighbors
+        self.toscore_track_names = toscore_track_names
+        self.min_overlap = min_overlap
+        self.verbose = verbose
+
+    def __call__(self, seqlets, initclusters):
+        
+        from pynndescent import NNDescent
+        assert initclusters is None, ("Currently I haven't built support"
+          +" for initclusters for PynndWithContinJaccard")
+        
+        fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(
+            patterns=seqlets,
+            track_names=self.toscore_track_names,
+            track_transformer=L1Normalizer()) 
+
+        assert fwd_data.shape[1]==rev_data.shape[1]
+        assert fwd_data.strides[-1] == 8 #float64, assumed by numba_alt_crosscontinjacc
+        assert rev_data.strides[-1] == 8
+
+        padding_amount = int((fwd_data.shape[1])*(1-self.min_overlap))
+
+        padded_fwd_data = np.pad(array=fwd_data,
+                                 pad_width=((0,0),
+                                            (padding_amount, padding_amount),
+                                            (0,0)),
+                                 mode="constant")
+        if (rev_data is not None):
+            padded_rev_data = np.pad(array=rev_data,
+                                     pad_width=((0,0),
+                                                (padding_amount, padding_amount),
+                                                (0,0)),
+                                     mode="constant")
+
+        fwd_data_vecs = np.reshape(padded_fwd_data, (len(fwd_data), -1))
+        if (rev_data is not None):
+            rev_data_vecs = np.reshape(padded_rev_data, (len(rev_data), -1))
+
+        #build the index
+        if (self.verbose):
+            print(datetime.now(),"Building the index"); sys.stdout.flush()
+
+        index = NNDescent(fwd_data_vecs, metric=numba_alt_crosscontinjacc,
+                          metric_kwds={
+                           'core_len':fwd_data.shape[1],
+                           'left_pad':padding_amount,
+                           'right_pad':padding_amount,
+                           'num_channels':fwd_data.shape[1]})
+
+        if (self.verbose):
+            print(datetime.now(),"Preparing the index"); sys.stdout.flush()
+
+        index.prepare()
+
+        if (self.verbose):
+            print(datetime.now(),"Index ready"); sys.stdout.flush()
+
+        dists, neighbors = do_fwd_and_rev_index_query(
+                             index=index, fwd_vecs=fwd_vecs,
+                             rev_vecs=rev_vecs,
+                             k=self.n_neighbors,
+                             verbose=self.verbose) 
+
+        #convert distance to similarity
+        return np.pow(2.0, -dists), neighbors 
 
 
 class SparseAffmatFromFwdAndRevSeqletEmbeddings(
@@ -709,6 +788,71 @@ class AbstractSimMetricOnNNpairs(object):
                        filters, things_to_scan, min_overlap):
         raise NotImplementedError()
 
+
+@numba.njit(fastmath=True)
+def numba_alt_crosscontinjacc(x, y, core_len, left_pad, right_pad,
+                                    num_channels):
+    #expecting contiguous layout (for efficiency)
+    #x and y should have dims (core_len + left_pad + right_pad)xnum_channels
+    x = x.reshape(((core_len+left_pad_right_pad),num_channels))
+    y = y.reshape(((core_len+left_pad_right_pad),num_channels))
+
+    x_core = x[left_pad:left_pad+core_len]
+    y_core = y[left_pad:left_pad+core_len]
+    
+    #strided_shape is the shape after windowing
+    strided_shape = ((left_pad+right_pad+1), core_len, num_channels) 
+    strides = (num_channels*8, num_channels*8, 8) 
+    x_strided = np.lib.stride_tricks.as_strided(
+        x=x, shape=strided_shape, strides=strides)
+    y_strided = np.lib.stride_tricks.as_strided(
+        x=y, shape=strided_shape, strides=strides)
+
+    #find the cross contin jacc
+    x_core_abs = np.abs(x_core)
+    x_core_sign = np.sign(x_core)
+    x_strided_abs = np.abs(x_strided)
+    x_strided_sign = np.sign(x_strided) 
+    y_core_abs = np.abs(y_core)
+    y_core_sign = np.sign(y_core)
+    y_strided_abs = np.abs(y_strided)
+    y_strided_sign = np.sign(y_strided) 
+
+    #find the sims keeping the core of x fixed
+    x_fixed_continjaccsim = (
+        (np.sum(np.minimum(x_core_abs[None,:,:], y_strided_abs)
+                *x_core_sign[None,:,:]*y_strided_sign, axis=(1,2)))/
+        (np.sum(np.maximum(x_core_abs[None,:,:], y_strided_abs), axis=(1,2)))
+    ) 
+    #find the sims keeping the core of y fixed
+    y_fixed_continjaccsim = (
+        (np.sum(np.minimum(y_core_abs[None,:,:], x_strided_abs)
+                *y_core_sign[None,:,:]*x_strided_sign, axis=(1,2)))/
+        (np.sum(np.maximum(y_core_abs[None,:,:], x_strided_abs), axis=(1,2)))
+    ) 
+    #the two arrays are complementary but in reverse order
+    # (x_core aligning with the very left of y corresponds to y_core
+    #  aligning with the very right of x), so we can flip one of them
+    # and average, then take the max
+
+    sims_at_alignments = np.mean(x_fixed_continjaccsim
+                                 + y_fixed_continjaccsim[::-1])
+
+    result = np.max(sims_at_alignments)
+
+    #mimick what's done for 'alternative_cosine' to get spaced-out
+    # distances
+    # https://github.com/lmcinnes/pynndescent/blob/4fc37f773580ac17fdb3b76e0ffe369ead4a6ab1/pynndescent/distances.py#L426
+    if result < 0:
+        return np.finfo(np.float32).max
+    else:
+        return -np.log2(result)
+
+
+@numba.vectorize(fastmath=True) #mapping to 1-continjacc
+def numba_correct_alt_cross_contin_jac(d):
+    return 1.0 - pow(2.0, -d)
+    
 
 class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
 

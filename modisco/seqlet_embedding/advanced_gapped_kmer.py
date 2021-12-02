@@ -255,19 +255,6 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                  for i in range(len(seqlets)))
         ) 
 
-        #advanced_gappedkmer_embeddings_fwd =\
-        #    Parallel(n_jobs=self.n_jobs, verbose=True)(
-        #        delayed(prepare_gapped_kmer_from_seqlet)(
-        #            seqlets[i],
-        #            self.topn, self.min_k,
-        #            self.max_k, self.max_gap,
-        #            self.max_len,
-        #            self.max_entries,
-        #            True,
-        #            self.onehot_track_name,
-        #            self.toscore_track_names_and_signs)
-        #           for i in range(len(seqlets)))
-
         print("after computing embeddings fwd") 
         print_memory_use()
 
@@ -291,23 +278,7 @@ class AdvancedGappedKmerEmbedder(AbstractSeqletsToOnedEmbedder):
                       template_to_startidx)
                      for i in range(len(seqlets)))
             ) 
-            
-            #I switched from advanced_gappedkmer_embeddings_rev to
-            # sparse_agkm_embeddings_rev because it looks like the space
-            # needed to store the embeddings in list format (with the
-            # embeddings spelled out as strings) is quite large
-            #advanced_gappedkmer_embeddings_rev =\
-            #    Parallel(n_jobs=self.n_jobs, verbose=True)(
-            #        delayed(prepare_gapped_kmer_from_seqlet)(
-            #            seqlets[i],
-            #            self.topn, self.min_k,
-            #            self.max_k, self.max_gap,
-            #            self.max_len,
-            #            self.max_entries,
-            #            False,
-            #            self.onehot_track_name,
-            #            self.toscore_track_names_and_signs)
-            #           for i in range(len(seqlets)))
+
             print("after computing embeddings rev") 
             print_memory_use()
         else:
