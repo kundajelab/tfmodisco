@@ -1,4 +1,5 @@
 from __future__ import division, print_function, absolute_import
+import numba
 import numpy as np
 from .. import util as modiscoutil
 from .. import core as modiscocore
@@ -30,7 +31,7 @@ class AbstractTrackTransformer(object):
         """
         raise NotImplementedError() 
 
-    def chain(self, other_normalizer):        
+    def chain(self, other_normalizer):
         return AdhocTrackTransformer(
                 func=(lambda x: other_normalizer(
                                 self(x))))
@@ -550,7 +551,7 @@ class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
                            'core_len':fwd_data.shape[1],
                            'left_pad':padding_amount,
                            'right_pad':padding_amount,
-                           'num_channels':fwd_data.shape[1]})
+                           'num_channels':fwd_data.shape[1]}, verbose=True)
 
         if (self.verbose):
             print(datetime.now(),"Preparing the index"); sys.stdout.flush()
@@ -789,63 +790,64 @@ class AbstractSimMetricOnNNpairs(object):
         raise NotImplementedError()
 
 
-@numba.njit(fastmath=True)
-def numba_alt_crosscontinjacc(x, y, core_len, left_pad, right_pad,
-                                    num_channels):
-    #expecting contiguous layout (for efficiency)
-    #x and y should have dims (core_len + left_pad + right_pad)xnum_channels
-    x = x.reshape(((core_len+left_pad_right_pad),num_channels))
-    y = y.reshape(((core_len+left_pad_right_pad),num_channels))
+@numba.njit(fastmath=True)                                                      
+def numba_alt_crosscontinjacc(x, y, core_len, left_pad, right_pad,              
+                                    num_channels):                              
+    #expecting contiguous layout (for efficiency)                               
+    #x and y should have dims (core_len + left_pad + right_pad)xnum_channels    
+    x = x.reshape(((core_len+left_pad+right_pad),num_channels))                 
+    y = y.reshape(((core_len+left_pad+right_pad),num_channels))                 
+                                                                                
+    x_core = x[left_pad:left_pad+core_len]                                      
+    y_core = y[left_pad:left_pad+core_len]                                      
+                                                                                
+    #strided_shape is the shape after windowing                                 
+    strided_shape = ((left_pad+right_pad+1), core_len, num_channels)            
+    strides = (num_channels*8, num_channels*8, 8)                               
+    x_strided = np.lib.stride_tricks.as_strided(                                
+        x=x, shape=strided_shape, strides=strides)                              
+    y_strided = np.lib.stride_tricks.as_strided(                                
+        x=y, shape=strided_shape, strides=strides)                              
+                                                                                
+    #find the cross contin jacc                                                 
+    x_core_abs = np.reshape(np.abs(x_core), (1, core_len, num_channels))                                               
+    x_core_sign = np.reshape(np.sign(x_core), (1, core_len, num_channels))                                               
+    x_strided_abs = np.abs(x_strided)                                           
+    x_strided_sign = np.sign(x_strided)                                         
+    y_core_abs = np.reshape(np.abs(y_core), (1, core_len, num_channels))                                          
+    y_core_sign = np.reshape(np.sign(y_core), (1, core_len, num_channels))                                           
+    y_strided_abs = np.abs(y_strided)                                           
+    y_strided_sign = np.sign(y_strided)
+                                                                                    
+    #find the sims keeping the core of x fixed                                  
+    x_fixed_continjaccsim = (                                                   
+        np.sum(np.sum(np.minimum(x_core_abs, y_strided_abs)                 
+                *x_core_sign*y_strided_sign, axis=2), axis=1)/            
+        np.sum(np.sum(np.maximum(x_core_abs, y_strided_abs), axis=2), axis=1)   
+    )                                                                           
+    #find the sims keeping the core of y fixed                                  
+    y_fixed_continjaccsim = (                                                   
+        np.sum(np.sum(np.minimum(y_core_abs, x_strided_abs)                 
+                *y_core_sign*x_strided_sign, axis=2), axis=1)/            
+        np.sum(np.sum(np.maximum(y_core_abs, x_strided_abs), axis=2), axis=1)   
+    )     
 
-    x_core = x[left_pad:left_pad+core_len]
-    y_core = y[left_pad:left_pad+core_len]
+    #the two arrays are complementary but in reverse order                      
+    # (x_core aligning with the very left of y corresponds to y_core            
+    #  aligning with the very right of x), so we can flip one of them           
+    # and average, then take the max                                            
+                                                                                
+    sims_at_alignments = 0.5*(x_fixed_continjaccsim                          
+                              + y_fixed_continjaccsim[::-1])                 
     
-    #strided_shape is the shape after windowing
-    strided_shape = ((left_pad+right_pad+1), core_len, num_channels) 
-    strides = (num_channels*8, num_channels*8, 8) 
-    x_strided = np.lib.stride_tricks.as_strided(
-        x=x, shape=strided_shape, strides=strides)
-    y_strided = np.lib.stride_tricks.as_strided(
-        x=y, shape=strided_shape, strides=strides)
-
-    #find the cross contin jacc
-    x_core_abs = np.abs(x_core)
-    x_core_sign = np.sign(x_core)
-    x_strided_abs = np.abs(x_strided)
-    x_strided_sign = np.sign(x_strided) 
-    y_core_abs = np.abs(y_core)
-    y_core_sign = np.sign(y_core)
-    y_strided_abs = np.abs(y_strided)
-    y_strided_sign = np.sign(y_strided) 
-
-    #find the sims keeping the core of x fixed
-    x_fixed_continjaccsim = (
-        (np.sum(np.minimum(x_core_abs[None,:,:], y_strided_abs)
-                *x_core_sign[None,:,:]*y_strided_sign, axis=(1,2)))/
-        (np.sum(np.maximum(x_core_abs[None,:,:], y_strided_abs), axis=(1,2)))
-    ) 
-    #find the sims keeping the core of y fixed
-    y_fixed_continjaccsim = (
-        (np.sum(np.minimum(y_core_abs[None,:,:], x_strided_abs)
-                *y_core_sign[None,:,:]*x_strided_sign, axis=(1,2)))/
-        (np.sum(np.maximum(y_core_abs[None,:,:], x_strided_abs), axis=(1,2)))
-    ) 
-    #the two arrays are complementary but in reverse order
-    # (x_core aligning with the very left of y corresponds to y_core
-    #  aligning with the very right of x), so we can flip one of them
-    # and average, then take the max
-
-    sims_at_alignments = np.mean(x_fixed_continjaccsim
-                                 + y_fixed_continjaccsim[::-1])
-
     result = np.max(sims_at_alignments)
-
-    #mimick what's done for 'alternative_cosine' to get spaced-out
-    # distances
+                                                                                
+    #mimick what's done for 'alternative_cosine' to get spaced-out              
+    # distances                                                                 
     # https://github.com/lmcinnes/pynndescent/blob/4fc37f773580ac17fdb3b76e0ffe369ead4a6ab1/pynndescent/distances.py#L426
-    if result < 0:
-        return np.finfo(np.float32).max
-    else:
+    if result < 0:                                                              
+        return np.finfo(np.float32).max                                         
+    else:                                                                       
         return -np.log2(result)
 
 
