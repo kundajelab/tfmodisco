@@ -223,9 +223,9 @@ def do_fwd_and_rev_index_query(index, fwd_vecs, rev_vecs, n_neighbors, verbose):
                 # should be the nearest neighbors
                 if (len(dists_this_ex)==n_neighbors):
                     break
-            assert len(neighbors_seen)==min(n_neighbors, len(fwd_vecs)),\
+            assert len(neighbors_seen)==min(n_neighbors, fwd_vecs.shape[0]),\
                     (len(neighbors_seen), len(dists_this_ex),
-                     len(fwd_vecs), n_neighbors)
+                     fwd_vecs.shape[0], n_neighbors)
             dists.append(np.array(dists_this_ex))
             #neighbors need to be converted to integers as they'll
             # be used later for indexing
