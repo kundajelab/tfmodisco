@@ -311,6 +311,7 @@ class TfModiscoSeqletsToPatternsFactory(object):
                                      +other_comparison_track_names),
                 min_overlap=self.min_overlap_while_sliding,
                 n_neighbors=self.nearest_neighbors_to_compute,
+                n_jobs=self.n_cores,
                 verbose=self.verbose)
 
         affmat_from_seqlets_with_nn_pairs =\
@@ -913,7 +914,7 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                 seqlet_neighbors = filtered_neighbors
                 del (filtered_neighbors, retained_indices, new_idx_mapping)
             else:
-                filtered_affmat = coarse_affmat_nn
+                filtered_affmat_nn = coarse_affmat_nn
                 filtered_seqlets = seqlets
                 if (initclusters is not None):
                     filtered_initclusters = initclusters
@@ -925,11 +926,6 @@ class TfModiscoSeqletsToPatterns(AbstractSeqletsToPatterns):
                       +"adapted affmat")
                 print_memory_use()
                 sys.stdout.flush() 
-
-            #density_adapted_affmat =\
-            #    self.density_adapted_affmat_transformer(filtered_affmat)
-            #del filtered_affmat
-            #density_adapted_affmats.append(density_adapted_affmat)
 
             #apply aff_to_dist_mat one row at a time
             distmat_nn = [self.aff_to_dist_mat(affinity_mat=x)

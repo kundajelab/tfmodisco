@@ -179,19 +179,19 @@ def top_k_fwdandrev_dot_prod(fwd_vecs2, fwd_vecs, rev_vecs,
     return (sorted_topk_indices, sorted_topk_sims)
 
 
-def do_fwd_and_rev_index_query(index, fwd_vecs, rev_vecs, k, verbose):
+def do_fwd_and_rev_index_query(index, fwd_vecs, rev_vecs, n_neighbors, verbose):
 
     if (verbose):
         print(datetime.now(),"Querying neighbors for fwd")
         sys.stdout.flush()
 
-    fwd_neighbs, fwd_dists = index.query(fwd_vecs, k=k) 
+    fwd_neighbs, fwd_dists = index.query(fwd_vecs, k=n_neighbors) 
 
     if (rev_vecs is not None):
         if (verbose):
             print(datetime.now(),"Querying neighbors for rev")
             sys.stdout.flush()
-        rev_neighbs, rev_dists = index.query(fwd_vecs, k=k) 
+        rev_neighbs, rev_dists = index.query(rev_vecs, k=n_neighbors) 
         if (verbose):
             print(datetime.now(),"Unifying fwd and rev")
             sys.stdout.flush()
@@ -217,15 +217,15 @@ def do_fwd_and_rev_index_query(index, fwd_vecs, rev_vecs, k, verbose):
                 if neighbor not in neighbors_seen:
                     neighbors_seen.add(neighbor)
                     neighbors_this_ex.append(neighbor)
-                    #Need to subtract from 1 because pynndescent returns
-                    # 1 - cosinesim
-                    dists_this_ex.append(1 - fwdrev_dists[i][j])
+                    dists_this_ex.append(fwdrev_dists[i][j])
                 #leave once we have n_neighbors neighbors; since we
                 # iterated over the distances in ascending order, these
                 # should be the nearest neighbors
                 if (len(dists_this_ex)==n_neighbors):
                     break
-            assert len(neighbors_seen)==n_neighbors
+            assert len(neighbors_seen)==min(n_neighbors, len(fwd_vecs)),\
+                    (len(neighbors_seen), len(dists_this_ex),
+                     len(fwd_vecs), n_neighbors)
             dists.append(np.array(dists_this_ex))
             #neighbors need to be converted to integers as they'll
             # be used later for indexing
@@ -235,7 +235,7 @@ def do_fwd_and_rev_index_query(index, fwd_vecs, rev_vecs, k, verbose):
         dists = fwd_dists 
         neighbors = fwd_neighbs 
 
-    return dists, neighbors
+    return np.array(dists), np.array(neighbors)
 
 
 class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
@@ -274,7 +274,7 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
         if (self.verbose):
             print(datetime.now(),"Building the index"); sys.stdout.flush()
 
-        index = NNDescent(fwd_vecs2, metric="cosine")
+        index = NNDescent(fwd_vecs2, metric="cosine", n_jobs=self.n_jobs)
 
         if (self.verbose):
             print(datetime.now(),"Preparing the index"); sys.stdout.flush()
@@ -287,7 +287,7 @@ class PynndSparseNumpyCosineSimFromFwdAndRevOneDVecs(
         dists, neighbors = do_fwd_and_rev_index_query(
                                 index=index, fwd_vecs=fwd_vecs,
                                 rev_vecs=rev_vecs,
-                                k=self.n_neighbors,
+                                n_neighbors=self.n_neighbors,
                                 verbose=self.verbose) 
         #do 1.0 - dists because pynnd returns 1-cosinesim
         return (1.0 - dists, neighbors)
@@ -503,10 +503,12 @@ class AffmatFromSeqletEmbeddings(AbstractAffinityMatrixFromSeqlets):
 
 class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
 
-    def __init__(self, n_neighbors, toscore_track_names, min_overlap, verbose):
+    def __init__(self, n_neighbors, toscore_track_names,
+                       min_overlap, n_jobs, verbose):
         self.n_neighbors = n_neighbors
         self.toscore_track_names = toscore_track_names
         self.min_overlap = min_overlap
+        self.n_jobs = n_jobs
         self.verbose = verbose
 
     def __call__(self, seqlets, initclusters):
@@ -521,8 +523,6 @@ class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
             track_transformer=L1Normalizer()) 
 
         assert fwd_data.shape[1]==rev_data.shape[1]
-        assert fwd_data.strides[-1] == 8 #float64, assumed by numba_alt_crosscontinjacc
-        assert rev_data.strides[-1] == 8
 
         padding_amount = int((fwd_data.shape[1])*(1-self.min_overlap))
 
@@ -547,11 +547,15 @@ class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
             print(datetime.now(),"Building the index"); sys.stdout.flush()
 
         index = NNDescent(fwd_data_vecs, metric=numba_alt_crosscontinjacc,
-                          metric_kwds={
-                           'core_len':fwd_data.shape[1],
-                           'left_pad':padding_amount,
-                           'right_pad':padding_amount,
-                           'num_channels':fwd_data.shape[1]}, verbose=True)
+          n_jobs=self.n_jobs,
+          tree_init=False, #don't use tree init as contin jacc
+                           # sim uses sliding windows. I'm worried tree_init
+                           # will get stuck in bad minimum
+          metric_kwds={
+           'core_len':fwd_data.shape[1],
+           'left_pad':padding_amount,
+           'right_pad':padding_amount,
+           'num_channels':fwd_data.shape[2]}, verbose=True)
 
         if (self.verbose):
             print(datetime.now(),"Preparing the index"); sys.stdout.flush()
@@ -562,13 +566,15 @@ class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
             print(datetime.now(),"Index ready"); sys.stdout.flush()
 
         dists, neighbors = do_fwd_and_rev_index_query(
-                             index=index, fwd_vecs=fwd_vecs,
-                             rev_vecs=rev_vecs,
-                             k=self.n_neighbors,
-                             verbose=self.verbose) 
+          index=index, fwd_vecs=fwd_data_vecs,
+          rev_vecs=rev_data_vecs,
+          n_neighbors=self.n_neighbors,
+          verbose=self.verbose) 
 
+        sims = np.power(2.0, -dists)
+        assert np.max(sims)==1, np.max(sims)
         #convert distance to similarity
-        return np.pow(2.0, -dists), neighbors 
+        return sims, neighbors 
 
 
 class SparseAffmatFromFwdAndRevSeqletEmbeddings(
@@ -803,7 +809,7 @@ def numba_alt_crosscontinjacc(x, y, core_len, left_pad, right_pad,
                                                                                 
     #strided_shape is the shape after windowing                                 
     strided_shape = ((left_pad+right_pad+1), core_len, num_channels)            
-    strides = (num_channels*8, num_channels*8, 8)                               
+    strides = (x.strides[0],) + x.strides
     x_strided = np.lib.stride_tricks.as_strided(                                
         x=x, shape=strided_shape, strides=strides)                              
     y_strided = np.lib.stride_tricks.as_strided(                                
@@ -849,11 +855,6 @@ def numba_alt_crosscontinjacc(x, y, core_len, left_pad, right_pad,
         return np.finfo(np.float32).max                                         
     else:                                                                       
         return -np.log2(result)
-
-
-@numba.vectorize(fastmath=True) #mapping to 1-continjacc
-def numba_correct_alt_cross_contin_jac(d):
-    return 1.0 - pow(2.0, -d)
     
 
 class ParallelCpuCrossMetricOnNNpairs(AbstractSimMetricOnNNpairs):
