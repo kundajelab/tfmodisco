@@ -120,7 +120,8 @@ class TestTfmodiscoWorkflow(unittest.TestCase):
                     initial_flank_to_add=5,
                     kmer_len=5, num_gaps=1,
                     num_mismatches=0,
-                    final_min_cluster_size=60)
+                    final_min_cluster_size=60,
+                    n_cores=4, n_cores_mainclustering=4)
             )(
              task_names=["task0", "task1", "task2"],
              contrib_scores=task_to_scores,
