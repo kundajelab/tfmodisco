@@ -234,7 +234,6 @@ class LeidenClusterParallel(AbstractAffinityMatClusterer):
         else:
             affinity_mat = orig_affinity_mat
 
-        the_graph = get_igraph_from_adjacency(adjacency=affinity_mat)
         best_clustering = None
         best_quality = None
 
