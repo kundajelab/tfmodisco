@@ -9,7 +9,7 @@ import scipy.sparse
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.isotonic import IsotonicRegression
 from joblib import Parallel, delayed
-import datetime
+from datetime import datetime
 
 
 def print_memory_use():
