@@ -511,11 +511,9 @@ class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
         self.n_jobs = n_jobs
         self.verbose = verbose
 
-    def __call__(self, seqlets, initclusters):
+    def __call__(self, seqlets, seqlet_neighbors):
         
         from pynndescent import NNDescent
-        assert initclusters is None, ("Currently I haven't built support"
-          +" for initclusters for PynndWithContinJaccard")
         
         fwd_data, rev_data = modiscocore.get_2d_data_from_patterns(
             patterns=seqlets,
@@ -551,6 +549,7 @@ class PynndWithContinJaccard(AbstractAffinityMatrixFromSeqlets):
           tree_init=False, #don't use tree init as contin jacc
                            # sim uses sliding windows. I'm worried tree_init
                            # will get stuck in bad minimum
+          init_graph=seqlet_neighbors,
           metric_kwds={
            'core_len':fwd_data.shape[1],
            'left_pad':padding_amount,
