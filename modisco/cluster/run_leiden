@@ -14,8 +14,8 @@ def get_igraph(sources_idxs_file, targets_idxs_file, weights_file, n_vertices):
     weights = np.load(weights_file)
     g = ig.Graph(directed=None) 
     g.add_vertices(n_vertices) # this adds adjacency.shap[0] vertices
-    g.add_edges(list(zip(sources.tolist(), targets.tolist()))) 
-    g.es['weight'] = weights.tolist()
+    g.add_edges(list(zip(sources, targets))) 
+    g.es['weight'] = weights
     if g.vcount() != n_vertices: 
         print('WARNING: The constructed graph has only ' 
               +str(g.vcount())+' nodes. ' 
