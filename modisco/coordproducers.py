@@ -773,8 +773,9 @@ def refine_thresholds_based_on_frac_passing(
     separate_pos_neg_thresholds, verbose):
 
     frac_passing_windows =(
-        sum(vals >= pos_threshold)
-         + sum(vals <= neg_threshold))/float(len(vals))
+        
+        sum([value for value in vals if >= pos_threshold])
+         + sum([value for value in vals if value <= neg_threshold]))/float(len(vals))
 
     if (verbose):
         print("Thresholds from null dist were",
