@@ -50,58 +50,47 @@ class DataTrack(object):
         return len(self.fwd_tracks)
 
     def get_snippet(self, coor):
-        if (self.has_pos_axis==False):
-            snippet = Snippet(
-                    fwd=self.fwd_tracks[coor.example_idx],
-                    rev=(self.rev_tracks[coor.example_idx]
-                         if self.rev_tracks is not None else None),
-                    has_pos_axis=self.has_pos_axis)
-        else:
-            right_pad_needed = max((
-                 coor.end - len(self.fwd_tracks[coor.example_idx])),0)
-            left_pad_needed = max(-coor.start, 0)
+        right_pad_needed = max((
+             coor.end - len(self.fwd_tracks[coor.example_idx])),0)
+        left_pad_needed = max(-coor.start, 0)
 
-            fwd = self.fwd_tracks[coor.example_idx][max(coor.start,0):coor.end]
-            rev = (self.rev_tracks[
-                        coor.example_idx][
-                        max(len(self.rev_tracks[coor.example_idx])-coor.end,0):
-                        (len(self.rev_tracks[coor.example_idx])-coor.start)]
-                        if self.rev_tracks is not None else None)
+        fwd = self.fwd_tracks[coor.example_idx][max(coor.start,0):coor.end]
+        rev = (self.rev_tracks[
+                    coor.example_idx][
+                    max(len(self.rev_tracks[coor.example_idx])-coor.end,0):
+                    (len(self.rev_tracks[coor.example_idx])-coor.start)]
+                    if self.rev_tracks is not None else None)
 
-            if (left_pad_needed > 0 or right_pad_needed > 0):
-                print("Applying left/right pad of",left_pad_needed,"and",
-                      right_pad_needed,"for",
-                      (coor.example_idx, coor.start, coor.end),
-                      "with total sequence length",
-                      len(self.fwd_tracks[coor.example_idx]))
-                fwd = np.pad(array=fwd,
-                             pad_width=((left_pad_needed, right_pad_needed),
-                                        (0,0)),
+        if (left_pad_needed > 0 or right_pad_needed > 0):
+            print("Applying left/right pad of",left_pad_needed,"and",
+                  right_pad_needed,"for",
+                  (coor.example_idx, coor.start, coor.end),
+                  "with total sequence length",
+                  len(self.fwd_tracks[coor.example_idx]))
+            fwd = np.pad(array=fwd,
+                         pad_width=((left_pad_needed, right_pad_needed),
+                                    (0,0)),
+                         mode="constant")
+            if (self.rev_tracks is not None):
+                rev = np.pad(array=rev,
+                             pad_width=(
+                              (right_pad_needed, left_pad_needed),
+                              (0,0)),
                              mode="constant")
-                if (self.rev_tracks is not None):
-                    rev = np.pad(array=rev,
-                                 pad_width=(
-                                  (right_pad_needed, left_pad_needed),
-                                  (0,0)),
-                                 mode="constant")
-            snippet = Snippet(
-                    fwd=fwd,
-                    rev=rev,
-                    has_pos_axis=self.has_pos_axis)
+        snippet = Snippet(
+                fwd=fwd,
+                rev=rev,
+                has_pos_axis=self.has_pos_axis)
         if (coor.is_revcomp):
             snippet = snippet.revcomp()
         return snippet
 
 
 class TrackSet(object):
-    def __init__(self, data_tracks=[], attribute_providers=[]):
+    def __init__(self, data_tracks=[]):
         self.track_name_to_data_track = OrderedDict()
-        self.attribute_name_to_attribute_provider = OrderedDict()
         for data_track in data_tracks:
             self.add_track(data_track)
-        for attribute_provider in attribute_providers:
-            self.attribute_name_to_attribute_provider[attribute_provider.name]\
-                = attribute_provider 
 
     def get_example_idx_len(self, example_idx):
         return len(self.track_name_to_data_track[
@@ -114,13 +103,7 @@ class TrackSet(object):
                     list(self.track_name_to_data_track.keys())[0]].fwd_tracks)
 
     def add_track(self, data_track):
-        assert type(data_track).__name__=="DataTrack"
-        if len(self.track_name_to_data_track)==0:
-            self.num_items = len(data_track) 
-        else:
-            assert len(data_track)==self.num_items,\
-                    ("first track had "+str(self.num_items)+" but "
-                     "data track has "+str(len(data_track))+" items")
+        self.num_items = len(data_track) 
         self.track_name_to_data_track[data_track.name] = data_track
         return self
 
@@ -134,20 +117,15 @@ class TrackSet(object):
         if (track_names is None):
             track_names=self.track_name_to_data_track.keys()
 
-        attribute_names=self.attribute_name_to_attribute_provider.keys()
         seqlet = Seqlet(coor=coor)
-        self.augment_seqlet(seqlet=seqlet, track_names=track_names,
-                            attribute_names=attribute_names) 
+        self.augment_seqlet(seqlet=seqlet, track_names=track_names) 
         return seqlet
 
-    def augment_seqlet(self, seqlet, track_names, attribute_names):
+    def augment_seqlet(self, seqlet, track_names):
         for track_name in track_names:
             seqlet.add_snippet_from_data_track(
                 data_track=self.track_name_to_data_track[track_name])
-        for attribute_name in attribute_names:
-            seqlet.set_attribute(
-                attribute_provider=\
-                 self.attribute_name_to_attribute_provider[attribute_name])
+
         return seqlet
 
 def SeqletsOverlapResolver(all_seqlets, min_overlap_fraction):
@@ -221,45 +199,24 @@ class SeqletCoordinates(object):
                 +",start:"+str(self.start)+",end:"+str(self.end)
                 +",rc:"+str(self.is_revcomp))
 
-
-class Pattern(object):
-
-    def __init__(self):
+class Seqlet(object):
+    def __init__(self, coor=None):
+        self.coor = coor
         self.track_name_to_snippet = OrderedDict()
         self.attribute_name_to_attribute = OrderedDict()
+        super(Seqlet, self).__init__()
 
     def __getitem__(self, key):
         if (key in self.track_name_to_snippet):
             return self.track_name_to_snippet[key]
         elif (key in self.attribute_name_to_attribute):
             return self.attribute_name_to_attribute[key]
-        else:
-            raise RuntimeError("No key "+str(key)+"; snippet keys are: "
-                +str(self.track_name_to_snippet.keys())+" and "
-                +" attribute keys are "
-                +str(self.attribute_name_to_attribute.keys()))
 
     def __setitem__(self, key, value):
-        assert key not in self.track_name_to_snippet,\
-            "Don't use setitem to set keys that are in track_name_to_snippet;"\
-            +" use add_snippet_from_data_track"
         self.attribute_name_to_attribute[key] = value
 
     def set_attribute(self, attribute_provider):
         self[attribute_provider.name] = attribute_provider(self)
-
-    def __len__(self):
-        raise NotImplementedError()
-
-    def revcomp(self):
-        raise NotImplementedError()
-
-
-class Seqlet(Pattern):
-
-    def __init__(self, coor):
-        self.coor = coor
-        super(Seqlet, self).__init__()
 
     def add_snippet_from_data_track(self, data_track): 
         snippet = data_track.get_snippet(coor=self.coor)
@@ -267,11 +224,6 @@ class Seqlet(Pattern):
                                 snippet=snippet)
 
     def add_snippet(self, data_track_name, snippet):
-        if (snippet.has_pos_axis):
-            assert len(snippet)==len(self),\
-                   ("tried to add snippet with pos axis of len "
-                    +str(len(snippet))+" but snippet coords have "
-                    +"len "+str(self.coor))
         self.track_name_to_snippet[data_track_name] = snippet 
         return self
 
@@ -452,7 +404,7 @@ def compute_nneigh_sims_via_continjacc(vecs1, vecs2, n_neighb, n_jobs):
             np.array([x[1] for x in sims_and_neighbs]))
 
 
-class AggregatedSeqlet(Pattern):
+class AggregatedSeqlet(Seqlet):
     def __init__(self, seqlets_and_alnmts_arr):
         super(AggregatedSeqlet, self).__init__()
         self._seqlets_and_alnmts = SeqletsAndAlignments()

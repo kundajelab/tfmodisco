@@ -69,7 +69,7 @@ def TfModiscoWorkflow(task_names, contrib_scores,
 						one_hot=one_hot)
 
 		
-		coord_producer_results = coordproducers.FixedWindowAroundChunks(
+		seqlet_coords = coordproducers.FixedWindowAroundChunks(
 			attribution_scores=contrib_scores['task0'].sum(axis=2),
 			window_size=sliding_window_size,
 			flank=flank_size,
@@ -80,24 +80,21 @@ def TfModiscoWorkflow(task_names, contrib_scores,
 			max_seqlets_total=None,
 			verbose=verbose) 
 
-		task_name_to_coord_producer_results = {'task0': coord_producer_results}
-		seqlets = track_set.create_seqlets(coords=coord_producer_results['coords']) 
-		
-		final_seqlets = core.SeqletsOverlapResolver(seqlets, overlap_portion)
+		seqlets = track_set.create_seqlets(coords=seqlet_coords['coords']) 
+		seqlets = core.SeqletsOverlapResolver(seqlets, overlap_portion)
 
 		multitask_seqlet_creation_results = {
-			'final_seqlets': final_seqlets,
-			'task_name_to_coord_producer_results': task_name_to_coord_producer_results
+			'final_seqlets': seqlets,
+			'task_name_to_coord_producer_results': {
+				'task0': seqlet_coords
+			}
 		}
 
 		#find the weakest transformed threshold used across all tasks
 		weakest_transformed_thresh = min(
-			coord_producer_results['transformed_pos_threshold'], 
-			abs(coord_producer_results['transformed_neg_threshold'])
+			seqlet_coords['transformed_pos_threshold'], 
+			abs(seqlet_coords['transformed_neg_threshold'])
 		) - 0.0001
-
-		seqlets = multitask_seqlet_creation_results['final_seqlets']
-
 		
 		if int(min_metacluster_size_frac * len(seqlets)) > min_metacluster_size:
 			min_metacluster_size = int(min_metacluster_size_frac * len(seqlets))
@@ -105,29 +102,16 @@ def TfModiscoWorkflow(task_names, contrib_scores,
 		if weak_threshold_for_counting_sign > weakest_transformed_thresh:
 			weak_threshold_for_counting_sign = weakest_transformed_thresh
 
-		task_name_to_value_provider = OrderedDict([
-			(task_name,
-			 value_provider.TransformCentralWindowValueProvider(
-				track_name=task_name+"_contrib_scores",
-				central_window=sliding_window_size,
-				val_transformer= 
-				 coord_producer_results['val_transformer']))
-			 for (task_name, coord_producer_results)
-				 in (multitask_seqlet_creation_results['task_name_to_coord_producer_results'].items())])
 
-		metaclusterer = metaclusterers.SignBasedPatternClustering(
-								min_cluster_size=min_metacluster_size,
-								task_name_to_value_provider=
-									task_name_to_value_provider,
-								task_names=task_names,
-								threshold_for_counting_sign=
-									weakest_transformed_thresh,
-								weak_threshold_for_counting_sign=
-									weak_threshold_for_counting_sign)
+		metaclustering_results = metaclusterers.sign_split_seqlets(seqlets, 
+			min_cluster_size=min_metacluster_size, 
+			central_window=sliding_window_size, 
+			value_transformer=seqlet_coords['val_transformer'],					
+			threshold=weak_threshold_for_counting_sign)
+		metaclustering_results['_threshold'] = weakest_transformed_thresh
 
-		metaclustering_results = metaclusterer.fit_transform(seqlets)
-		metacluster_indices = np.array(metaclustering_results.metacluster_indices)
-		metacluster_idx_to_activity_pattern = metaclustering_results.metacluster_idx_to_activity_pattern
+		metacluster_indices = np.array(metaclustering_results['metacluster_indices'])
+		metacluster_idx_to_activity_pattern = metaclustering_results['metacluster_idx_to_activity_pattern']
 
 		num_metaclusters = max(metacluster_indices)+1
 		metacluster_sizes = [np.sum(metacluster_idx==metacluster_indices)

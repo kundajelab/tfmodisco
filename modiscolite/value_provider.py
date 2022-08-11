@@ -3,51 +3,6 @@ import numpy as np
 import scipy.stats
 from modisco import util
 
-class TransformCentralWindowValueProvider():
-
-    def __init__(self, track_name, central_window, val_transformer):
-        if isinstance(track_name, str):
-            self.track_name = track_name
-        else: 
-            self.track_name = track_name.decode('utf-8')
-        self.central_window = central_window
-        self.val_transformer = val_transformer
-
-    def __call__(self, seqlet):
-        val = self.get_val(seqlet=seqlet)
-        return self.val_transformer(val=val)
-
-    def get_imp_around_central_window(self, seqlet, central_window):
-        flank_to_ignore = int(0.5*(len(seqlet)-central_window))
-        track_values = seqlet[self.track_name]\
-                        .fwd[flank_to_ignore:(len(seqlet)-flank_to_ignore)]
-        return np.sum(track_values)
-
-    def get_val(self, seqlet):
-        if (hasattr(self.central_window, '__iter__')):
-            vals = []
-            for window_width in self.central_window:
-                imp = self.get_imp_around_central_window(
-                        seqlet=seqlet, central_window=window_width) 
-                vals.append(imp)
-            return vals
-        else:
-            return self.get_imp_around_central_window(seqlet=seqlet,
-                            central_window=self.central_window)
-
-    def save_hdf5(self, grp):
-        grp.attrs["class"] = type(self).__name__
-        grp.attrs["track_name"] = self.track_name
-        if (hasattr(self.central_window, '__iter__')):
-            grp.create_dataset("central_window",
-                               data=np.array(self.central_window))
-        else:
-            grp.attrs["central_window"] = self.central_window
-        self.val_transformer.save_hdf5(grp.create_group("val_transformer")) 
-
-
-
-
 def valatmaxabs(arrs):
     idxs = np.argmax(np.abs(arrs), axis=0)
     return arrs[idxs, np.arange(len(arrs[0]))], idxs
@@ -137,10 +92,6 @@ class PrecisionValTransformer():
 class AbsPercentileValTransformer():
     def __init__(self, distribution):
         self.distribution = np.array(sorted(np.abs(distribution)))
-
-    def save_hdf5(self, grp):
-        grp.attrs["class"] = type(self).__name__
-        grp.create_dataset("distribution", data=self.distribution)
 
     def __call__(self, val):
         return np.sign(val)*np.searchsorted(

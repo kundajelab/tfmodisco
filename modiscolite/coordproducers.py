@@ -1,6 +1,6 @@
 # coordproducers.py
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
-# adapted from code originally written by Avanti Shrikumar 
+# adapted from code written by Avanti Shrikumar 
 
 import numpy as np
 
@@ -80,7 +80,7 @@ def _identify_coords(score_track, pos_threshold, neg_threshold,
 
 	# Filter out the flanks
 	cp_score_track[:, :flank] = -np.inf
-	cp_score_track[:, -flank] = -np.inf
+	cp_score_track[:, -flank:] = -np.inf
 
 	n, d = cp_score_track.shape
 	coords = []
@@ -100,7 +100,7 @@ def _identify_coords(score_track, pos_threshold, neg_threshold,
 					example_idx=example_idx,
 					start=argmax-flank,
 					end=argmax+window_size+flank,
-					revcomp=False,
+					is_revcomp=False,
 					score=score_track[example_idx][argmax])
 
 				coords.append(coord)
@@ -160,7 +160,6 @@ def _isotonic_thresholds(values, null_values, increasing, target_fdr,
 
 def _refine_thresholds(vals, pos_threshold, neg_threshold,
 	min_passing_windows_frac, max_passing_windows_frac):
-
 	frac_passing_windows =(
 		sum(vals >= pos_threshold)
 		 + sum(vals <= neg_threshold))/float(len(vals))
