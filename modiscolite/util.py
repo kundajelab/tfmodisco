@@ -119,8 +119,6 @@ def identify_peaks(arr):
 		previous_val = val
 	return found_peaks
 
-
-
 def binary_search_perplexity(desired_perplexity, distances):
 	EPSILON_DBL = 1e-8
 	PERPLEXITY_TOLERANCE = 1e-5
@@ -258,7 +256,6 @@ def symmetrize_nn_distmat(distmat_nn, nn):
 	   sorted_augmented_nn.append(augmented_nn_row[argsort_indices])
 	   sorted_augmented_distmat_nn.append(
 			augmented_distmat_nn_row[argsort_indices])
-
 
 	return sorted_augmented_nn, sorted_augmented_distmat_nn
 

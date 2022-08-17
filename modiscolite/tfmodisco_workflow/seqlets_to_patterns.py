@@ -1,12 +1,11 @@
 from __future__ import division, absolute_import, print_function
 from .. import affinitymat
-from .. import nearest_neighbors
-from .. import cluster
 from .. import aggregator
 from .. import core
 from .. import util
-from .. import seqlet_embedding
+from .. import gapped_kmer
 from .. import pattern_filterer as pattern_filterer_module
+from .. import cluster
 from joblib import Parallel, delayed
 from collections import defaultdict, OrderedDict, Counter
 import numpy as np
@@ -17,20 +16,59 @@ import json
 from ..util import print_memory_use
 
 
-def do_density_adaptation(new_rows_distmat_nn, new_rows_nn,
-								new_rows_betas, new_rows_normfactors):
-	new_rows_densadapted_affmat_nn = []
-	for i in range(len(new_rows_distmat_nn)):
+
+def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity, n_jobs):
+	eps = 0.0000001
+	distmat_nn = [np.maximum(np.log((1.0/(0.5*np.maximum(x, eps)))-1), 
+		0.0) for x in affmat_nn] 
+
+	#Note: the fine-grained similarity metric isn't actually symmetric
+	# because a different input will get padded with zeros depending
+	# on which seqlets are specified as the filters and which seqlets
+	# are specified as the 'thing to scan'. So explicit symmetrization
+	# is worthwhile
+	seqlet_neighbors, distmat_nn = util.symmetrize_nn_distmat(
+		distmat_nn=distmat_nn, nn=seqlet_neighbors)
+
+	#Compute beta values for the density adaptation. *store it*
+	betas_and_ps = Parallel(n_jobs=n_jobs)(delayed(
+		util.binary_search_perplexity)(tsne_perplexity, distances) 
+			for distances in distmat_nn)
+	betas = np.array([x[0] for x in betas_and_ps])
+
+	#also compute the normalization factor needed to get probs to sum to 1
+	#note: sticking to lists here because different rows of
+	# sym_distmat_nn may have different lengths after adding in
+	# the symmetric pairs
+	densadapted_affmat_nn_unnorm = [np.exp(-np.array(distmat_row)/beta)
+		for distmat_row, beta in zip(distmat_nn, betas)]
+	normfactors = np.array([max(np.sum(x), 1e-8) 
+		for x in densadapted_affmat_nn_unnorm])
+
+	densadapted_affmat_nn = []
+	for i in range(len(distmat_nn)):
 		densadapted_row = []
 
-		for j,distance in zip(new_rows_nn[i], new_rows_distmat_nn[i]):
-			densadapted_row.append(np.sqrt(
-			  (np.exp(-distance/new_rows_betas[i])/new_rows_normfactors[i])
-			 *(np.exp(-distance/new_rows_betas[j])/
-			   new_rows_normfactors[j]))) 
-		new_rows_densadapted_affmat_nn.append(densadapted_row)
+		betas_i = betas[i]
+		norms_i = normfactors[i]
 
-	return new_rows_densadapted_affmat_nn
+		for j, distance in zip(seqlet_neighbors[i], distmat_nn[i]):
+			betas_j = betas[j]
+			norms_j = normfactors[j]
+ 
+			rbf_i = np.exp(-distance / betas_i) / norms_i
+			rbf_j = np.exp(-distance / betas_j) / norms_j
+
+			density_adapted_row = np.sqrt(rbf_i * rbf_j)
+			densadapted_row.append(density_adapted_row)
+
+		densadapted_affmat_nn.append(densadapted_row)
+
+	csr_density_adapted_affmat = util.coo_matrix_from_neighborsformat(
+		entries=densadapted_affmat_nn, neighbors=seqlet_neighbors,
+		ncols=len(densadapted_affmat_nn)).tocsr()
+
+	return csr_density_adapted_affmat
 
 def get_cluster_to_aggregate_motif(seqlets, seqlet_aggregator,
 								   cluster_indices,
@@ -65,28 +103,49 @@ def sign_consistency_func(motif, contrib_scores_track_names, track_signs):
 		contrib_scores_track_name in contrib_scores_track_names]
 	return all([(x==y) for x,y in zip(motif_track_signs, track_signs)])
 
+def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn, 
+	fine_affmat_nn, correlation_threshold):
+
+	filtered_rows_mask = affinitymat.core.FilterMaskFromCorrelation(
+		main_affmat=fine_affmat_nn, other_affmat=coarse_affmat_nn,
+		correlation_threshold=correlation_threshold)
+
+	filtered_seqlets = [seqlet for seqlet, mask in zip(seqlets, 
+		filtered_rows_mask) if mask == True]
+
+
+	#figure out a mapping from pre-filtering to the
+	# post-filtering indices
+	new_idx_mapping = np.cumsum(filtered_rows_mask) - 1
+	retained_indices = set(np.where(filtered_rows_mask == True)[0])
+
+	filtered_neighbors = []
+	filtered_affmat_nn = []
+	for old_row_idx, (old_neighbors, affmat_row) in enumerate(zip(seqlet_neighbors, fine_affmat_nn)):
+		if old_row_idx in retained_indices:
+			filtered_old_neighbors = [neighbor for neighbor in old_neighbors if neighbor in retained_indices]
+			filtered_affmat_row = [affmatval for affmatval, neighbor in zip(affmat_row,old_neighbors) if neighbor in retained_indices]
+			filtered_neighbors_row = [new_idx_mapping[neighbor] for neighbor in filtered_old_neighbors]
+			filtered_neighbors.append(filtered_neighbors_row)
+			filtered_affmat_nn.append(filtered_affmat_row)
+
+	return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
+
+
 def TfModiscoSeqletsToPatternsFactory(seqlets, track_set, 
-					   onehot_track_name,
-					   contrib_scores_track_names,
-					   hypothetical_contribs_track_names,
-					   track_signs,
-					   other_comparison_track_names=[],
+					   onehot_track_name="sequence",
+					   contrib_scores_track_names=["task0_contrib_scores"],
+					   hypothetical_contribs_track_names=["task0_hypothetical_contribs"],
+					   track_signs=None,
 					   n_cores=10,
 					   min_overlap_while_sliding=0.7,
-					   embedder_factory=(
-						seqlet_embedding.advanced_gapped_kmer
-										.AdvancedGappedKmerEmbedderFactory()),
-
 					   nearest_neighbors_to_compute=500,
 
 					   affmat_correlation_threshold=0.15,
-
 					   tsne_perplexity=10,
 
-					   n_leiden_iterations_r1=-1,
-					   n_leiden_iterations_r2=-1,
-					   contin_runs_r1=50,
-					   contin_runs_r2=50,
+					   n_leiden_iterations=-1,
+					   contin_runs=50,
 
 					   frac_support_to_trim_to=0.2,
 					   min_num_to_trim_to=30,
@@ -111,89 +170,17 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 					   verbose=True, 
 					   seed=1234):
 
-		bg_freq = np.mean(
-			track_set.track_name_to_data_track[onehot_track_name].fwd_tracks,
-			axis=(0,1))
-
-		seqlets_sorter = (lambda arr:
-						  sorted(arr,
-								 key=lambda x:
-								  -np.sum([np.sum(np.abs(x[track_name].fwd))
-									 for track_name
-									 in contrib_scores_track_names])))
+		bg_freq = np.mean(track_set.track_name_to_data_track[
+			onehot_track_name].fwd_tracks, axis=(0,1))
 
 		pattern_comparison_settings =\
 			affinitymat.core.PatternComparisonSettings(
 				track_names=hypothetical_contribs_track_names
-							+contrib_scores_track_names
-							+other_comparison_track_names, 
+							+contrib_scores_track_names,
 				track_transformer=affinitymat.L1Normalizer(), 
 				min_overlap=min_overlap_while_sliding)
 
-		#coarse_grained 1d embedder
-		seqlets_to_1d_embedder = embedder_factory(
-				onehot_track_name=onehot_track_name,
-				toscore_track_names_and_signs=list(
-				zip(hypothetical_contribs_track_names,
-					[np.sign(x) for x in track_signs])),
-				n_jobs=n_cores)
-
-		#affinity matrix from embeddings
-		sparse_affmat_from_fwdnrev1dvecs =\
-			affinitymat.core.SparseNumpyCosineSimFromFwdAndRevOneDVecs(
-					n_neighbors=nearest_neighbors_to_compute, 
-					verbose=verbose)
-
-		coarse_affmat_computer =\
-		  affinitymat.core.SparseAffmatFromFwdAndRevSeqletEmbeddings(
-			seqlets_to_1d_embedder=seqlets_to_1d_embedder,
-			sparse_affmat_from_fwdnrev1dvecs=sparse_affmat_from_fwdnrev1dvecs,
-			verbose=verbose)
-
-		affmat_from_seqlets_with_nn_pairs =\
-			affinitymat.core.AffmatFromSeqletsWithNNpairs(
-				pattern_comparison_settings=pattern_comparison_settings,
-				sim_metric_on_nn_pairs=\
-					affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
-						n_cores=n_cores,
-						cross_metric_single_region=
-							affinitymat.core.CrossContinJaccardSingleRegion()))
-
-		filter_mask_from_correlation =\
-			affinitymat.core.FilterMaskFromCorrelation(
-				correlation_threshold=affmat_correlation_threshold,
-				verbose=verbose)
-
-		aff_to_dist_mat = affinitymat.transformers.AffToDistViaInvLogistic() 
-
-
-		#prepare the clusterers for the different rounds
-		# No longer a need for symmetrization because am symmetrizing by
-		# taking the geometric mean elsewhere
-		affmat_transformer_r1 =\
-			affinitymat.transformers.AdhocAffMatTransformer(lambda x: x)
-
 		print("TfModiscoSeqletsToPatternsFactory: seed=%d" % seed)
-		clusterer_r1 = cluster.core.LeidenClusterParallel(
-			n_jobs=n_cores, 
-			affmat_transformer=affmat_transformer_r1,
-			numseedstotry=contin_runs_r1,
-			n_leiden_iterations=n_leiden_iterations_r1,
-			verbose=verbose)
-
-		#No longer a need for symmetrization because am symmetrizing by
-		# taking the geometric mean elsewhere
-		affmat_transformer_r2 =\
-			affinitymat.transformers.AdhocAffMatTransformer(lambda x: x)
-
-		clusterer_r2 = cluster.core.LeidenClusterParallel(
-			n_jobs=n_cores, 
-			affmat_transformer=affmat_transformer_r2,
-			numseedstotry=contin_runs_r2,
-			n_leiden_iterations=n_leiden_iterations_r2,
-			verbose=verbose)
-		
-		clusterer_per_round = [clusterer_r1, clusterer_r2]
 
 		#prepare the seqlet aggregator
 		expand_trim_expand1 =\
@@ -207,31 +194,20 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 			aggregator.ExpandSeqletsToFillPattern(
 				track_set=track_set,
 				flank_to_add=initial_flank_to_add))
+
 		postprocessor1 =\
 			aggregator.TrimToFracSupport(
 						min_frac=frac_support_to_trim_to,
 						min_num=min_num_to_trim_to,
 						verbose=verbose)\
 					  .chain(expand_trim_expand1)
+
 		seqlet_aggregator = aggregator.GreedySeqletAggregator(
-			pattern_aligner=core.CrossContinJaccardPatternAligner(
-				pattern_comparison_settings=pattern_comparison_settings),
-				seqlet_sort_metric=
-					lambda x: -sum([np.sum(np.abs(x[track_name].fwd)) for
-							   track_name in contrib_scores_track_names]),
+			pattern_comparison_settings=pattern_comparison_settings,
+			seqlet_sort_metric=lambda x: -np.sum(np.abs(x["task0_contrib_scores"].fwd)),
 			track_set=track_set, #needed for seqlet expansion
 			postprocessor=postprocessor1)
 
-		#prepare the similar patterns collapser
-		pattern_to_seqlet_sim_computer =\
-			affinitymat.core.AffmatFromSeqletsWithNNpairs(
-				pattern_comparison_settings=pattern_comparison_settings,
-				sim_metric_on_nn_pairs=\
-					affinitymat.core.ParallelCpuCrossMetricOnNNpairs(
-						n_cores=n_cores,
-						cross_metric_single_region=\
-							affinitymat.core.CrossContinJaccardSingleRegion(),
-						verbose=False))
 
 		#similarity settings for merging
 		prob_and_sim_merge_thresholds =\
@@ -246,9 +222,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 				pattern_aligner=core.CrossCorrelationPatternAligner(
 					pattern_comparison_settings=
 						affinitymat.core.PatternComparisonSettings(
-							track_names=(
-								contrib_scores_track_names+
-								other_comparison_track_names), 
+							track_names=contrib_scores_track_names, 
 							track_transformer=
 								affinitymat.MeanNormalizer().chain(
 								affinitymat.MagnitudeNormalizer()), 
@@ -285,8 +259,11 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 				 'hypothetical_contribs_track_names':
 					hypothetical_contribs_track_names,
 				 'track_signs': track_signs, 
-				 'other_comparison_track_names': other_comparison_track_names
+				 'other_comparison_track_names': []
 		}
+
+		seqlets_sorter = (lambda arr: sorted(arr, key=lambda x:
+			-np.sum(np.abs(x["task0_contrib_scores"].fwd))))
 
 		seqlets = seqlets_sorter(seqlets)
 		start = time.time()
@@ -305,143 +282,66 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 		}
 
 
-		for round_idx, clusterer in enumerate(clusterer_per_round):
-			import gc
-			gc.collect()
-			
+		for round_idx in range(2):			
 			if len(seqlets) == 0:
 				return failure
 
-			coarse_affmat_nn, seqlet_neighbors = coarse_affmat_computer(seqlets, initclusters=None)
-			gc.collect()
+			# Step 1: Generate coarse representation
+			embedding_fwd, embedding_rev = gapped_kmer.AdvancedGappedKmerEmbedder(
+				seqlets=seqlets, sign=track_signs[0], n_jobs=n_cores)
 
-			nn_affmat_start = time.time() 
+			coarse_affmat_nn, seqlet_neighbors = affinitymat.core.sparse_cosine_similarity(
+				fwd_vecs=embedding_fwd, rev_vecs=embedding_rev,
+				n_neighbors=nearest_neighbors_to_compute)
 
-			fine_affmat_nn = affmat_from_seqlets_with_nn_pairs(
-								seqlet_neighbors=seqlet_neighbors,
-								seqlets=seqlets,
-								return_sparse=True)
+			# Step 2: Generate fine representation
+			fine_affmat_nn = affinitymat.core.AffmatFromSeqletsWithNNpairs(
+				seqlets=seqlets, seqlet_neighbors=seqlet_neighbors,
+				track_names=hypothetical_contribs_track_names
+							+contrib_scores_track_names,
+				transformer=affinitymat.L1Normalizer(), 
+				min_overlap=min_overlap_while_sliding,
+				return_sparse=True, n_cores=n_cores)
 
-			#get the fine_affmat_nn reorderings
-			reorderings = np.array([np.argsort(-finesimsinrow)
-									for finesimsinrow in fine_affmat_nn])
+			# Step 3: Filter out to top NN based on fine representation 
+			reorderings = np.argsort(-fine_affmat_nn, axis=-1)
 
-			#reorder fine_affmat_nn, coarse_affmat_nn and seqlet_neighbors
-			# according to reorderings
-			fine_affmat_nn = [finesimsinrow[rowreordering]
-								  for (finesimsinrow, rowreordering)
-								  in zip(fine_affmat_nn, reorderings)]
-			coarse_affmat_nn = [coarsesimsinrow[rowreordering]
-								  for (coarsesimsinrow, rowreordering)
-								  in zip(coarse_affmat_nn, reorderings)]
-			seqlet_neighbors = [nnrow[rowreordering]
-								  for (nnrow, rowreordering)
-								  in zip(seqlet_neighbors, reorderings)]
-
-			del reorderings
-			gc.collect()
-
-			#filter by correlation
+			fine_affmat_nn = np.array([finesimsinrow[rowreordering]
+				for (finesimsinrow, rowreordering) in zip(fine_affmat_nn, reorderings)])
+			coarse_affmat_nn = np.array([coarsesimsinrow[rowreordering]
+				for (coarsesimsinrow, rowreordering) in zip(coarse_affmat_nn, reorderings)])
+			seqlet_neighbors = np.array([nnrow[rowreordering]
+				for (nnrow, rowreordering) in zip(seqlet_neighbors, reorderings)])
+			
 			if round_idx == 0:
-				#the filter_mask_from_correlation function only operates
-				# on columns in which np.abs(main_affmat) > 0
-				filtered_rows_mask = filter_mask_from_correlation(
-										main_affmat=fine_affmat_nn,
-										other_affmat=coarse_affmat_nn)
+				filtered_seqlets, seqlet_neighbors, filtered_affmat_nn = (
+					_filter_by_correlation(seqlets, seqlet_neighbors, 
+						coarse_affmat_nn, fine_affmat_nn, 
+						affmat_correlation_threshold))
 			else:
-				filtered_rows_mask = np.array([True for x in seqlets])
+				filtered_seqlets = seqlets
+				filtered_affmat_nn = fine_affmat_nn
 
+			# Step 4: Density adaptation
+			csr_density_adapted_affmat = _density_adaptation(filtered_affmat_nn, seqlet_neighbors, tsne_perplexity, n_cores)
 
-			del coarse_affmat_nn 
-			gc.collect()
+			# Step 5: Clustering
+			cluster_results = cluster.LeidenCluster(
+				csr_density_adapted_affmat,
+				initclusters=None,
+				n_jobs=n_cores, 
+				affmat_transformer=None,
+				numseedstotry=contin_runs,
+				n_leiden_iterations=n_leiden_iterations,
+				verbose=verbose)
 
-			filtered_seqlets = [x[0] for x in zip(seqlets, filtered_rows_mask) if (x[1])]
-
-			#figure out a mapping from pre-filtering to the
-			# post-filtering indices
-			new_idx_mapping = (
-				np.cumsum(1.0*(filtered_rows_mask)).astype("int")-1)
-			retained_indices = set(np.arange(len(filtered_rows_mask))[
-											  filtered_rows_mask])
-			del filtered_rows_mask
-			filtered_neighbors = []
-			filtered_affmat_nn = []
-			for old_row_idx, (old_neighbors,affmat_row) in enumerate(
-								zip(seqlet_neighbors, fine_affmat_nn)): 
-				if old_row_idx in retained_indices:
-					filtered_old_neighbors = [
-						neighbor for neighbor in old_neighbors if neighbor
-						in retained_indices]
-					filtered_affmat_row = [
-						affmatval for affmatval,neighbor
-						in zip(affmat_row,old_neighbors)
-						if neighbor in retained_indices]
-					filtered_neighbors_row = [
-						new_idx_mapping[neighbor] for neighbor
-						in filtered_old_neighbors]
-					filtered_neighbors.append(filtered_neighbors_row)
-					filtered_affmat_nn.append(filtered_affmat_row)
-
-			#overwrite seqlet_neighbors...should be ok if the rows are
-			# not all the same length
-			seqlet_neighbors = filtered_neighbors
-			del (filtered_neighbors, retained_indices, new_idx_mapping)
-
-			#apply aff_to_dist_mat one row at a time
-			distmat_nn = [aff_to_dist_mat(affinity_mat=x)
-						  for x in filtered_affmat_nn] 
-			del filtered_affmat_nn
-
-			#Note: the fine-grained similarity metric isn't actually symmetric
-			# because a different input will get padded with zeros depending
-			# on which seqlets are specified as the filters and which seqlets
-			# are specified as the 'thing to scan'. So explicit symmetrization
-			# is worthwhile
-			sym_seqlet_neighbors, sym_distmat_nn = util.symmetrize_nn_distmat(
-				distmat_nn=distmat_nn, nn=seqlet_neighbors)
-			del distmat_nn
-			del seqlet_neighbors
-
-			#Compute beta values for the density adaptation. *store it*
-			betas_and_ps = Parallel(n_jobs=n_cores)(
-					 delayed(util.binary_search_perplexity)(
-						  tsne_perplexity, distances)
-					 for distances in sym_distmat_nn)
-			betas = np.array([x[0] for x in betas_and_ps])
-
-			#also compute the normalization factor needed to get probs to sum to 1
-			#note: sticking to lists here because different rows of
-			# sym_distmat_nn may have different lengths after adding in
-			# the symmetric pairs
-			densadapted_affmat_nn_unnorm = [np.exp(-np.array(distmat_row)/beta)
-				for distmat_row, beta in zip(sym_distmat_nn, betas)]
-			normfactors = np.array([max(np.sum(x),1e-8) for x in densadapted_affmat_nn_unnorm])
-
-			sym_densadapted_affmat_nn = do_density_adaptation(
-				new_rows_distmat_nn=sym_distmat_nn,
-				new_rows_nn=sym_seqlet_neighbors,
-				new_rows_betas=betas,
-				new_rows_normfactors=normfactors)
-
-			#util.verify_symmetric_nn_affmat(
-			#	affmat_nn=sym_densadapted_affmat_nn,
-			#	nn=sym_seqlet_neighbors)
-
-			#Make csr matrix
-			csr_density_adapted_affmat =\
-				util.coo_matrix_from_neighborsformat(
-					entries=sym_densadapted_affmat_nn,
-					neighbors=sym_seqlet_neighbors,
-					ncols=len(sym_densadapted_affmat_nn)).tocsr()
-
-			cluster_results = clusterer(csr_density_adapted_affmat, initclusters=None)
 			del csr_density_adapted_affmat
 
 			cluster_to_motif, cluster_to_eliminated_motif =\
 				get_cluster_to_aggregate_motif(
 					seqlets=filtered_seqlets,
 					seqlet_aggregator=seqlet_aggregator,
-					cluster_indices=cluster_results.cluster_indices,
+					cluster_indices=cluster_results['cluster_indices'],
 					sign_consistency_check=True,
 					min_seqlets_in_motif=0,
 					contrib_scores_track_names=contrib_scores_track_names,

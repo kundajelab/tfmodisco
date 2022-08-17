@@ -123,22 +123,18 @@ def TfModiscoWorkflow(task_names, contrib_scores,
 			metacluster_activities = [int(x) for x in
 				metacluster_idx_to_activity_pattern[metacluster_idx].split(",")]
 			
-			metacluster_seqlets = [
-				x[0] for x in zip(seqlets, metacluster_indices)
-				if x[1]==metacluster_idx][:max_seqlets_per_metacluster]
+			metacluster_seqlets = [seqlet for seqlet, idx in zip(
+				seqlets, metacluster_indices) if idx == metacluster_idx]
+			metacluster_seqlets = metacluster_seqlets[:max_seqlets_per_metacluster]
 			
 			relevant_task_names, relevant_task_signs =\
 				zip(*[(x[0], x[1]) for x in
 					zip(task_names, metacluster_activities) if x[1] != 0])
-			
+
 			seqlets_to_patterns_results = TfModiscoSeqletsToPatternsFactory(
 			  seqlets=metacluster_seqlets,
 			  track_set=track_set,
-			  onehot_track_name="sequence",
-			  contrib_scores_track_names = [key + "_contrib_scores" for key in relevant_task_names],
-			  hypothetical_contribs_track_names=[key + "_hypothetical_contribs" for key in relevant_task_names],
-			  track_signs=relevant_task_signs,
-			  other_comparison_track_names=[])
+			  track_signs=relevant_task_signs)
 
 			metacluster_idx_to_submetacluster_results[metacluster_idx] = {
 				'metacluster_size': metacluster_size, 
