@@ -5,7 +5,6 @@
 import numpy as np
 
 from .core import SeqletCoordinates
-from .value_provider import AbsPercentileValTransformer
 
 from sklearn.isotonic import IsotonicRegression
 
@@ -16,12 +15,12 @@ def _bin_mode(values, bins=1000):
 	r_edge = bin_edges[peak+1]
 	return l_edge, r_edge, values[(l_edge < values) & (values < r_edge)]
 
-def LaplaceNullDist(original_summed_score_track, window_size, num_to_samp, 
-	verbose=True, percentiles_to_use=np.array([5*(x+1) for x in range(19)]),
-	random_seed=1234):
+def _laplacian_null(track, window_size, num_to_samp, random_seed=1234):
+
+	percentiles_to_use = np.array([5*(x+1) for x in range(19)])
 
 	rng = np.random.RandomState()
-	values = np.concatenate(original_summed_score_track, axis=0)
+	values = np.concatenate(track, axis=0)
 
 	# first estimate mu, using two level histogram to get to 1e-6
 	_, _, top_values = _bin_mode(values)
@@ -47,40 +46,22 @@ def LaplaceNullDist(original_summed_score_track, window_size, num_to_samp,
 
 	for i in range(num_to_samp):
 		sign = 1 if (rng.uniform() < prob_pos) else -1
-		if (sign == 1):
+		if sign == 1:
 			sampled_cdf = rng.uniform()
 			val = -np.log(1-sampled_cdf)/pos_laplace_lambda + mu 
 		else:
 			sampled_cdf = rng.uniform() 
 			val = mu + np.log(1-sampled_cdf)/neg_laplace_lambda
 		sampled_vals.append(val)
-	return np.array(sampled_vals)
 
-#identify_coords is expecting something that has already been processed
-# with sliding windows of size window_size
-def _identify_coords(score_track, pos_threshold, neg_threshold,
-	window_size, flank, suppress, max_seqlets_total, sign_to_return):
+	sampled_vals = np.array(sampled_vals)
+	return sampled_vals[sampled_vals >= 0], sampled_vals[sampled_vals < 0]
+
+
+def _iterative_extract_coords(score_track, window_size, flank, suppress):
 	#cp_score_track = 'copy' of the score track, which can be modified as
 	# coordinates are identified
 	cp_score_track = score_track.copy()
-
-	#if a position is less than the threshold, set it to -np.inf
-	#Note that the threshold comparisons need to be >= and not just > for
-	# cases where there are lots of ties at the high end (e.g. with an IR
-	# tranformation that gives a lot of values that have a precision of 1.0)
-	if sign_to_return is None:
-		idxs = (cp_score_track >= pos_threshold) | (cp_score_track <= neg_threshold)
-	elif sign_to_return == 1:
-		idxs = cp_score_track >= pos_threshold
-	elif sign_to_return == -1:
-		idxs = cp_score_track <= neg_threshold
-
-	cp_score_track[idxs] = np.abs(cp_score_track[idxs])
-	cp_score_track[~idxs] = -np.inf
-
-	# Filter out the flanks
-	cp_score_track[:, :flank] = -np.inf
-	cp_score_track[:, -flank:] = -np.inf
 
 	n, d = cp_score_track.shape
 	coords = []
@@ -110,9 +91,6 @@ def _identify_coords(score_track, pos_threshold, neg_threshold,
 			r_idx = int(min(np.ceil(argmax+0.5+suppress), d))
 			single_score_track[l_idx:r_idx] = -np.inf 
 
-	if max_seqlets_total is not None and len(coords) > max_seqlets_total:
-		coords = sorted(coords, key=lambda x: -np.abs(x.score))[:max_seqlets_total]
-	
 	return coords
 
 
@@ -179,17 +157,15 @@ def _refine_thresholds(vals, pos_threshold, neg_threshold,
 	return pos_threshold, neg_threshold
 
 
-def FixedWindowAroundChunks(attribution_scores, window_size, flank, suppress, 
-	target_fdr, min_passing_windows_frac, max_passing_windows_frac, 
-	max_seqlets_total=None, sign_to_return=None, verbose=True):
+def extract_seqlets(attribution_scores, window_size, flank, suppress, 
+	target_fdr, min_passing_windows_frac, max_passing_windows_frac):
 
 	pos_values, neg_values, smoothed_tracks = _smooth_and_split(
 		attribution_scores, window_size)
 
-	null_values = LaplaceNullDist(original_summed_score_track=smoothed_tracks,  
+	pos_null_values, neg_null_values = _laplacian_null(track=smoothed_tracks, 
 		window_size=window_size, num_to_samp=10000)
-	pos_null_values = null_values[null_values >= 0]
-	neg_null_values = null_values[null_values < 0]
+
 
 	pos_threshold = _isotonic_thresholds(pos_values, pos_null_values, 
 		increasing=True, target_fdr=target_fdr)
@@ -203,24 +179,35 @@ def FixedWindowAroundChunks(attribution_scores, window_size, flank, suppress,
 		  min_passing_windows_frac=min_passing_windows_frac,
 		  max_passing_windows_frac=max_passing_windows_frac) 
 
-	val_transformer = AbsPercentileValTransformer(
-		distribution=np.concatenate(smoothed_tracks, axis=0))
+	distribution = np.array(sorted(np.abs(np.concatenate(smoothed_tracks,
+		axis=0))))
 
-	coords = _identify_coords(
+	transformed_pos_threshold = np.sign(pos_threshold)*np.searchsorted(
+		a=distribution, v=abs(pos_threshold))/float(len(distribution))
+
+	transformed_neg_threshold = np.sign(neg_threshold)*np.searchsorted(
+		a=distribution, v=abs(neg_threshold))/float(len(distribution))
+
+	idxs = (smoothed_tracks >= pos_threshold) | (smoothed_tracks <= neg_threshold)
+
+	smoothed_tracks[idxs] = np.abs(smoothed_tracks[idxs])
+	smoothed_tracks[~idxs] = -np.inf
+
+	# Filter out the flanks
+	smoothed_tracks[:, :flank] = -np.inf
+	smoothed_tracks[:, -flank:] = -np.inf
+
+	coords = _iterative_extract_coords(
 		score_track=smoothed_tracks,
-		pos_threshold=pos_threshold,
-		neg_threshold=neg_threshold,
 		window_size=window_size,
 		flank=flank,
-		suppress=suppress,
-		max_seqlets_total=max_seqlets_total,
-		sign_to_return=sign_to_return)
+		suppress=suppress)
 
 	return {
 		'coords': coords,
 		'pos_threshold': pos_threshold,
 		'neg_threshold': neg_threshold,
-		'transformed_pos_threshold': val_transformer(pos_threshold),
-		'transformed_neg_threshold': val_transformer(neg_threshold),
-		'val_transformer': val_transformer,
+		'transformed_pos_threshold': transformed_pos_threshold,
+		'transformed_neg_threshold': transformed_neg_threshold,
+		'distribution': distribution
 	} 

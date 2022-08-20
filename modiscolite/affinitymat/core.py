@@ -175,12 +175,9 @@ def AffmatFromSeqletsWithNNpairs(seqlets, track_names, transformer, min_overlap,
 
 def ParallelCpuCrossMetricOnNNpairs(X, Y, min_overlap,
 	seqlet_neighbors=None, return_sparse=False, n_cores=1, verbose=True):
-	n_pad = int(X.shape[1]*(1-min_overlap))
-	pad_width = ((0,0), (n_pad, n_pad), (0,0)) 
-	Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
-
-	if return_sparse == False:
-		to_return = np.zeros((Y.shape[0], X.shape[0], 2))
+	#n_pad = int(X.shape[1]*(1-min_overlap))
+	#pad_width = ((0,0), (n_pad, n_pad), (0,0)) 
+	#Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 
 	f = delayed(jaccard)
 	results = Parallel(n_jobs=n_cores, backend="threading")(
@@ -204,11 +201,14 @@ def jaccard(X, Y, min_overlap=None, func=np.ceil):
 	if Y.ndim == 2:
 		Y = Y[None, :, :]
 
-	#if min_overlap is not None:
-	#	n_pad = int(func(X.shape[1]*(1-min_overlap)))
-	#	pad_width = ((0, 0), (n_pad, n_pad), (0, 0)) 
-	#	Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
+	if X.shape[1] > Y.shape[1]:
+		X, Y = Y, X
+
 	n_pad = 0
+	if min_overlap is not None:
+		n_pad = int(func(X.shape[1]*(1-min_overlap)))
+		pad_width = ((0, 0), (n_pad, n_pad), (0, 0)) 
+		Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 
 	n, d, _ = X.shape
 	len_output = 1 + Y.shape[1] - d 
@@ -229,17 +229,29 @@ def jaccard(X, Y, min_overlap=None, func=np.ceil):
 	idxs = np.arange(len(scores))
 	return np.array([scores[idxs, argmaxs], argmaxs - n_pad])
 
+def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):
+	if X.ndim == 2:
+		X = X[None, :, :]
+	if Y.ndim == 2:
+		Y = Y[None, :, :]
 
-def FilterMaskFromCorrelation(main_affmat, other_affmat, correlation_threshold):
-	correlations = []
+	if min_overlap is not None:
+		n_pad = int(func(X.shape[1]*(1-min_overlap)))
+		pad_width = ((0, 0), (n_pad, n_pad), (0, 0)) 
+		Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 
-	for main_affmat_row, other_affmat_row in zip(main_affmat, other_affmat):
-		to_compare_mask = np.abs(main_affmat_row) > 0
-		corr = scipy.stats.spearmanr(
-				main_affmat_row[to_compare_mask],
-				other_affmat_row[to_compare_mask])
-		correlations.append(corr.correlation)
+	n, d, _ = X.shape
+	len_output = 1 + Y.shape[1] - d 
+	scores = np.zeros((n, len_output))
 
-	correlations = np.array(correlations)
-	mask_to_return = correlations > correlation_threshold
-	return mask_to_return
+	for idx in range(len_output):
+		Y_ = Y[:, idx:idx+d]
+
+		scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
+                  (Y_ / np.linalg.norm(Y_)).ravel()) 
+		scores_ = np.nan_to_num(scores_)
+		scores[:,idx] = scores_
+
+	argmaxs = np.argmax(scores, axis=1)
+	idxs = np.arange(len(scores))
+	return np.array([scores[idxs, argmaxs], argmaxs - n_pad])

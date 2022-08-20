@@ -1,20 +1,14 @@
-from __future__ import division, absolute_import, print_function
 from .. import affinitymat
 from .. import aggregator
 from .. import core
 from .. import util
 from .. import gapped_kmer
-from .. import pattern_filterer as pattern_filterer_module
 from .. import cluster
 from joblib import Parallel, delayed
-from collections import defaultdict, OrderedDict, Counter
+from collections import defaultdict
 import numpy as np
 import time
-import sys
-import gc
-import json
-from ..util import print_memory_use
-
+import scipy
 
 
 def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity, n_jobs):
@@ -70,49 +64,101 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity, n_jobs):
 
 	return csr_density_adapted_affmat
 
-def get_cluster_to_aggregate_motif(seqlets, seqlet_aggregator,
-								   cluster_indices,
-								   sign_consistency_check,
-								   min_seqlets_in_motif,
-								   contrib_scores_track_names,
-								   track_signs):
+def _filter_patterns(patterns, min_seqlet_support, window_size, 
+	min_ic_in_window, background, ppm_pseudocount):
+	passing_patterns, filtered_patterns = [], []
+	for pattern in patterns:
+		if len(pattern.seqlets) < min_seqlet_support:
+			filtered_patterns.append(pattern)
+			continue
+
+		ppm = pattern['sequence'].fwd
+		per_position_ic = util.compute_per_position_ic(
+			ppm=ppm, background=background, pseudocount=ppm_pseudocount)
+
+		if len(per_position_ic) < window_size:       
+			if np.sum(per_position_ic) < min_ic_in_window:
+				filtered_patterns.append(pattern)
+				continue
+		else:
+			#do the sliding window sum rearrangement
+			windowed_ic = np.sum(util.rolling_window(
+				a=per_position_ic, window=window_size), axis=-1)
+
+			if np.max(windowed_ic) < min_ic_in_window:
+				filtered_patterns.append(pattern)
+				continue
+
+		passing_patterns.append(pattern)
+
+	return passing_patterns, filtered_patterns
+
+
+def _motif_from_clusters(seqlets, track_set, min_overlap,
+	min_frac, min_num, flank_to_add, window_size, bg_freq, cluster_indices, 
+	track_sign):
+
+	seqlet_sort_metric = lambda x: -np.sum(np.abs(x["task0_contrib_scores"].fwd))
 	num_clusters = max(cluster_indices+1)
 	cluster_to_seqlets = defaultdict(list) 
 
 	for seqlet,idx in zip(seqlets, cluster_indices):
 		cluster_to_seqlets[idx].append(seqlet)
 
-	cluster_to_motif = OrderedDict()
-	cluster_to_eliminated_motif = OrderedDict()
+	cluster_to_motif = []
+
 	for i in range(num_clusters):
-		if len(cluster_to_seqlets[i]) >= min_seqlets_in_motif:
-			motifs = seqlet_aggregator(cluster_to_seqlets[i])
+		sorted_seqlets = sorted(cluster_to_seqlets[i], key=seqlet_sort_metric) 
+		pattern = core.AggregatedSeqlet.from_seqlet(sorted_seqlets[0])
 
-			if len(motifs) > 0:
-				motif = motifs[0]
-				if (sign_consistency_check==False or sign_consistency_func(motif, contrib_scores_track_names, track_signs)):
-					cluster_to_motif[i] = motif
-				else:
-					cluster_to_eliminated_motif[i] = motif
+		if len(sorted_seqlets) > 1:
+			pattern = aggregator.merge_in_seqlets_filledges(
+				parent_pattern=pattern,
+				seqlets_to_merge=sorted_seqlets[1:],
+				track_set=track_set,
+				metric=affinitymat.core.jaccard,
+				min_overlap=min_overlap,
+				track_transformer=affinitymat.L1Normalizer(),
+				track_names=["task0_hypothetical_contribs", 
+					"task0_contrib_scores"],
+				verbose=True)
 
-	return cluster_to_motif, cluster_to_eliminated_motif
+		pattern = aggregator._trim_to_frac_support([pattern], 
+			min_frac=min_frac, min_num=min_num)[0]
 
-def sign_consistency_func(motif, contrib_scores_track_names, track_signs):
-	motif_track_signs = [
-		np.sign(np.sum(motif[contrib_scores_track_name].fwd)) for
-		contrib_scores_track_name in contrib_scores_track_names]
-	return all([(x==y) for x,y in zip(motif_track_signs, track_signs)])
+		pattern = aggregator._expand_seqlets_to_fill_pattern([pattern], 
+			track_set=track_set, left_flank_to_add=flank_to_add,
+			right_flank_to_add=flank_to_add)[0]
+
+		pattern = aggregator._trim_to_best_window_by_ic([pattern],
+				window_size=window_size,
+				bg_freq=bg_freq)[0]
+
+		pattern = aggregator._expand_seqlets_to_fill_pattern([pattern], 
+			track_set=track_set, left_flank_to_add=flank_to_add,
+			right_flank_to_add=flank_to_add)[0]
+
+		if np.sign(np.sum(pattern["task0_contrib_scores"].fwd)) == track_sign:
+			cluster_to_motif.append(pattern)
+
+	return cluster_to_motif
+
 
 def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn, 
 	fine_affmat_nn, correlation_threshold):
 
-	filtered_rows_mask = affinitymat.core.FilterMaskFromCorrelation(
-		main_affmat=fine_affmat_nn, other_affmat=coarse_affmat_nn,
-		correlation_threshold=correlation_threshold)
+	correlations = []
+	for fine_affmat_row, coarse_affmat_row in zip(fine_affmat_nn, coarse_affmat_nn):
+		to_compare_mask = np.abs(fine_affmat_row) > 0
+		corr = scipy.stats.spearmanr(fine_affmat_row[to_compare_mask],
+			coarse_affmat_row[to_compare_mask])
+		correlations.append(corr.correlation)
+
+	correlations = np.array(correlations)
+	filtered_rows_mask = np.array(correlations) > correlation_threshold
 
 	filtered_seqlets = [seqlet for seqlet, mask in zip(seqlets, 
 		filtered_rows_mask) if mask == True]
-
 
 	#figure out a mapping from pre-filtering to the
 	# post-filtering indices
@@ -130,7 +176,6 @@ def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn,
 			filtered_affmat_nn.append(filtered_affmat_row)
 
 	return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
-
 
 def TfModiscoSeqletsToPatternsFactory(seqlets, track_set, 
 					   onehot_track_name="sequence",
@@ -165,8 +210,6 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 					   min_ic_windowsize=6,
 					   ppm_pseudocount=0.001,
 
-					   final_flank_to_add=0,
-
 					   verbose=True, 
 					   seed=1234):
 
@@ -182,76 +225,26 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 
 		print("TfModiscoSeqletsToPatternsFactory: seed=%d" % seed)
 
-		#prepare the seqlet aggregator
-		expand_trim_expand1 =\
-			aggregator.ExpandSeqletsToFillPattern(
-				track_set=track_set,
-				flank_to_add=initial_flank_to_add).chain(
-			aggregator.TrimToBestWindowByIC(
-				window_size=trim_to_window_size,
-				onehot_track_name=onehot_track_name,
-				bg_freq=bg_freq)).chain(
-			aggregator.ExpandSeqletsToFillPattern(
-				track_set=track_set,
-				flank_to_add=initial_flank_to_add))
-
-		postprocessor1 =\
-			aggregator.TrimToFracSupport(
-						min_frac=frac_support_to_trim_to,
-						min_num=min_num_to_trim_to,
-						verbose=verbose)\
-					  .chain(expand_trim_expand1)
-
-		seqlet_aggregator = aggregator.GreedySeqletAggregator(
-			pattern_comparison_settings=pattern_comparison_settings,
-			seqlet_sort_metric=lambda x: -np.sum(np.abs(x["task0_contrib_scores"].fwd)),
-			track_set=track_set, #needed for seqlet expansion
-			postprocessor=postprocessor1)
-
-
-		#similarity settings for merging
-		prob_and_sim_merge_thresholds =\
-			prob_and_pertrack_sim_merge_thresholds
-		prob_and_sim_dealbreaker_thresholds =\
-			prob_and_pertrack_sim_dealbreaker_thresholds
-
 		similar_patterns_collapser =\
-			aggregator.DynamicDistanceSimilarPatternsCollapser2(
+			aggregator.SimilarPatternsCollapser(
 				pattern_comparison_settings=pattern_comparison_settings,
 				track_set=track_set,
-				pattern_aligner=core.CrossCorrelationPatternAligner(
-					pattern_comparison_settings=
-						affinitymat.core.PatternComparisonSettings(
+				pattern_aligner_settings=affinitymat.core.PatternComparisonSettings(
 							track_names=contrib_scores_track_names, 
 							track_transformer=
 								affinitymat.MeanNormalizer().chain(
 								affinitymat.MagnitudeNormalizer()), 
-							min_overlap=min_overlap_while_sliding)),
-				collapse_condition=(lambda prob, aligner_sim:
-					any([(prob >= x[0] and aligner_sim >= x[1])
-						 for x in prob_and_sim_merge_thresholds])),
-				dealbreaker_condition=(lambda prob, aligner_sim:
-					any([(prob <= x[0] and aligner_sim <= x[1])              
-						 for x in prob_and_sim_dealbreaker_thresholds])),
-				postprocessor=postprocessor1,
+							min_overlap=min_overlap_while_sliding),
+				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+				min_frac=frac_support_to_trim_to,
+				min_num=min_num_to_trim_to,
+				flank_to_add=initial_flank_to_add,
+				window_size=trim_to_window_size,
+				bg_freq=bg_freq,
 				verbose=verbose,
 				max_seqlets_subsample=merging_max_seqlets_subsample,
 				n_cores=n_cores)
-
-		pattern_filterer = pattern_filterer_module.MinSeqletSupportFilterer(
-			min_seqlet_support=final_min_cluster_size).chain(
-				pattern_filterer_module.MinICinWindow(
-					window_size=min_ic_windowsize,
-					min_ic_in_window=min_ic_in_window,
-					background=bg_freq,
-					sequence_track_name=onehot_track_name,
-					ppm_pseudocount=ppm_pseudocount   
-				) 
-			)
-
-		final_postprocessor = aggregator.ExpandSeqletsToFillPattern(
-										track_set=track_set,
-										flank_to_add=final_flank_to_add) 
 
 		other_config={
 				 'onehot_track_name': onehot_track_name,
@@ -337,20 +330,21 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 
 			del csr_density_adapted_affmat
 
-			cluster_to_motif, cluster_to_eliminated_motif =\
-				get_cluster_to_aggregate_motif(
-					seqlets=filtered_seqlets,
-					seqlet_aggregator=seqlet_aggregator,
-					cluster_indices=cluster_results['cluster_indices'],
-					sign_consistency_check=True,
-					min_seqlets_in_motif=0,
-					contrib_scores_track_names=contrib_scores_track_names,
-					track_signs=track_signs)
+			motifs = _motif_from_clusters(filtered_seqlets, 
+				track_set=track_set, 
+				min_overlap=min_overlap_while_sliding, 
+				min_frac=frac_support_to_trim_to, 
+				min_num=min_num_to_trim_to, 
+				flank_to_add=initial_flank_to_add, 
+				window_size=trim_to_window_size, 
+				bg_freq=bg_freq, 
+				cluster_indices=cluster_results['cluster_indices'], 
+				track_sign=track_signs[0])
+
 
 			#obtain unique seqlets from adjusted motifs
 			seqlets = list(dict([(y.exidx_start_end_string, y)
-							 for x in cluster_to_motif.values()
-							 for y in x.seqlets]).values())
+							 for x in motifs for y in x.seqlets]).values())
 
 
 		subcluster_settings = {
@@ -359,12 +353,11 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 			"n_jobs": n_cores,
 		}
 
-		spurious_merge_detector = aggregator.DetectSpuriousMerging2(
-			subcluster_settings=subcluster_settings, verbose=verbose,
-			min_in_subcluster=max(final_min_cluster_size, subcluster_perplexity),
-			similar_patterns_collapser=similar_patterns_collapser)
 
-		split_patterns = spurious_merge_detector(cluster_to_motif.values())
+		split_patterns = aggregator._detect_spurious_merging(
+			motifs, subcluster_settings, 
+    		max(final_min_cluster_size, subcluster_perplexity), 
+    		similar_patterns_collapser)
 
 		if len(split_patterns) == 0:
 			return failure
@@ -372,10 +365,10 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 		#Now start merging patterns 
 		merged_patterns, pattern_merge_hierarchy = similar_patterns_collapser(patterns=split_patterns) 
 		merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
-
-		final_patterns, remaining_patterns = pattern_filterer(merged_patterns)
-		final_patterns = final_postprocessor(final_patterns)
-		remaining_patterns = final_postprocessor(remaining_patterns)
+		final_patterns, remaining_patterns = _filter_patterns(merged_patterns, 
+			min_seqlet_support=final_min_cluster_size, 
+			window_size=min_ic_windowsize, min_ic_in_window=min_ic_in_window, 
+			background=bg_freq, ppm_pseudocount=ppm_pseudocount)
 
 		total_time_taken = round(time.time()-start,2)
 

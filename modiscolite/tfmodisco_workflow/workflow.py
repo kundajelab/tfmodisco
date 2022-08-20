@@ -1,16 +1,11 @@
-from __future__ import division, print_function, absolute_import
-from collections import defaultdict, OrderedDict, Counter
+from collections import OrderedDict
 import numpy as np
 
 from .seqlets_to_patterns import TfModiscoSeqletsToPatternsFactory
 from .. import core
 from .. import coordproducers
-from .. import metaclusterers
-from .. import util
-from .. import value_provider
 
-import line_profiler
-profile = line_profiler.LineProfiler()
+
 
 def prep_track_set(task_names, contrib_scores,
 					hypothetical_contribs, one_hot,
@@ -48,6 +43,46 @@ def prep_track_set(task_names, contrib_scores,
 
 	return track_set
 
+def _sign_split_seqlets(seqlets, central_window, distribution,
+	min_cluster_size, threshold):
+	threshold_val = distribution[int(threshold * len(distribution))]
+
+	attr_scores = []
+	for seqlet in seqlets:
+		flank = int(0.5*(len(seqlet)-central_window))
+		val = np.sum(seqlet['task0_contrib_scores'].fwd[flank:-flank])
+		attr_scores.append(val)
+
+	pos_count = (attr_scores > threshold_val).sum()
+	neg_count =  (attr_scores < -threshold_val).sum()
+	counts = sorted([(-1, neg_count), (1, pos_count)], key=lambda x: -x[1])
+
+	final_surviving_activity_patterns = [sign for sign, count
+		in counts if count > min_cluster_size]
+	
+	cluster_idxs = {str(x[1][0]): x[0] for x in enumerate(counts)}
+	activity_patterns = {x[0]: str(x[1][0]) for x in enumerate(counts)}
+
+	metacluster_indices = []
+	for x in attr_scores:
+		val = int(np.sign(x) * (np.abs(x) > threshold_val))
+
+		if val in final_surviving_activity_patterns:
+			metacluster_indices.append(cluster_idxs[str(val)])
+		else:
+			metacluster_indices.append(-1)
+
+	return {
+		'metacluster_indices': metacluster_indices,
+		'attribute_vectors': attr_scores,
+		'pattern_to_cluster_idx': cluster_idxs,
+		'metacluster_idx_to_activity_pattern': activity_patterns,
+		'distribution': distribution,
+		'final_surviving_activity_patterns': final_surviving_activity_patterns,
+		'threshold': threshold
+	}
+
+
 def TfModiscoWorkflow(task_names, contrib_scores,
 				 hypothetical_contribs, one_hot,
 				 sliding_window_size=21, 
@@ -69,16 +104,14 @@ def TfModiscoWorkflow(task_names, contrib_scores,
 						one_hot=one_hot)
 
 		
-		seqlet_coords = coordproducers.FixedWindowAroundChunks(
+		seqlet_coords = coordproducers.extract_seqlets(
 			attribution_scores=contrib_scores['task0'].sum(axis=2),
 			window_size=sliding_window_size,
 			flank=flank_size,
 			suppress=(int(0.5*sliding_window_size) + flank_size),
 			target_fdr=target_seqlet_fdr,
 			min_passing_windows_frac=min_passing_windows_frac,
-			max_passing_windows_frac=max_passing_windows_frac,
-			max_seqlets_total=None,
-			verbose=verbose) 
+			max_passing_windows_frac=max_passing_windows_frac) 
 
 		seqlets = track_set.create_seqlets(coords=seqlet_coords['coords']) 
 		seqlets = core.SeqletsOverlapResolver(seqlets, overlap_portion)
@@ -91,24 +124,25 @@ def TfModiscoWorkflow(task_names, contrib_scores,
 		}
 
 		#find the weakest transformed threshold used across all tasks
-		weakest_transformed_thresh = min(
+		weak_transformed_thresh = min(min(
 			seqlet_coords['transformed_pos_threshold'], 
 			abs(seqlet_coords['transformed_neg_threshold'])
-		) - 0.0001
+		) - 0.0001, weak_threshold_for_counting_sign)
 		
 		if int(min_metacluster_size_frac * len(seqlets)) > min_metacluster_size:
 			min_metacluster_size = int(min_metacluster_size_frac * len(seqlets))
 
-		if weak_threshold_for_counting_sign > weakest_transformed_thresh:
-			weak_threshold_for_counting_sign = weakest_transformed_thresh
-
-
-		metaclustering_results = metaclusterers.sign_split_seqlets(seqlets, 
+		metaclustering_results = _sign_split_seqlets(seqlets, 
 			min_cluster_size=min_metacluster_size, 
 			central_window=sliding_window_size, 
-			value_transformer=seqlet_coords['val_transformer'],					
+			distribution=seqlet_coords['distribution'],					
 			threshold=weak_threshold_for_counting_sign)
-		metaclustering_results['_threshold'] = weakest_transformed_thresh
+		
+		# not necessary
+		metaclustering_results['_threshold'] = min(
+			seqlet_coords['transformed_pos_threshold'], 
+			abs(seqlet_coords['transformed_neg_threshold'])
+		) - 0.0001
 
 		metacluster_indices = np.array(metaclustering_results['metacluster_indices'])
 		metacluster_idx_to_activity_pattern = metaclustering_results['metacluster_idx_to_activity_pattern']

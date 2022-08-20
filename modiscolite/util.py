@@ -276,7 +276,7 @@ def sparse_average_with_transpose_if_available(affmat_nn, nn):
 
 def subsample_pattern(pattern, num_to_subsample):
 	from . import core
-	seqlets_and_alnmts_list = list(pattern.seqlets_and_alnmts)
+	seqlets_and_alnmts_list = list(pattern._seqlets_and_alnmts)
 	subsample = [seqlets_and_alnmts_list[i]
 				 for i in
 				 np.random.RandomState(1234).choice(
@@ -352,11 +352,8 @@ class ClasswisePrecisionScorer(object):
 def trim_patterns_by_ic(patterns, window_size,
 						onehot_track_name, bg_freq):
 	from . import aggregator 
-	trimmer = aggregator.TrimToBestWindowByIC(
-				window_size=window_size,
-				onehot_track_name=onehot_track_name,
-				bg_freq=bg_freq)
-	return trimmer(patterns)
+	return aggregator._trim_to_best_window_by_ic(patterns,
+				window_size=window_size, bg_freq=bg_freq)
 
 
 def apply_subclustering_to_patterns(patterns, track_names,
