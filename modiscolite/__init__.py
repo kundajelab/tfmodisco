@@ -5,5 +5,5 @@ from . import coordproducers
 from . import core
 from . import gapped_kmer
 from . import util
-from . import tfmodisco_workflow
+from . import tfmodisco
 from . import cluster

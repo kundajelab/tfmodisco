@@ -1,16 +1,7 @@
-from __future__ import division, print_function, absolute_import
-from collections import OrderedDict, Counter
-from collections import namedtuple
-from collections import defaultdict
 import numpy as np
-import sklearn.manifold
-import scipy
-import scipy.signal
-import itertools
-import sys
-from . import util
-from joblib import Parallel, delayed
 
+from . import util
+from collections import OrderedDict
 
 class Snippet(object):
 	def __init__(self, fwd, rev, has_pos_axis):
@@ -122,42 +113,6 @@ class TrackSet(object):
 
 		return seqlets
 
-
-def SeqletsOverlapResolver(all_seqlets, min_overlap_fraction):
-	example_idx_to_seqlets = OrderedDict()
-
-	for seqlet in all_seqlets:
-		if seqlet.coor.example_idx not in example_idx_to_seqlets:
-			example_idx_to_seqlets[seqlet.coor.example_idx] = []
-
-		example_idx_to_seqlets[seqlet.coor.example_idx].append(seqlet)
-
-	for example_idx, seqlets in example_idx_to_seqlets.items():
-		final_seqlets_set = OrderedDict([(x,1) for x in seqlets])
-		for i in range(len(seqlets)):
-			seqlet1 = seqlets[i]
-			for seqlet2 in seqlets[i+1:]:
-				if (seqlet1 not in final_seqlets_set):
-					break
-
-				if seqlet1.coor.example_idx != seqlet2.coor.example_idx:
-					overlap = False
-				else:
-					distance = min(len(seqlet1.coor), len(seqlet2.coor)) 
-					min_overlap = min_overlap_fraction * distance
-					overlap_amt = (min(seqlet1.coor.end, seqlet2.coor.end)-
-						max(seqlet1.coor.start, seqlet2.coor.start))
-					overlap = overlap_amt >= min_overlap
-
-				if (seqlet2 in final_seqlets_set) and overlap:
-					seqlet_ = seqlet1 if seqlet1.coor.score <= seqlet2.coor.score else seqlet2
-					del final_seqlets_set[seqlet_]
-
-		example_idx_to_seqlets[example_idx] =\
-			list(final_seqlets_set.keys())
-			
-	return list(itertools.chain(*example_idx_to_seqlets.values())) 
-
 			
 class SeqletCoordinates(object):
 	def __init__(self, example_idx, start, end, is_revcomp, score=None):
@@ -181,16 +136,6 @@ class SeqletCoordinates(object):
 
 	def __len__(self):
 		return self.end - self.start
-
-	@classmethod
-	def from_string(self, string):
-		example_info, start_info, end_info, rc_info = string.split(",")
-		example_idx = int(example_info.split(":")[1])
-		start = int(start_info.split(":")[1])
-		end = int(end_info.split(":")[1])
-		rc = True if (rc_info.split(":")[1] == "True") else False
-		return SeqletCoordinates(example_idx=example_idx, start=start,
-								 end=end, is_revcomp=rc)
 
 	def __str__(self):
 		return ("example:"+str(self.example_idx)
@@ -276,6 +221,7 @@ class SeqletAndAlignment(object):
 
 #implements the array interface but also tracks the
 #unique seqlets for quick membership testing
+
 class SeqletsAndAlignments(object):
 
 	def __init__(self):
@@ -326,27 +272,6 @@ class SeqletsAndAlignments(object):
 		return the_copy
 
 
-def compute_continjacc_sims_1vmany_nneighbs(vec1, vecs2, n_neighb):
-	sign_vec1, signs_vecs2 = np.sign(vec1), np.sign(vecs2)
-	abs_vec1, abs_vecs2 = np.abs(vec1), np.abs(vecs2)
-	intersection = np.sum((np.minimum(abs_vec1[None,:], abs_vecs2[:,:])
-				 *sign_vec1[None,:]*signs_vecs2[:,:]), axis=-1)
-	union = np.sum(np.maximum(abs_vec1[None,:],
-				   abs_vecs2[:,:]), axis=-1)
-	sims = intersection/union
-	argsort_sims = np.argsort(-sims) #largest sims first
-	neighbs = argsort_sims[:n_neighb] 
-	return sims[neighbs], neighbs
-
-
-def compute_nneigh_sims_via_continjacc(vecs1, vecs2, n_neighb, n_jobs):
-	sims_and_neighbs = np.array(Parallel(n_jobs=n_jobs, verbose=True)(
-			delayed(compute_continjacc_sims_1vmany_nneighbs)(
-					 vec1, vecs2, n_neighb) for vec1 in vecs1))
-	return (np.array([x[0] for x in sims_and_neighbs]),
-			np.array([x[1] for x in sims_and_neighbs]))
-
-
 class AggregatedSeqlet(Seqlet):
 	def __init__(self, seqlets_and_alnmts_arr):
 		super(AggregatedSeqlet, self).__init__()
@@ -361,7 +286,6 @@ class AggregatedSeqlet(Seqlet):
 			self._compute_aggregation(seqlets_and_alnmts_arr)
 		
 		self.subclusters = None
-		self.twod_embedding = None
 		self.subcluster_to_subpattern = None
 
 	def save_hdf5(self, grp):
@@ -371,8 +295,6 @@ class AggregatedSeqlet(Seqlet):
 			 grp.create_group("seqlets_and_alnmts"))
 		if (self.subclusters is not None):
 			grp.create_dataset("subclusters", data=self.subclusters)
-			#assume the other two things are also not none
-			grp.create_dataset("twod_embedding", data=self.twod_embedding)
 			#save subcluster_to_subpattern
 			subcluster_to_subpattern_grp =\
 				grp.create_group("subcluster_to_subpattern")
@@ -384,9 +306,8 @@ class AggregatedSeqlet(Seqlet):
 								"subcluster_"+str(subcluster)) 
 				subpattern.save_hdf5(subpattern_grp)
 
-	def compute_subclusters_and_embedding(self, pattern_comparison_settings,
-										  perplexity, n_jobs, verbose=True,
-										  compute_embedding=True):
+	def compute_subclusters_and_embedding(self, perplexity, n_jobs, 
+		verbose=True, compute_embedding=True):
 
 		from . import affinitymat
 		from . import cluster
@@ -395,26 +316,19 @@ class AggregatedSeqlet(Seqlet):
 		# all start at 0
 		fwd_seqlet_data, _ = get_2d_data_from_patterns(
 			patterns=self.seqlets,
-			track_names=pattern_comparison_settings.track_names,
-			track_transformer=
-			 pattern_comparison_settings.track_transformer)
-		fwd_seqlet_data_vectors = (
-			util.flatten_seqlet_impscore_features(fwd_seqlet_data))
+			track_names=["task0_hypothetical_contribs", "task0_contrib_scores"],
+			track_transformer=affinitymat.L1Normalizer())
+		fwd_seqlet_data_vectors = fwd_seqlet_data.reshape(len(fwd_seqlet_data), -1)
+	
+		n_neighb = min(int(perplexity*3 + 2), len(fwd_seqlet_data_vectors))
 
-		#to keep the affmat sparse in the case of very large motifs,
-		# we'll only retain the top k
-		affmat_nn, seqlet_neighbors = compute_nneigh_sims_via_continjacc(
-			vecs1=fwd_seqlet_data_vectors,
-			vecs2=fwd_seqlet_data_vectors,
-			#it's perplexity*30 + 2 because in
-			# transformers.AbstractNNTsneProbs
-			# it looks for more than int(3. * self.perplexity + 1) neighbors
-			# (the nearest neighbor is the point itself)
-			n_neighb=min(int(perplexity*3 + 2),
-						 len(fwd_seqlet_data_vectors)), 
-			n_jobs=n_jobs)
+		affmat = affinitymat.jaccard(
+			X=fwd_seqlet_data_vectors[:, :, None], Y=fwd_seqlet_data_vectors[:, :, None])[:, :, 0]
 
-		aff_to_dist_mat = affinitymat.transformers.AffToDistViaInvLogistic() 
+		seqlet_neighbors = np.argsort(-affmat, axis=1)[:, :n_neighb]
+		affmat_nn = np.array([x[neighbors] for x, neighbors in zip(affmat, seqlet_neighbors)])
+
+		aff_to_dist_mat = affinitymat.AffToDistViaInvLogistic() 
 
 		#Got the nearest-neighbor distances, now need to put in sparse matrix
 		# format
@@ -426,16 +340,9 @@ class AggregatedSeqlet(Seqlet):
 		distmat_sp = distmat_sp.tocsr()
 		distmat_sp.sort_indices()
 
-		if (compute_embedding):
-			twod_embedding = sklearn.manifold.TSNE(
-				perplexity=perplexity,
-				metric='precomputed',
-				verbose=0, random_state=1234).fit_transform(distmat_sp) 
-			self.twod_embedding = twod_embedding
-
 		#do density adaptation
 		density_adapted_affmat_transformer =\
-			affinitymat.transformers.NNTsneConditionalProbs(
+			affinitymat.NNTsneConditionalProbs(
 				perplexity=perplexity,
 				aff_to_dist_mat=aff_to_dist_mat)
 		sp_density_adapted_affmat = density_adapted_affmat_transformer(
@@ -445,7 +352,7 @@ class AggregatedSeqlet(Seqlet):
 		cluster_results = cluster.LeidenCluster(sp_density_adapted_affmat,
 			initclusters=None, n_jobs=n_jobs,
 				affmat_transformer=
-					affinitymat.transformers.SymmetrizeByAddition(
+					affinitymat.SymmetrizeByAddition(
 												   probability_normalize=True),
 				numseedstotry=50,
 				n_leiden_iterations=-1,

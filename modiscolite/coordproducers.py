@@ -157,7 +157,7 @@ def _refine_thresholds(vals, pos_threshold, neg_threshold,
 	return pos_threshold, neg_threshold
 
 
-def extract_seqlets(attribution_scores, window_size, flank, suppress, 
+def extract_seqlet_coords(attribution_scores, window_size, flank, suppress, 
 	target_fdr, min_passing_windows_frac, max_passing_windows_frac):
 
 	pos_values, neg_values, smoothed_tracks = _smooth_and_split(

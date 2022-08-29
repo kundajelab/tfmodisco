@@ -1,9 +1,9 @@
-from .. import affinitymat
-from .. import aggregator
-from .. import core
-from .. import util
-from .. import gapped_kmer
-from .. import cluster
+from . import affinitymat
+from . import aggregator
+from . import core
+from . import util
+from . import gapped_kmer
+from . import cluster
 from joblib import Parallel, delayed
 from collections import defaultdict
 import numpy as np
@@ -116,7 +116,7 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 				parent_pattern=pattern,
 				seqlets_to_merge=sorted_seqlets[1:],
 				track_set=track_set,
-				metric=affinitymat.core.jaccard,
+				metric=affinitymat.jaccard,
 				min_overlap=min_overlap,
 				track_transformer=affinitymat.L1Normalizer(),
 				track_names=["task0_hypothetical_contribs", 
@@ -177,10 +177,23 @@ def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn,
 
 	return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
 
-def TfModiscoSeqletsToPatternsFactory(seqlets, track_set, 
-					   onehot_track_name="sequence",
-					   contrib_scores_track_names=["task0_contrib_scores"],
-					   hypothetical_contribs_track_names=["task0_hypothetical_contribs"],
+
+def _extract_seqlet_data(one_hot_sequence, contrib_scores, hypothetical_contribs, seqlets):
+	X_ohe = []
+	X_contrib = []
+	X_hypo_contrib = []
+
+	for seqlet in seqlets:
+		idx = seqlet.coor.example_idx
+		start, end = seqlet.coor.start, seqlet.coor.end
+
+		X_ohe.append(one_hot_sequence[idx][start:end])
+		X_contrib.append(contrib_scores[idx][start:end])
+		X_hypo_contrib.append(hypothetical_contribs[idx][start:end])
+
+	return X_ohe, X_contrib, X_hypo_contrib
+
+def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores, hypothetical_contribs, track_set, 
 					   track_signs=None,
 					   n_cores=10,
 					   min_overlap_while_sliding=0.7,
@@ -190,7 +203,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 					   tsne_perplexity=10,
 
 					   n_leiden_iterations=-1,
-					   contin_runs=50,
+					   n_leiden_runs=50,
 
 					   frac_support_to_trim_to=0.2,
 					   min_num_to_trim_to=30,
@@ -213,45 +226,16 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 					   verbose=True, 
 					   seed=1234):
 
-		bg_freq = np.mean(track_set.track_name_to_data_track[
-			onehot_track_name].fwd_tracks, axis=(0,1))
+		X_ohe, X_contrib, X_hypo_contrib = _extract_seqlet_data(one_hot_sequence, 
+			contrib_scores, hypothetical_contribs, seqlets)
 
-		pattern_comparison_settings =\
-			affinitymat.core.PatternComparisonSettings(
-				track_names=hypothetical_contribs_track_names
-							+contrib_scores_track_names,
-				track_transformer=affinitymat.L1Normalizer(), 
-				min_overlap=min_overlap_while_sliding)
-
-		print("TfModiscoSeqletsToPatternsFactory: seed=%d" % seed)
-
-		similar_patterns_collapser =\
-			aggregator.SimilarPatternsCollapser(
-				pattern_comparison_settings=pattern_comparison_settings,
-				track_set=track_set,
-				pattern_aligner_settings=affinitymat.core.PatternComparisonSettings(
-							track_names=contrib_scores_track_names, 
-							track_transformer=
-								affinitymat.MeanNormalizer().chain(
-								affinitymat.MagnitudeNormalizer()), 
-							min_overlap=min_overlap_while_sliding),
-				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
-				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
-				min_frac=frac_support_to_trim_to,
-				min_num=min_num_to_trim_to,
-				flank_to_add=initial_flank_to_add,
-				window_size=trim_to_window_size,
-				bg_freq=bg_freq,
-				verbose=verbose,
-				max_seqlets_subsample=merging_max_seqlets_subsample,
-				n_cores=n_cores)
+		bg_freq = np.mean(X_ohe, axis=(0,1))
 
 		other_config={
-				 'onehot_track_name': onehot_track_name,
-				 'contrib_scores_track_names': contrib_scores_track_names,
-				 'hypothetical_contribs_track_names':
-					hypothetical_contribs_track_names,
-				 'track_signs': track_signs, 
+				 'onehot_track_name': "sequence",
+				 'contrib_scores_track_names': ["task0_contrib_scores"],
+				 'hypothetical_contribs_track_names':["task0_hypothetical_contribs"],
+				 'track_signs': [track_signs], 
 				 'other_comparison_track_names': []
 		}
 
@@ -274,38 +258,27 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 					'other_config': other_config
 		}
 
-
 		for round_idx in range(2):			
 			if len(seqlets) == 0:
 				return failure
 
 			# Step 1: Generate coarse representation
 			embedding_fwd, embedding_rev = gapped_kmer.AdvancedGappedKmerEmbedder(
-				seqlets=seqlets, sign=track_signs[0], n_jobs=n_cores)
+				seqlets=seqlets, sign=track_signs, n_jobs=n_cores)
 
-			coarse_affmat_nn, seqlet_neighbors = affinitymat.core.sparse_cosine_similarity(
-				fwd_vecs=embedding_fwd, rev_vecs=embedding_rev,
+			coarse_affmat_nn, seqlet_neighbors = affinitymat.sparse_cosine_similarity(
+				X=embedding_fwd, Y=embedding_rev,
 				n_neighbors=nearest_neighbors_to_compute)
 
 			# Step 2: Generate fine representation
-			fine_affmat_nn = affinitymat.core.AffmatFromSeqletsWithNNpairs(
+			fine_affmat_nn = affinitymat.jaccard_from_seqlets(
 				seqlets=seqlets, seqlet_neighbors=seqlet_neighbors,
-				track_names=hypothetical_contribs_track_names
-							+contrib_scores_track_names,
+				track_names=["task0_hypothetical_contribs", "task0_contrib_scores"],
 				transformer=affinitymat.L1Normalizer(), 
 				min_overlap=min_overlap_while_sliding,
 				return_sparse=True, n_cores=n_cores)
 
-			# Step 3: Filter out to top NN based on fine representation 
-			reorderings = np.argsort(-fine_affmat_nn, axis=-1)
 
-			fine_affmat_nn = np.array([finesimsinrow[rowreordering]
-				for (finesimsinrow, rowreordering) in zip(fine_affmat_nn, reorderings)])
-			coarse_affmat_nn = np.array([coarsesimsinrow[rowreordering]
-				for (coarsesimsinrow, rowreordering) in zip(coarse_affmat_nn, reorderings)])
-			seqlet_neighbors = np.array([nnrow[rowreordering]
-				for (nnrow, rowreordering) in zip(seqlet_neighbors, reorderings)])
-			
 			if round_idx == 0:
 				filtered_seqlets, seqlet_neighbors, filtered_affmat_nn = (
 					_filter_by_correlation(seqlets, seqlet_neighbors, 
@@ -324,7 +297,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 				initclusters=None,
 				n_jobs=n_cores, 
 				affmat_transformer=None,
-				numseedstotry=contin_runs,
+				numseedstotry=n_leiden_runs,
 				n_leiden_iterations=n_leiden_iterations,
 				verbose=verbose)
 
@@ -339,7 +312,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 				window_size=trim_to_window_size, 
 				bg_freq=bg_freq, 
 				cluster_indices=cluster_results['cluster_indices'], 
-				track_sign=track_signs[0])
+				track_sign=track_signs)
 
 
 			#obtain unique seqlets from adjusted motifs
@@ -347,24 +320,25 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 							 for x in motifs for y in x.seqlets]).values())
 
 
-		subcluster_settings = {
-			"pattern_comparison_settings": pattern_comparison_settings,
-			"perplexity": subcluster_perplexity,
-			"n_jobs": n_cores,
-		}
-
-
-		split_patterns = aggregator._detect_spurious_merging(
-			motifs, subcluster_settings, 
-    		max(final_min_cluster_size, subcluster_perplexity), 
-    		similar_patterns_collapser)
-
-		if len(split_patterns) == 0:
-			return failure
+		merged_patterns, pattern_merge_hierarchy = aggregator._detect_spurious_merging(
+			patterns=motifs, track_set=track_set, perplexity=subcluster_perplexity, 
+			min_in_subcluster=max(final_min_cluster_size, subcluster_perplexity), 
+			min_overlap=min_overlap_while_sliding,
+			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+    		min_frac=frac_support_to_trim_to,
+				min_num=min_num_to_trim_to,
+				flank_to_add=initial_flank_to_add,
+				window_size=trim_to_window_size,
+				bg_freq=bg_freq,
+				verbose=verbose,
+				max_seqlets_subsample=merging_max_seqlets_subsample,
+				n_cores=n_cores)
 
 		#Now start merging patterns 
-		merged_patterns, pattern_merge_hierarchy = similar_patterns_collapser(patterns=split_patterns) 
+		#merged_patterns, pattern_merge_hierarchy = similar_patterns_collapser(patterns=split_patterns) 
 		merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
+
 		final_patterns, remaining_patterns = _filter_patterns(merged_patterns, 
 			min_seqlet_support=final_min_cluster_size, 
 			window_size=min_ic_windowsize, min_ic_in_window=min_ic_in_window, 
@@ -375,7 +349,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, track_set,
 		#apply subclustering procedure on the final patterns
 		for patternidx, pattern in enumerate(final_patterns):
 			pattern.compute_subclusters_and_embedding(
-				verbose=verbose, **subcluster_settings)
+				verbose=verbose, perplexity=subcluster_perplexity, n_jobs=n_cores)
 
 		return {
 			'success': True,
