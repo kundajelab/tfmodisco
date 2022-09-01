@@ -83,18 +83,8 @@ class TrackSet(object):
 		for data_track in data_tracks:
 			self.add_track(data_track)
 
-	def get_example_idx_len(self, example_idx):
-		return len(self.track_name_to_data_track[
-					list(self.track_name_to_data_track.keys())[0]]
-					.fwd_tracks[example_idx])
-
-	@property
-	def num_examples(self):
-		return len(self.track_name_to_data_track[
-					list(self.track_name_to_data_track.keys())[0]].fwd_tracks)
-
 	def add_track(self, data_track):
-		self.num_items = len(data_track) 
+		self.length = len(data_track.fwd_tracks[0]) 
 		self.track_name_to_data_track[data_track.name] = data_track
 		return self
 
@@ -322,39 +312,39 @@ class AggregatedSeqlet(Seqlet):
 	
 		n_neighb = min(int(perplexity*3 + 2), len(fwd_seqlet_data_vectors))
 
-		affmat = affinitymat.jaccard(
-			X=fwd_seqlet_data_vectors[:, :, None], Y=fwd_seqlet_data_vectors[:, :, None])[:, :, 0]
+		affmat_nn = []
+		seqlet_neighbors = []
+		for x in fwd_seqlet_data_vectors:
+			affmat = affinitymat.jaccard(X=x[None, :, None], 
+				Y=fwd_seqlet_data_vectors[:, :, None])[:, 0, 0]
+			
+			neighbors = np.argsort(-affmat)[:n_neighb]
 
-		seqlet_neighbors = np.argsort(-affmat, axis=1)[:, :n_neighb]
-		affmat_nn = np.array([x[neighbors] for x, neighbors in zip(affmat, seqlet_neighbors)])
+			affmat_nn.append(affmat[neighbors])
+			seqlet_neighbors.append(neighbors)
 
-		aff_to_dist_mat = affinitymat.AffToDistViaInvLogistic() 
+		affmat_nn = np.array(affmat_nn)
+		distmat_nn = np.log((1.0/(0.5*np.maximum(affmat_nn, 0.0000001)))-1)
+		distmat_nn = np.maximum(distmat_nn, 0.0) #eliminate tiny neg floats
 
-		#Got the nearest-neighbor distances, now need to put in sparse matrix
-		# format
-		distmat_nn = aff_to_dist_mat(affinity_mat=affmat_nn) 
 		distmat_sp = util.coo_matrix_from_neighborsformat(
 			entries=distmat_nn, neighbors=seqlet_neighbors,
-			ncols=len(distmat_nn))
-		#convert to csr and sort by indices to (try to) get rid of efficiency warning
-		distmat_sp = distmat_sp.tocsr()
+			ncols=len(distmat_nn)).tocsr()
 		distmat_sp.sort_indices()
 
 		#do density adaptation
 		density_adapted_affmat_transformer =\
 			affinitymat.NNTsneConditionalProbs(
-				perplexity=perplexity,
-				aff_to_dist_mat=aff_to_dist_mat)
+				perplexity=perplexity)
 		sp_density_adapted_affmat = density_adapted_affmat_transformer(
 										affmat_nn, seqlet_neighbors)
 
+		sp_density_adapted_affmat += sp_density_adapted_affmat.T
+		sp_density_adapted_affmat /= np.sum(sp_density_adapted_affmat.data)
+
 		#Do Leiden clustering
 		cluster_results = cluster.LeidenCluster(sp_density_adapted_affmat,
-			initclusters=None, n_jobs=n_jobs,
-				affmat_transformer=
-					affinitymat.SymmetrizeByAddition(
-												   probability_normalize=True),
-				numseedstotry=50,
+				n_seeds=50,
 				n_leiden_iterations=-1,
 				verbose=verbose)
 
@@ -366,8 +356,10 @@ class AggregatedSeqlet(Seqlet):
 		for seqlet, subcluster in zip(self.seqlets, self.subclusters):
 			if (subcluster not in subcluster_to_seqletsandalignments):
 				subcluster_to_seqletsandalignments[subcluster] = []
+			
 			subcluster_to_seqletsandalignments[subcluster].append(
 				SeqletAndAlignment(seqlet=seqlet, alnmt=0) )
+
 		subcluster_to_subpattern = OrderedDict([
 			(subcluster, AggregatedSeqlet(seqletsandalignments))
 			for subcluster,seqletsandalignments in

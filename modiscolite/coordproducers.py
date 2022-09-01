@@ -16,7 +16,6 @@ def _bin_mode(values, bins=1000):
 	return l_edge, r_edge, values[(l_edge < values) & (values < r_edge)]
 
 def _laplacian_null(track, window_size, num_to_samp, random_seed=1234):
-
 	percentiles_to_use = np.array([5*(x+1) for x in range(19)])
 
 	rng = np.random.RandomState()

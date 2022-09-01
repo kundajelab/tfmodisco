@@ -2,6 +2,8 @@ import numpy as np
 import h5py
 import scipy.sparse
 
+from numba import njit
+
 def coo_matrix_from_neighborsformat(entries, neighbors, ncols):
 	coo_mat = scipy.sparse.coo_matrix(
 			(np.concatenate(entries, axis=0),
@@ -59,6 +61,7 @@ def cpu_sliding_window_sum(arr, window_size):
 	return to_return
 
 
+@njit('float64(float64, float64[:])')
 def binary_search_perplexity(desired_perplexity, distances):
 	EPSILON_DBL = 1e-8
 	PERPLEXITY_TOLERANCE = 1e-5
@@ -72,7 +75,7 @@ def binary_search_perplexity(desired_perplexity, distances):
 	
 	for l in range(n_steps):
 		ps = np.exp(-distances * beta)
-		sum_ps = np.sum(ps)
+		sum_ps = np.sum(ps) + 1
 		ps = ps/(max(sum_ps,EPSILON_DBL))
 		sum_disti_Pi = np.sum(distances*ps)
 		entropy = np.log(sum_ps) + beta * sum_disti_Pi
@@ -93,7 +96,8 @@ def binary_search_perplexity(desired_perplexity, distances):
 				beta /= 2.0
 			else:
 				beta = (beta + beta_min) / 2.0
-	return beta, ps
+	
+	return beta
 
 
 def compute_per_position_ic(ppm, background, pseudocount):
@@ -126,54 +130,6 @@ def rolling_window(a, window):
 	shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
 	strides = a.strides + (a.strides[-1],)
 	return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
-
-
-def symmetrize_nn_distmat(distmat_nn, nn):
-	#Augment any distmat_nn entries with reciprocal entries that might be
-	# missing because "j" might be in the nearest-neighbors list of i, but
-	# i may not have made it into the nearest neighbors list for j, and vice
-	# versa
-
-
-	distmat_nn = sparse_average_with_transpose_if_available( 
-					affmat_nn=distmat_nn, nn=nn)
-
-	nn_sets = [set(x) for x in nn]
-	augmented_distmat_nn = [list(x) for x in distmat_nn]
-	augmented_nn = [list(x) for x in nn]
-
-	for i in range(len(nn)):
-		for neighb,distance in zip(nn[i], distmat_nn[i]):
-			if i not in nn_sets[neighb]:
-				augmented_nn[neighb].append(i) 
-				augmented_distmat_nn[neighb].append(distance) 
-	
-	sorted_augmented_nn = []
-	sorted_augmented_distmat_nn = []
-	for augmented_nn_row, augmented_distmat_nn_row in zip(
-										   augmented_nn, augmented_distmat_nn): 
-	   augmented_nn_row = np.array(augmented_nn_row) 
-	   augmented_distmat_nn_row = np.array(augmented_distmat_nn_row)
-	   argsort_indices = np.argsort(augmented_distmat_nn_row) 
-	   sorted_augmented_nn.append(augmented_nn_row[argsort_indices])
-	   sorted_augmented_distmat_nn.append(
-			augmented_distmat_nn_row[argsort_indices])
-
-	return sorted_augmented_nn, sorted_augmented_distmat_nn
-
-
-def sparse_average_with_transpose_if_available(affmat_nn, nn):
-	coord_to_sim = dict([
-		((i,j),sim) for i in range(len(affmat_nn))
-		for j,sim in zip(nn[i],affmat_nn[i]) ])
-	new_affmat_nn = [
-		np.array([
-			coord_to_sim[(i,j)] if (j,i) not in coord_to_sim else
-			0.5*(coord_to_sim[(i,j)] + coord_to_sim[(j,i)])
-			for j in nn[i]
-		]) for i in range(len(affmat_nn))
-	]
-	return new_affmat_nn
 
 
 def subsample_pattern(pattern, num_to_subsample):

@@ -50,9 +50,7 @@ def _expand_seqlets_to_fill_pattern(patterns, track_set, left_flank_to_add,
 				start = seqlet.coor.start - right_expansion
 				end = seqlet.coor.end + left_expansion
 			
-			if (start >= 0 and
-				end <= track_set.get_example_idx_len(
-						seqlet.coor.example_idx)):
+			if start >= 0 and end <= track_set.length:
 				seqlet = track_set.create_seqlets(
 					coords=[core.SeqletCoordinates(
 						example_idx=seqlet.coor.example_idx,
@@ -118,7 +116,7 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 			start = seqlet.coor.start - right_expansion
 			end = seqlet.coor.end + left_expansion
 
-		example_end = track_set.get_example_idx_len(seqlet.coor.example_idx)
+		example_end = track_set.length
 
 		if start >= 0 and end <= example_end:
 			seqlet = track_set.create_seqlets(

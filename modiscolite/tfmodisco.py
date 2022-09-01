@@ -153,7 +153,8 @@ def TfModiscoWorkflow(task_names, contrib_scores, hypothetical_contribs,
 		relevant_task_signs = metacluster_idx_to_activity_pattern[metacluster_idx]
 
 		seqlets_to_patterns_results = TfModiscoSeqletsToPatternsFactory(
-			one_hot_sequence=one_hot, contrib_scores=contrib_scores['task0'], hypothetical_contribs=hypothetical_contribs['task0'], 
+			one_hot_sequence=one_hot, contrib_scores=contrib_scores['task0'], 
+			hypothetical_contribs=hypothetical_contribs['task0'], 
 			seqlets=metacluster_seqlets,
 			track_set=track_set,
 			track_signs=relevant_task_signs,

@@ -8,61 +8,52 @@ from joblib import Parallel, delayed
 from collections import defaultdict
 import numpy as np
 import time
+
 import scipy
+import scipy.sparse
 
-
-def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity, n_jobs):
+def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	eps = 0.0000001
-	distmat_nn = [np.maximum(np.log((1.0/(0.5*np.maximum(x, eps)))-1), 
-		0.0) for x in affmat_nn] 
 
-	#Note: the fine-grained similarity metric isn't actually symmetric
-	# because a different input will get padded with zeros depending
-	# on which seqlets are specified as the filters and which seqlets
-	# are specified as the 'thing to scan'. So explicit symmetrization
-	# is worthwhile
-	seqlet_neighbors, distmat_nn = util.symmetrize_nn_distmat(
-		distmat_nn=distmat_nn, nn=seqlet_neighbors)
+	rows, cols, data = [], [], []
+	for row in range(len(affmat_nn)):
+		for col, datum in zip(seqlet_neighbors[row], affmat_nn[row]):
+			rows.append(row)
+			cols.append(col)
+			data.append(datum)
 
-	#Compute beta values for the density adaptation. *store it*
-	betas_and_ps = Parallel(n_jobs=n_jobs)(delayed(
-		util.binary_search_perplexity)(tsne_perplexity, distances) 
-			for distances in distmat_nn)
-	betas = np.array([x[0] for x in betas_and_ps])
+	affmat_nn = scipy.sparse.csr_matrix((data, (rows, cols)), 
+		shape=(len(affmat_nn), len(affmat_nn)), dtype='float64')
+	
+	affmat_nn.data = np.maximum(np.log((1.0/(0.5*np.maximum(affmat_nn.data, eps)))-1), 0)
+	affmat_nn.eliminate_zeros()
 
-	#also compute the normalization factor needed to get probs to sum to 1
-	#note: sticking to lists here because different rows of
-	# sym_distmat_nn may have different lengths after adding in
-	# the symmetric pairs
-	densadapted_affmat_nn_unnorm = [np.exp(-np.array(distmat_row)/beta)
-		for distmat_row, beta in zip(distmat_nn, betas)]
-	normfactors = np.array([max(np.sum(x), 1e-8) 
-		for x in densadapted_affmat_nn_unnorm])
+	counts_nn = scipy.sparse.csr_matrix((np.ones_like(affmat_nn.data), 
+		affmat_nn.indices, affmat_nn.indptr), shape=affmat_nn.shape, dtype='float32')
 
-	densadapted_affmat_nn = []
-	for i in range(len(distmat_nn)):
-		densadapted_row = []
+	affmat_nn += affmat_nn.T
+	counts_nn += counts_nn.T
+	affmat_nn.data /= counts_nn.data
+	del counts_nn
 
-		betas_i = betas[i]
-		norms_i = normfactors[i]
+	betas = [util.binary_search_perplexity(tsne_perplexity, affmat_nn[i].data) for i in range(affmat_nn.shape[0])]
+	normfactors = np.array([np.exp(-np.array(affmat_nn[i].data)/beta).sum()+1 for i, beta in enumerate(betas)])
 
-		for j, distance in zip(seqlet_neighbors[i], distmat_nn[i]):
-			betas_j = betas[j]
-			norms_j = normfactors[j]
- 
-			rbf_i = np.exp(-distance / betas_i) / norms_i
-			rbf_j = np.exp(-distance / betas_j) / norms_j
+	for i in range(affmat_nn.shape[0]):
+		for j_idx in range(affmat_nn.indptr[i], affmat_nn.indptr[i+1]):
+			j = affmat_nn.indices[j_idx]
+			distance = affmat_nn.data[j_idx]
 
-			density_adapted_row = np.sqrt(rbf_i * rbf_j)
-			densadapted_row.append(density_adapted_row)
+			rbf_i = np.exp(-distance / betas[i]) / normfactors[i]
+			rbf_j = np.exp(-distance / betas[j]) / normfactors[j]
 
-		densadapted_affmat_nn.append(densadapted_row)
+			affmat_nn.data[j_idx] = np.sqrt(rbf_i * rbf_j)
 
-	csr_density_adapted_affmat = util.coo_matrix_from_neighborsformat(
-		entries=densadapted_affmat_nn, neighbors=seqlet_neighbors,
-		ncols=len(densadapted_affmat_nn)).tocsr()
+	affmat_diags = scipy.sparse.diags(1.0 / normfactors)
+	affmat_nn += affmat_diags
 
-	return csr_density_adapted_affmat
+
+	return affmat_nn
 
 def _filter_patterns(patterns, min_seqlet_support, window_size, 
 	min_ic_in_window, background, ppm_pseudocount):
@@ -200,7 +191,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 					   nearest_neighbors_to_compute=500,
 
 					   affmat_correlation_threshold=0.15,
-					   tsne_perplexity=10,
+					   tsne_perplexity=10.0,
 
 					   n_leiden_iterations=-1,
 					   n_leiden_runs=50,
@@ -262,22 +253,16 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 			if len(seqlets) == 0:
 				return failure
 
-			# Step 1: Generate coarse representation
-			embedding_fwd, embedding_rev = gapped_kmer.AdvancedGappedKmerEmbedder(
-				seqlets=seqlets, sign=track_signs, n_jobs=n_cores)
-
-			coarse_affmat_nn, seqlet_neighbors = affinitymat.sparse_cosine_similarity(
-				X=embedding_fwd, Y=embedding_rev,
-				n_neighbors=nearest_neighbors_to_compute)
+			# Step 1: Generate coarse resolution
+			coarse_affmat_nn, seqlet_neighbors = affinitymat.cosine_similarity_from_seqlets(
+				seqlets=seqlets, n_neighbors=nearest_neighbors_to_compute, sign=track_signs)
 
 			# Step 2: Generate fine representation
 			fine_affmat_nn = affinitymat.jaccard_from_seqlets(
 				seqlets=seqlets, seqlet_neighbors=seqlet_neighbors,
 				track_names=["task0_hypothetical_contribs", "task0_contrib_scores"],
-				transformer=affinitymat.L1Normalizer(), 
-				min_overlap=min_overlap_while_sliding,
-				return_sparse=True, n_cores=n_cores)
-
+				transformer=affinitymat.L1Normalizer(),
+				min_overlap=min_overlap_while_sliding)
 
 			if round_idx == 0:
 				filtered_seqlets, seqlet_neighbors, filtered_affmat_nn = (
@@ -289,17 +274,17 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 				filtered_affmat_nn = fine_affmat_nn
 
 			# Step 4: Density adaptation
-			csr_density_adapted_affmat = _density_adaptation(filtered_affmat_nn, seqlet_neighbors, tsne_perplexity, n_cores)
+			csr_density_adapted_affmat = _density_adaptation(filtered_affmat_nn, seqlet_neighbors, tsne_perplexity)
+
 
 			# Step 5: Clustering
 			cluster_results = cluster.LeidenCluster(
 				csr_density_adapted_affmat,
-				initclusters=None,
-				n_jobs=n_cores, 
-				affmat_transformer=None,
-				numseedstotry=n_leiden_runs,
+				n_seeds=n_leiden_runs,
 				n_leiden_iterations=n_leiden_iterations,
 				verbose=verbose)
+
+			#adwawadwa
 
 			del csr_density_adapted_affmat
 
