@@ -4,7 +4,7 @@
 
 import numpy as np
 
-from .core import SeqletCoordinates
+from .core import Seqlet
 
 from sklearn.isotonic import IsotonicRegression
 
@@ -57,14 +57,10 @@ def _laplacian_null(track, window_size, num_to_samp, random_seed=1234):
 	return sampled_vals[sampled_vals >= 0], sampled_vals[sampled_vals < 0]
 
 
-def _iterative_extract_coords(score_track, window_size, flank, suppress):
-	#cp_score_track = 'copy' of the score track, which can be modified as
-	# coordinates are identified
-	cp_score_track = score_track.copy()
-
-	n, d = cp_score_track.shape
-	coords = []
-	for example_idx, single_score_track in enumerate(cp_score_track):
+def _iterative_extract_seqlets(score_track, window_size, flank, suppress):
+	n, d = score_track.shape
+	seqlets = []
+	for example_idx, single_score_track in enumerate(score_track):
 		while True:
 			argmax = np.argmax(single_score_track, axis=0)
 			max_val = single_score_track[argmax]
@@ -76,21 +72,20 @@ def _iterative_extract_coords(score_track, window_size, flank, suppress):
 
 			#need to be able to expand without going off the edge
 			if argmax >= flank and argmax < (d-flank): 
-				coord = SeqletCoordinates(
+				seqlet = Seqlet(
 					example_idx=example_idx,
 					start=argmax-flank,
 					end=argmax+window_size+flank,
-					is_revcomp=False,
-					score=score_track[example_idx][argmax])
+					is_revcomp=False)
 
-				coords.append(coord)
+				seqlets.append(seqlet)
 
 			#suppress the chunks within +- suppress
 			l_idx = int(max(np.floor(argmax+0.5-suppress),0))
 			r_idx = int(min(np.ceil(argmax+0.5+suppress), d))
 			single_score_track[l_idx:r_idx] = -np.inf 
 
-	return coords
+	return seqlets
 
 
 def _smooth_and_split(tracks, window_size, subsample_cap=1000000):
@@ -156,15 +151,15 @@ def _refine_thresholds(vals, pos_threshold, neg_threshold,
 	return pos_threshold, neg_threshold
 
 
-def extract_seqlet_coords(attribution_scores, window_size, flank, suppress, 
-	target_fdr, min_passing_windows_frac, max_passing_windows_frac):
+def extract_seqlets(attribution_scores, window_size, flank, suppress, 
+	target_fdr, min_passing_windows_frac, max_passing_windows_frac, 
+	weak_threshold_for_counting_sign):
 
 	pos_values, neg_values, smoothed_tracks = _smooth_and_split(
 		attribution_scores, window_size)
 
 	pos_null_values, neg_null_values = _laplacian_null(track=smoothed_tracks, 
 		window_size=window_size, num_to_samp=10000)
-
 
 	pos_threshold = _isotonic_thresholds(pos_values, pos_null_values, 
 		increasing=True, target_fdr=target_fdr)
@@ -182,10 +177,10 @@ def extract_seqlet_coords(attribution_scores, window_size, flank, suppress,
 		axis=0))))
 
 	transformed_pos_threshold = np.sign(pos_threshold)*np.searchsorted(
-		a=distribution, v=abs(pos_threshold))/float(len(distribution))
+		a=distribution, v=abs(pos_threshold))/len(distribution)
 
 	transformed_neg_threshold = np.sign(neg_threshold)*np.searchsorted(
-		a=distribution, v=abs(neg_threshold))/float(len(distribution))
+		a=distribution, v=abs(neg_threshold))/len(distribution)
 
 	idxs = (smoothed_tracks >= pos_threshold) | (smoothed_tracks <= neg_threshold)
 
@@ -196,17 +191,20 @@ def extract_seqlet_coords(attribution_scores, window_size, flank, suppress,
 	smoothed_tracks[:, :flank] = -np.inf
 	smoothed_tracks[:, -flank:] = -np.inf
 
-	coords = _iterative_extract_coords(
+	seqlets = _iterative_extract_seqlets(
 		score_track=smoothed_tracks,
 		window_size=window_size,
 		flank=flank,
 		suppress=suppress)
 
+	#find the weakest transformed threshold used across all tasks
+	weak_thresh = min(min(transformed_pos_threshold, 
+		abs(transformed_neg_threshold)) - 0.0001, 
+			weak_threshold_for_counting_sign)
+
+	threshold = distribution[int(weak_thresh * len(distribution))]
+
 	return {
-		'coords': coords,
-		'pos_threshold': pos_threshold,
-		'neg_threshold': neg_threshold,
-		'transformed_pos_threshold': transformed_pos_threshold,
-		'transformed_neg_threshold': transformed_neg_threshold,
-		'distribution': distribution
-	} 
+		'seqlets': seqlets,
+		'threshold': threshold
+	}

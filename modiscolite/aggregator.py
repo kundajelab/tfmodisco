@@ -9,62 +9,60 @@ from joblib import Parallel, delayed
 from sklearn.metrics import roc_auc_score
 import time
 
-def _trim_to_frac_support(aggregated_seqlets, min_frac, min_num):
-	return [x.trim_to_positions_with_min_support(min_frac=min_frac,
-		min_num=min_num, verbose=True) for x in aggregated_seqlets]
+def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg_freq):
+	pattern = pattern.trim_to_support(min_frac=min_frac, min_num=min_num)
 
-def _trim_to_best_window_by_ic(aggregated_seqlets, window_size, bg_freq):
-	trimmed_agg_seqlets = []
-	for aggregated_seqlet in aggregated_seqlets:
-		ppm = aggregated_seqlet["sequence"].fwd
-		per_pos_ic = util.compute_per_position_ic(
-			ppm=ppm, background=bg_freq, pseudocount=0.001)
+	pattern = _expand_seqlets_to_fill_pattern(pattern, 
+		track_set=track_set, left_flank_to_add=flank,
+		right_flank_to_add=flank)
 
+	# Trim by IC
+	ppm = pattern.snippets["sequence"].fwd
+	per_pos_ic = util.compute_per_position_ic(
+		ppm=ppm, background=bg_freq, pseudocount=0.001)
 
-		start_idx = np.argmax(util.cpu_sliding_window_sum(
-			arr=per_pos_ic, window_size=window_size))
+	start_idx = np.argmax(util.cpu_sliding_window_sum(
+		arr=per_pos_ic, window_size=window_size))
 
-		end_idx = start_idx + window_size
-		trimmed_agg_seqlets.append(
-			aggregated_seqlet.trim_to_start_and_end_idx(
-				start_idx=start_idx, end_idx=end_idx))
+	end_idx = start_idx + window_size
+	pattern = pattern.trim_to_idx(start_idx=start_idx, end_idx=end_idx)
 
-	return trimmed_agg_seqlets
+	pattern = _expand_seqlets_to_fill_pattern(pattern, 
+		track_set=track_set, left_flank_to_add=flank,
+		right_flank_to_add=flank)
 
-def _expand_seqlets_to_fill_pattern(patterns, track_set, left_flank_to_add,
+	return pattern
+
+def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 	right_flank_to_add):
-	patterns_ = []
-	for pattern in patterns:
-		new_seqlets_and_alnmts = []
-		for seqlet_and_alnmt in pattern._seqlets_and_alnmts:
-			seqlet = seqlet_and_alnmt.seqlet
-			alnmt = seqlet_and_alnmt.alnmt
-			left_expansion = alnmt + left_flank_to_add 
-			right_expansion = ((len(pattern) - 
-							   (alnmt+len(seqlet))) + right_flank_to_add)
 
-			if seqlet.coor.is_revcomp == False:
-				start = seqlet.coor.start - left_expansion
-				end = seqlet.coor.end + right_expansion
-			else:
-				start = seqlet.coor.start - right_expansion
-				end = seqlet.coor.end + left_expansion
-			
-			if start >= 0 and end <= track_set.length:
-				seqlet = track_set.create_seqlets(
-					coords=[core.SeqletCoordinates(
-						example_idx=seqlet.coor.example_idx,
-						start=start, end=end,
-						is_revcomp=seqlet.coor.is_revcomp)])[0]
+	new_seqlets_and_alnmts = []
+	for seqlet, alnmt in pattern.seqlets_and_alnmts:
+		left_expansion = alnmt + left_flank_to_add 
+		right_expansion = ((len(pattern) - 
+						   (alnmt+len(seqlet))) + right_flank_to_add)
 
-				new_seqlets_and_alnmts.append(
-				 core.SeqletAndAlignment(seqlet=seqlet, alnmt=0))
+		if seqlet.is_revcomp == False:
+			start = seqlet.start - left_expansion
+			end = seqlet.end + right_expansion
+		else:
+			start = seqlet.start - right_expansion
+			end = seqlet.end + left_expansion
+		
+		if start >= 0 and end <= track_set.length:
+			seqlet = track_set.create_seqlets(
+				seqlets=[core.Seqlet(
+					example_idx=seqlet.example_idx,
+					start=start, end=end,
+					is_revcomp=seqlet.is_revcomp)])[0]
 
-		if len(new_seqlets_and_alnmts) > 0:
-			pattern_ = core.AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmts)
-			patterns_.append(pattern_)
+			new_seqlets_and_alnmts.append((seqlet, 0))
 
-	return patterns_
+	if len(new_seqlets_and_alnmts) > 0:
+		return core.AggregatedSeqlet(seqlets_and_alnmts_arr=
+			new_seqlets_and_alnmts)
+	else:
+		return None
 
 
 def _align_patterns(parent_pattern, child_pattern, metric, min_overlap, 
@@ -95,35 +93,30 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 	verbose=True):
 
 	parent_pattern = parent_pattern.copy()
+
 	for seqlet in seqlets_to_merge:
-		alnmt, revcomp_match, alnmt_score =\
-			_align_patterns(parent_pattern, seqlet, metric,
-				min_overlap, track_names, track_transformer)
+		alnmt, revcomp_match, alnmt_score = _align_patterns(parent_pattern, 
+			seqlet, metric, min_overlap, track_names, track_transformer)
 		
 		if revcomp_match:
 			seqlet = seqlet.revcomp()
 
 		preexpansion_seqletlen = len(seqlet)
-		#extend seqlet according to the alignment so that it fills the
-		# whole pattern
+
 		left_expansion = max(alnmt,0)
 		right_expansion = max((len(parent_pattern) - (alnmt+len(seqlet))), 0)
 
-		if seqlet.coor.is_revcomp == False:
-			start = seqlet.coor.start - left_expansion
-			end = seqlet.coor.end + right_expansion
+		if seqlet.is_revcomp == False:
+			start = seqlet.start - left_expansion
+			end = seqlet.end + right_expansion
 		else:
-			start = seqlet.coor.start - right_expansion
-			end = seqlet.coor.end + left_expansion
+			start = seqlet.start - right_expansion
+			end = seqlet.end + left_expansion
 
-		example_end = track_set.length
-
-		if start >= 0 and end <= example_end:
+		if start >= 0 and end <= track_set.length:
 			seqlet = track_set.create_seqlets(
-				coords=[core.SeqletCoordinates(
-					example_idx=seqlet.coor.example_idx,
-					start=start, end=end,
-					is_revcomp=seqlet.coor.is_revcomp)])[0] 
+				seqlets=[core.Seqlet(example_idx=seqlet.example_idx,
+					start=start, end=end, is_revcomp=seqlet.is_revcomp)])[0] 
 		else:
 			continue #don't try adding this seqlet
 
@@ -135,20 +128,18 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 
 		if (parent_left_expansion > 0) or (parent_right_expansion > 0):
 			candidate_parent_pattern = _expand_seqlets_to_fill_pattern(
-				patterns=[parent_pattern],
-				track_set=track_set, left_flank_to_add=parent_left_expansion,
+				parent_pattern, track_set=track_set, 
+				left_flank_to_add=parent_left_expansion,
 				right_flank_to_add=parent_right_expansion)
 
-			if len(candidate_parent_pattern) > 0:
-				parent_pattern = candidate_parent_pattern[0]
-			else: #the flank expansion required to merge in this seqlet got
-				# rid of all the other seqlets in the pattern, so we won't use
-				# this seqlet
+			if candidate_parent_pattern is not None:
+				parent_pattern = candidate_parent_pattern
+			else:
 				continue
 
 		#add the seqlet in at alignment 0, assuming it's not already
 		# part of the pattern
-		if seqlet not in parent_pattern.seqlets_and_alnmts:
+		if seqlet.exidx_start_end_string not in parent_pattern.unique_seqlets:
 			parent_pattern._add_pattern_with_valid_alnmt(
 							pattern=seqlet, alnmt=0)
 
@@ -255,7 +246,6 @@ def SimilarPatternsCollapser(patterns, track_set,
 	merge_hierarchy_levels.append(current_level_nodes)
 
 	merge_occurred_last_iteration = True
-	merging_iteration = 0
 
 	#negative numbers to indicate which
 	# entries need to be filled (versus entries we can infer
@@ -265,9 +255,6 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 	#loop until no more patterns get merged
 	while merge_occurred_last_iteration:
-		start  = time.time()
-		merging_iteration += 1
-
 		merge_occurred_last_iteration = False
 
 		#Let's subsample 'patterns' to prevent runtime from being too
@@ -277,9 +264,6 @@ def SimilarPatternsCollapser(patterns, track_set,
 			 else util.subsample_pattern(x, num_to_subsample=max_seqlets_subsample)) for x in patterns]
 
 		for i, (pattern1, subsample_pattern1) in enumerate(zip(patterns, subsample_patterns)):
-			start = time.time()
-			#from modisco.visualization import viz_sequence
-			#viz_sequence.plot_weights(pattern1["task0_contrib_scores"].fwd)
 			for j, (pattern2, subsample_pattern2) in enumerate(
 										zip(patterns, subsample_patterns)):
 				#Note: I compute both i,j AND j,i because although
@@ -305,7 +289,8 @@ def SimilarPatternsCollapser(patterns, track_set,
 				pairwise_sims[i, j] = aligner_sim
 
 				#get realigned pattern2
-				pattern2_coords = [x.coor for x in subsample_pattern2.seqlets]
+				#pattern2_coords = [x.coor for x in subsample_pattern2.seqlets]
+				pattern2_coords = subsample_pattern2.seqlets
 				if rc: #flip strand if needed to align
 					pattern2_coords  = [x.revcomp() for x in pattern2_coords]
 
@@ -315,9 +300,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 					for x in pattern2_coords] 
 
 				pattern2_shifted_seqlets = track_set.create_seqlets(
-					coords=pattern2_coords,
-					track_names=['task0_hypothetical_contribs', 
-						'task0_contrib_scores'] ) 
+					seqlets=pattern2_coords)
 
 				pattern1_fwdseqdata, _ =\
 				  core.get_2d_data_from_patterns(
@@ -434,22 +417,9 @@ def SimilarPatternsCollapser(patterns, track_set,
 					track_set=track_set,
 					verbose=verbose)
 
-				new_pattern = _trim_to_frac_support([new_pattern], 
-					min_frac=min_frac, min_num=min_num)[0]
-
-				new_pattern = _expand_seqlets_to_fill_pattern([new_pattern], 
-					track_set=track_set, 
-					left_flank_to_add=flank_to_add,
-					right_flank_to_add=flank_to_add)[0]
-
-				new_pattern = _trim_to_best_window_by_ic([new_pattern],
-						window_size=window_size,
-						bg_freq=bg_freq)[0]
-
-				new_pattern = _expand_seqlets_to_fill_pattern([new_pattern], 
-					track_set=track_set, 
-					left_flank_to_add=flank_to_add,
-					right_flank_to_add=flank_to_add)[0]
+				new_pattern = polish_pattern(new_pattern, min_frac=min_frac, 
+					min_num=min_num, track_set=track_set, flank=flank_to_add, 
+					window_size=window_size, bg_freq=bg_freq)
 
 				for k in range(len(patterns)):
 					#Replace EVERY case where the parent or child
@@ -510,7 +480,6 @@ def SimilarPatternsCollapser(patterns, track_set,
 					if (old_pattern_node.pattern==frontier_pattern):
 						#sanity check..there should be only one node
 						# per pattern
-						assert old_pattern_node_found==False
 						next_level_nodes.append(old_pattern_node)
 						old_pattern_node_found = True 
 				if (old_pattern_node_found==False):
@@ -557,11 +526,11 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 							next_level_node.child_nodes.append(
 											old_pattern_node) 
-							assert old_pattern_node.parent_node is None
+
 							old_pattern_node.parent_node = next_level_node
 						
 
-			current_level_nodes=next_level_nodes
+			current_level_nodes = next_level_nodes
 
 	return patterns, PatternMergeHierarchy(root_nodes=current_level_nodes)
 	

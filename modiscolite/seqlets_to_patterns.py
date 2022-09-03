@@ -59,11 +59,11 @@ def _filter_patterns(patterns, min_seqlet_support, window_size,
 	min_ic_in_window, background, ppm_pseudocount):
 	passing_patterns, filtered_patterns = [], []
 	for pattern in patterns:
-		if len(pattern.seqlets) < min_seqlet_support:
+		if pattern.num_seqlets < min_seqlet_support:
 			filtered_patterns.append(pattern)
 			continue
 
-		ppm = pattern['sequence'].fwd
+		ppm = pattern.snippets['sequence'].fwd
 		per_position_ic = util.compute_per_position_ic(
 			ppm=ppm, background=background, pseudocount=ppm_pseudocount)
 
@@ -89,7 +89,7 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 	min_frac, min_num, flank_to_add, window_size, bg_freq, cluster_indices, 
 	track_sign):
 
-	seqlet_sort_metric = lambda x: -np.sum(np.abs(x["task0_contrib_scores"].fwd))
+	seqlet_sort_metric = lambda x: -np.sum(np.abs(x.snippets["task0_contrib_scores"].fwd))
 	num_clusters = max(cluster_indices+1)
 	cluster_to_seqlets = defaultdict(list) 
 
@@ -100,7 +100,7 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 
 	for i in range(num_clusters):
 		sorted_seqlets = sorted(cluster_to_seqlets[i], key=seqlet_sort_metric) 
-		pattern = core.AggregatedSeqlet.from_seqlet(sorted_seqlets[0])
+		pattern = core.AggregatedSeqlet([(sorted_seqlets[0], 0),])
 
 		if len(sorted_seqlets) > 1:
 			pattern = aggregator.merge_in_seqlets_filledges(
@@ -114,22 +114,11 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 					"task0_contrib_scores"],
 				verbose=True)
 
-		pattern = aggregator._trim_to_frac_support([pattern], 
-			min_frac=min_frac, min_num=min_num)[0]
+		pattern = aggregator.polish_pattern(pattern, min_frac=min_frac, 
+			min_num=min_num, track_set=track_set, flank=flank_to_add, 
+			window_size=window_size, bg_freq=bg_freq)
 
-		pattern = aggregator._expand_seqlets_to_fill_pattern([pattern], 
-			track_set=track_set, left_flank_to_add=flank_to_add,
-			right_flank_to_add=flank_to_add)[0]
-
-		pattern = aggregator._trim_to_best_window_by_ic([pattern],
-				window_size=window_size,
-				bg_freq=bg_freq)[0]
-
-		pattern = aggregator._expand_seqlets_to_fill_pattern([pattern], 
-			track_set=track_set, left_flank_to_add=flank_to_add,
-			right_flank_to_add=flank_to_add)[0]
-
-		if np.sign(np.sum(pattern["task0_contrib_scores"].fwd)) == track_sign:
+		if np.sign(np.sum(pattern.snippets["task0_contrib_scores"].fwd)) == track_sign:
 			cluster_to_motif.append(pattern)
 
 	return cluster_to_motif
@@ -175,8 +164,8 @@ def _extract_seqlet_data(one_hot_sequence, contrib_scores, hypothetical_contribs
 	X_hypo_contrib = []
 
 	for seqlet in seqlets:
-		idx = seqlet.coor.example_idx
-		start, end = seqlet.coor.start, seqlet.coor.end
+		idx = seqlet.example_idx
+		start, end = seqlet.start, seqlet.end
 
 		X_ohe.append(one_hot_sequence[idx][start:end])
 		X_contrib.append(contrib_scores[idx][start:end])
@@ -221,6 +210,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 			contrib_scores, hypothetical_contribs, seqlets)
 
 		bg_freq = np.mean(X_ohe, axis=(0,1))
+		del X_ohe, X_contrib, X_hypo_contrib
 
 		other_config={
 				 'onehot_track_name': "sequence",
@@ -231,7 +221,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 		}
 
 		seqlets_sorter = (lambda arr: sorted(arr, key=lambda x:
-			-np.sum(np.abs(x["task0_contrib_scores"].fwd))))
+			-np.sum(np.abs(x.snippets["task0_contrib_scores"].fwd))))
 
 		seqlets = seqlets_sorter(seqlets)
 		start = time.time()
@@ -274,8 +264,8 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 				filtered_affmat_nn = fine_affmat_nn
 
 			# Step 4: Density adaptation
-			csr_density_adapted_affmat = _density_adaptation(filtered_affmat_nn, seqlet_neighbors, tsne_perplexity)
-
+			csr_density_adapted_affmat = _density_adaptation(
+				filtered_affmat_nn, seqlet_neighbors, tsne_perplexity)
 
 			# Step 5: Clustering
 			cluster_results = cluster.LeidenCluster(

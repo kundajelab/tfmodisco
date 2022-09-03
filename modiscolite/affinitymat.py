@@ -28,7 +28,7 @@ class L1Normalizer():
 		else:
 			return (inp/abs_sum)
 
-@njit('float64(float64[:], int64[:], int64[:], float64[:], int64[:], int64[:], int64, int64)', parallel=True)
+@njit('float64(float64[:], int64[:], int64[:], float64[:], int64[:], int64[:], int64, int64)')
 def _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, j):
 	xi = X_indptr[i]
 	yj = Y_indptr[j]

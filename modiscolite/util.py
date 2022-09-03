@@ -30,12 +30,12 @@ def save_patterns(patterns, grp):
                      grp=grp)
 
 def save_seqlet_coords(seqlets, dset_name, grp):
-	coords_strings = [str(x.coor) for x in seqlets] 
+	coords_strings = [str(x) for x in seqlets] 
 	save_string_list(string_list=coords_strings,
 					 dset_name=dset_name, grp=grp)
 
 def save_seqlet_coords(seqlets, dset_name, grp):
-	coords_strings = [str(x.coor) for x in seqlets] 
+	coords_strings = [str(x) for x in seqlets] 
 	save_string_list(string_list=coords_strings,
 					 dset_name=dset_name, grp=grp)
 

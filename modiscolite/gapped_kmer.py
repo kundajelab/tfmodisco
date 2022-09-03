@@ -110,8 +110,8 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 
 	Xs = []
 	for seqlet in seqlets:
-		onehot = getattr(seqlet["sequence"], attr)
-		contrib_scores = getattr(seqlet["task0_hypothetical_contribs"], attr)*onehot*sign
+		onehot = getattr(seqlet.snippets["sequence"], attr)
+		contrib_scores = getattr(seqlet.snippets["task0_hypothetical_contribs"], attr)*onehot*sign
 
 		#get the top n positiosn
 		per_pos_imp = np.sum(contrib_scores, axis=-1)
