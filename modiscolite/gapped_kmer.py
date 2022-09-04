@@ -1,12 +1,11 @@
+# gapped_kmer.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
+
 import scipy
-import itertools
 import numpy as np
 
-from joblib import Parallel, delayed
-
-import time
-
-from numba import jit, njit, prange
+from numba import njit, prange
 import numba
 
 key_type = numba.types.int64
@@ -105,13 +104,15 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 
 def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len, 
 	max_entries, take_fwd, sign):
-	
-	attr = "fwd" if take_fwd else "rev"
 
 	Xs = []
 	for seqlet in seqlets:
-		onehot = getattr(seqlet.snippets["sequence"], attr)
-		contrib_scores = getattr(seqlet.snippets["task0_hypothetical_contribs"], attr)*onehot*sign
+		onehot = seqlet.sequence
+		contrib_scores = seqlet.hypothetical_contribs*onehot*sign
+
+		if not take_fwd:
+			onehot = onehot[::-1, ::-1]
+			contrib_scores = contrib_scores[::-1, ::-1]
 
 		#get the top n positiosn
 		per_pos_imp = np.sum(contrib_scores, axis=-1)

@@ -1,13 +1,15 @@
+# seqlets_to_patterns.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
+
 from . import affinitymat
 from . import aggregator
-from . import core
+from . import seqlet
 from . import util
-from . import gapped_kmer
 from . import cluster
-from joblib import Parallel, delayed
+
 from collections import defaultdict
 import numpy as np
-import time
 
 import scipy
 import scipy.sparse
@@ -59,11 +61,11 @@ def _filter_patterns(patterns, min_seqlet_support, window_size,
 	min_ic_in_window, background, ppm_pseudocount):
 	passing_patterns, filtered_patterns = [], []
 	for pattern in patterns:
-		if pattern.num_seqlets < min_seqlet_support:
+		if len(pattern.seqlets) < min_seqlet_support:
 			filtered_patterns.append(pattern)
 			continue
 
-		ppm = pattern.snippets['sequence'].fwd
+		ppm = pattern.sequence
 		per_position_ic = util.compute_per_position_ic(
 			ppm=ppm, background=background, pseudocount=ppm_pseudocount)
 
@@ -89,7 +91,7 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 	min_frac, min_num, flank_to_add, window_size, bg_freq, cluster_indices, 
 	track_sign):
 
-	seqlet_sort_metric = lambda x: -np.sum(np.abs(x.snippets["task0_contrib_scores"].fwd))
+	seqlet_sort_metric = lambda x: -np.sum(np.abs(x.contrib_scores))
 	num_clusters = max(cluster_indices+1)
 	cluster_to_seqlets = defaultdict(list) 
 
@@ -100,25 +102,19 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 
 	for i in range(num_clusters):
 		sorted_seqlets = sorted(cluster_to_seqlets[i], key=seqlet_sort_metric) 
-		pattern = core.AggregatedSeqlet([(sorted_seqlets[0], 0),])
+		pattern = core.AggregatedSeqlet([sorted_seqlets[0]])
 
 		if len(sorted_seqlets) > 1:
 			pattern = aggregator.merge_in_seqlets_filledges(
-				parent_pattern=pattern,
-				seqlets_to_merge=sorted_seqlets[1:],
-				track_set=track_set,
-				metric=affinitymat.jaccard,
-				min_overlap=min_overlap,
-				track_transformer=affinitymat.L1Normalizer(),
-				track_names=["task0_hypothetical_contribs", 
-					"task0_contrib_scores"],
-				verbose=True)
+				parent_pattern=pattern, seqlets_to_merge=sorted_seqlets[1:],
+				track_set=track_set, metric=affinitymat.jaccard,
+				min_overlap=min_overlap, verbose=True)
 
 		pattern = aggregator.polish_pattern(pattern, min_frac=min_frac, 
 			min_num=min_num, track_set=track_set, flank=flank_to_add, 
 			window_size=window_size, bg_freq=bg_freq)
 
-		if np.sign(np.sum(pattern.snippets["task0_contrib_scores"].fwd)) == track_sign:
+		if np.sign(np.sum(pattern.contrib_scores)) == track_sign:
 			cluster_to_motif.append(pattern)
 
 	return cluster_to_motif
@@ -221,10 +217,9 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 		}
 
 		seqlets_sorter = (lambda arr: sorted(arr, key=lambda x:
-			-np.sum(np.abs(x.snippets["task0_contrib_scores"].fwd))))
+			-np.sum(np.abs(x.contrib_scores))))
 
 		seqlets = seqlets_sorter(seqlets)
-		start = time.time()
 
 		failure = {
 					'each_round_initcluster_motifs': None,
@@ -250,8 +245,6 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 			# Step 2: Generate fine representation
 			fine_affmat_nn = affinitymat.jaccard_from_seqlets(
 				seqlets=seqlets, seqlet_neighbors=seqlet_neighbors,
-				track_names=["task0_hypothetical_contribs", "task0_contrib_scores"],
-				transformer=affinitymat.L1Normalizer(),
 				min_overlap=min_overlap_while_sliding)
 
 			if round_idx == 0:
@@ -291,7 +284,7 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 
 
 			#obtain unique seqlets from adjusted motifs
-			seqlets = list(dict([(y.exidx_start_end_string, y)
+			seqlets = list(dict([(y.string, y)
 							 for x in motifs for y in x.seqlets]).values())
 
 
@@ -312,19 +305,16 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 
 		#Now start merging patterns 
 		#merged_patterns, pattern_merge_hierarchy = similar_patterns_collapser(patterns=split_patterns) 
-		merged_patterns = sorted(merged_patterns, key=lambda x: -x.num_seqlets)
+		merged_patterns = sorted(merged_patterns, key=lambda x: -len(x.seqlets))
 
 		final_patterns, remaining_patterns = _filter_patterns(merged_patterns, 
 			min_seqlet_support=final_min_cluster_size, 
 			window_size=min_ic_windowsize, min_ic_in_window=min_ic_in_window, 
 			background=bg_freq, ppm_pseudocount=ppm_pseudocount)
 
-		total_time_taken = round(time.time()-start,2)
-
 		#apply subclustering procedure on the final patterns
 		for patternidx, pattern in enumerate(final_patterns):
-			pattern.compute_subclusters_and_embedding(
-				verbose=verbose, perplexity=subcluster_perplexity, n_jobs=n_cores)
+			pattern.compute_subclusters_and_embedding(subcluster_perplexity)
 
 		return {
 			'success': True,
@@ -333,7 +323,6 @@ def TfModiscoSeqletsToPatternsFactory(seqlets, one_hot_sequence, contrib_scores,
 			'remaining_patterns': remaining_patterns,
 			'seqlets': filtered_seqlets, 
 			'cluster_results': cluster_results, 
-			'total_time_taken': total_time_taken,
 			'merged_patterns': merged_patterns,
 			'pattern_merge_hierarchy': pattern_merge_hierarchy,
 			'other_config': other_config

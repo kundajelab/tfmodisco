@@ -1,53 +1,11 @@
-import numpy as np
-import h5py
-import scipy.sparse
+# util.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
 
+import numpy as np
 from numba import njit
 
-def coo_matrix_from_neighborsformat(entries, neighbors, ncols):
-	coo_mat = scipy.sparse.coo_matrix(
-			(np.concatenate(entries, axis=0),
-			 (np.array([i for i in range(len(neighbors))
-						   for j in neighbors[i]]).astype("int"),
-			  np.concatenate(neighbors, axis=0)) ),
-			shape=(len(entries), ncols)) 
-	return coo_mat
-
-
-def save_string_list(string_list, dset_name, grp):
-	dset = grp.create_dataset(dset_name, (len(string_list),),
-							  dtype=h5py.special_dtype(vlen=bytes))
-	dset[:] = string_list
-
-def save_patterns(patterns, grp):
-    all_pattern_names = []
-    for idx, pattern in enumerate(patterns):
-        pattern_name = "pattern_"+str(idx)
-        all_pattern_names.append(pattern_name)
-        pattern_grp = grp.create_group(pattern_name) 
-        pattern.save_hdf5(pattern_grp)
-    save_string_list(all_pattern_names, dset_name="all_pattern_names",
-                     grp=grp)
-
-def save_seqlet_coords(seqlets, dset_name, grp):
-	coords_strings = [str(x) for x in seqlets] 
-	save_string_list(string_list=coords_strings,
-					 dset_name=dset_name, grp=grp)
-
-def save_seqlet_coords(seqlets, dset_name, grp):
-	coords_strings = [str(x) for x in seqlets] 
-	save_string_list(string_list=coords_strings,
-					 dset_name=dset_name, grp=grp)
-
-def save_list_of_objects(grp, list_of_objects):
-	grp.attrs["num_objects"] = len(list_of_objects) 
-	for idx,obj in enumerate(list_of_objects):
-		obj.save_hdf5(grp=grp.create_group("obj"+str(idx)))
-
-#TODO: this can prob be replaced with np.sum(
-# util.rolling_window(a=arr, window=window_size), axis=-1)  
 def cpu_sliding_window_sum(arr, window_size):
-	assert len(arr) >= window_size, str(len(arr))+" "+str(window_size)
 	to_return = np.zeros(len(arr)-window_size+1)
 	current_sum = np.sum(arr[0:window_size])
 	to_return[0] = current_sum
@@ -132,14 +90,31 @@ def rolling_window(a, window):
 	return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 
-def subsample_pattern(pattern, num_to_subsample):
-	from . import core
-	seqlets_and_alnmts_list = list(pattern._seqlets_and_alnmts)
-	subsample = [seqlets_and_alnmts_list[i]
-				 for i in
-				 np.random.RandomState(1234).choice(
-					 a=np.arange(len(seqlets_and_alnmts_list)),
-					 replace=False,
-					 size=num_to_subsample)]
-	return core.AggregatedSeqlet(seqlets_and_alnmts_arr=subsample) 
+def magnitude(X):
+	X = X - np.mean(X)
+	return (X / (np.linalg.norm(X.ravel())+0.0000001))
 
+def l1(X):
+	abs_sum = np.sum(np.abs(X))
+	if abs_sum == 0:
+		return X
+	return (X/abs_sum)
+
+def get_2d_data_from_patterns(patterns, transformer='l1', include_hypothetical=True):
+	func = l1 if transformer == 'l1' else magnitude
+	tracks = ['hypothetical_contribs', 'contrib_scores']
+	if not include_hypothetical:
+		tracks = tracks[1:]
+
+	all_fwd_data, all_rev_data = [], []
+
+	for pattern in patterns:
+		snippets = [getattr(pattern, track) for track in tracks]
+
+		fwd_data = np.concatenate([func(snippet) for snippet in snippets], axis=1)
+		rev_data = np.concatenate([func(snippet[::-1, ::-1]) for snippet in snippets], axis=1)
+
+		all_fwd_data.append(fwd_data)
+		all_rev_data.append(rev_data)
+
+	return np.array(all_fwd_data), np.array(all_rev_data)

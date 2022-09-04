@@ -1,27 +1,15 @@
+# core.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
+
 import numpy as np
+import scipy.sparse
 
+from . import affinitymat
+from . import cluster
 from . import util
+
 from collections import OrderedDict
-
-class Snippet(object):
-	def __init__(self, fwd, rev):
-		self.fwd = fwd
-		self.rev = rev
-
-	def trim(self, start_idx, end_idx):
-		new_fwd = self.fwd[start_idx:end_idx]
-		new_rev = (self.rev[len(self)-end_idx:len(self)-start_idx]
-				   if self.rev is not None else None)
-		return Snippet(fwd=new_fwd, rev=new_rev)
-
-	def save_hdf5(self, grp):
-		grp.create_dataset("fwd", data=self.fwd)  
-		grp.create_dataset("rev", data=self.rev)
-		grp.attrs["has_pos_axis"] = True
-
-	def __len__(self):
-		return len(self.fwd)
-
 
 class TrackSet(object):
 	def __init__(self, one_hot, contrib_scores, hypothetical_contribs):
@@ -31,25 +19,20 @@ class TrackSet(object):
 		self.length = len(one_hot[0])
 
 	def create_seqlets(self, seqlets):
-		tracks = [self.one_hot, self.contrib_scores, self.hypothetical_contribs]
-		names = ['sequence', 'task0_contrib_scores', 'task0_hypothetical_contribs']
-
 		for seqlet in seqlets:
 			idx = seqlet.example_idx
+			s, e = seqlet.start, seqlet.end
 
-			for track, track_name in zip(tracks, names):
-				fwd = track[idx][seqlet.start:seqlet.end]
-				rev = fwd[::-1, ::-1]
-
-				if seqlet.is_revcomp:
-					snippet = Snippet(fwd=rev, rev=fwd)
-				else:
-					snippet = Snippet(fwd=fwd, rev=rev)
-
-				seqlet.snippets[track_name] = snippet
+			if seqlet.is_revcomp:
+				seqlet.sequence = self.one_hot[idx][s:e][::-1, ::-1]
+				seqlet.contrib_scores = self.contrib_scores[idx][s:e][::-1, ::-1]
+				seqlet.hypothetical_contribs = self.hypothetical_contribs[idx][s:e][::-1, ::-1]
+			else:
+				seqlet.sequence = self.one_hot[idx][s:e]
+				seqlet.contrib_scores = self.contrib_scores[idx][s:e]
+				seqlet.hypothetical_contribs = self.hypothetical_contribs[idx][s:e]				
 
 		return seqlets
-
 
 class Seqlet(object):
 	def __init__(self, example_idx, start, end, is_revcomp):
@@ -57,7 +40,11 @@ class Seqlet(object):
 		self.start = start
 		self.end = end
 		self.is_revcomp = is_revcomp
-		self.snippets = OrderedDict()
+
+		self.sequence = None
+		self.contrib_scores = None
+		self.hypothetical_contribs = None
+
 		super(Seqlet, self).__init__()
 
 	def __str__(self):
@@ -69,9 +56,8 @@ class Seqlet(object):
 		return self.end - self.start
 
 	@property
-	def exidx_start_end_string(self):
-		return (str(self.example_idx)+"_"
-				+str(self.start)+"_"+str(self.end))
+	def string(self):
+		return str(self.example_idx)+"_"+str(self.start)+"_"+str(self.end)
 
 	def revcomp(self):
 		new_seqlet = Seqlet(
@@ -79,9 +65,9 @@ class Seqlet(object):
 				start=self.start, end=self.end,
 				is_revcomp=(self.is_revcomp==False))
 
-		for name, snippet in self.snippets.items():
-			new_seqlet.snippets[name] = Snippet(fwd=np.copy(snippet.rev), rev=np.copy(snippet.fwd))
-
+		new_seqlet.sequence = self.sequence[::-1, ::-1]
+		new_seqlet.contrib_scores = self.contrib_scores[::-1, ::-1]
+		new_seqlet.hypothetical_contribs = self.hypothetical_contribs[::-1, ::-1]
 		return new_seqlet
 
 	def shift(self, shift_amt):
@@ -101,93 +87,40 @@ class Seqlet(object):
 		new_seqlet = Seqlet(example_idx=self.example_idx,
 			start=new_start, end=new_end, is_revcomp=self.is_revcomp)
 
-		for track_name, snippet in self.snippets.items():
-			new_seqlet.snippets[track_name] = snippet.trim(start_idx, end_idx)
-		
+		s, e = start_idx, end_idx
+		new_seqlet.sequence = self.sequence[s:e]
+		new_seqlet.contrib_scores = self.contrib_scores[s:e]
+		new_seqlet.hypothetical_contribs = self.hypothetical_contribs[s:e]
 		return new_seqlet
 
 
 class AggregatedSeqlet():
-	def __init__(self, seqlets_and_alnmts_arr):
-		self.seqlets_and_alnmts = []
+	def __init__(self, seqlets):
+		self.seqlets = []
 		self.unique_seqlets = {}
-		self.snippets = OrderedDict()
+		self.length = max([len(seqlet) for seqlet in seqlets])  
+		
+		self._sequence_sum = np.zeros((self.length, 4), dtype='float')
+		self._contrib_sum = np.zeros((self.length, 4), dtype='float')
+		self._hypothetical_sum = np.zeros((self.length, 4), dtype='float')
 
-		the_sum = sum([alnmt for _, alnmt in seqlets_and_alnmts_arr])
-		if the_sum != 0:
-			print(the_sum, "DAWWAD?")
-			awdwadwwaawd
-
-		start_idx = min([alnmt for _, alnmt in seqlets_and_alnmts_arr])
-		seqlets_and_alnmts_arr = [(seqlet, alnmt-start_idx) for seqlet, alnmt in seqlets_and_alnmts_arr]
-
-		self.length = max([alnmt + len(seqlet) for seqlet, alnmt in seqlets_and_alnmts_arr])  
-		self._track_name_to_agg = OrderedDict() 
-
-		sample_seqlet = seqlets_and_alnmts_arr[0][0]
-		for track_name in sample_seqlet.snippets:
-			track_shape = self.length, 4
-			self._track_name_to_agg[track_name] = np.zeros(track_shape, dtype='float') 
-
-			self.snippets[track_name] = Snippet(
-				fwd=self._track_name_to_agg[track_name],
-				rev=self._track_name_to_agg[track_name][::-1, ::-1] 
-			) 
+		self.sequence = np.zeros((self.length, 4), dtype='float')
+		self.contrib_scores = np.zeros((self.length, 4), dtype='float')
+		self.hypothetical_contribs = np.zeros((self.length, 4), dtype='float')
 
 		self.per_position_counts = np.zeros((self.length,))
 
-		for seqlet, alnmt in seqlets_and_alnmts_arr:
-			if seqlet.exidx_start_end_string not in self.unique_seqlets: 
-				self._add_pattern_with_valid_alnmt(pattern=seqlet, alnmt=alnmt)
+		for seqlet in seqlets:
+			if seqlet.string not in self.unique_seqlets: 
+				self._add_seqlet(seqlet=seqlet)
 		
 		self.subclusters = None
 		self.subcluster_to_subpattern = None
 
-	def save_hdf5(self, grp):
-		for track_name,snippet in self.snippets.items():
-			snippet.save_hdf5(grp.create_group(track_name))
-
-		the_sum = sum([alnmt for _, alnmt in self.seqlets_and_alnmts])
-		if the_sum != 0:
-			print(the_sum, "DAWWAD?2")
-			awdwadwwaawd
-
-		seqlets_and_alnmts_grp = grp.create_group("seqlets_and_alnmts")
-		util.save_seqlet_coords(seqlets=[seqlet for seqlet, _ in self.seqlets_and_alnmts],
-								dset_name="seqlets", grp=seqlets_and_alnmts_grp) 
-		seqlets_and_alnmts_grp.create_dataset("alnmts",
-						   data=np.array([alnmt for _, alnmt in self.seqlets_and_alnmts]))
-
-		if self.subclusters is not None:
-			grp.create_dataset("subclusters", data=self.subclusters)
-
-			subcluster_to_subpattern_grp =\
-				grp.create_group("subcluster_to_subpattern")
-			util.save_string_list(
-				["subcluster_"+str(x) for x in self.subcluster_to_subpattern.keys()],
-				dset_name="subcluster_names", grp=subcluster_to_subpattern_grp)
-			for subcluster,subpattern in self.subcluster_to_subpattern.items():
-				subpattern_grp = subcluster_to_subpattern_grp.create_group(
-								"subcluster_"+str(subcluster)) 
-				subpattern.save_hdf5(subpattern_grp)
-
-	def compute_subclusters_and_embedding(self, perplexity, n_jobs, 
-		verbose=True, compute_embedding=True):
-
-		from . import affinitymat
-		from . import cluster
-
-		the_sum = sum([alnmt for _, alnmt in self.seqlets_and_alnmts])
-		if the_sum != 0:
-			print(the_sum, "DAWWAD?3")
-			awdwadwwaawd
-
+	def compute_subclusters_and_embedding(self, perplexity):
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0
-		fwd_seqlet_data, _ = get_2d_data_from_patterns(
-			patterns=self.seqlets,
-			track_names=["task0_hypothetical_contribs", "task0_contrib_scores"],
-			track_transformer=affinitymat.L1Normalizer())
+		fwd_seqlet_data, _ = util.get_2d_data_from_patterns(self.seqlets)
 		fwd_seqlet_data_vectors = fwd_seqlet_data.reshape(len(fwd_seqlet_data), -1)
 	
 		n_neighb = min(int(perplexity*3 + 2), len(fwd_seqlet_data_vectors))
@@ -207,9 +140,14 @@ class AggregatedSeqlet():
 		distmat_nn = np.log((1.0/(0.5*np.maximum(affmat_nn, 0.0000001)))-1)
 		distmat_nn = np.maximum(distmat_nn, 0.0) #eliminate tiny neg floats
 
-		distmat_sp = util.coo_matrix_from_neighborsformat(
-			entries=distmat_nn, neighbors=seqlet_neighbors,
-			ncols=len(distmat_nn)).tocsr()
+
+		distmat_sp = scipy.sparse.coo_matrix(
+				(np.concatenate(distmat_nn, axis=0),
+				 (np.array([i for i in range(len(seqlet_neighbors))
+							   for j in seqlet_neighbors[i]]).astype("int"),
+				  np.concatenate(seqlet_neighbors, axis=0)) ),
+				shape=(len(distmat_nn), len(distmat_nn))).tocsr()
+
 		distmat_sp.sort_indices()
 
 		#do density adaptation
@@ -224,9 +162,7 @@ class AggregatedSeqlet():
 
 		#Do Leiden clustering
 		cluster_results = cluster.LeidenCluster(sp_density_adapted_affmat,
-				n_seeds=50,
-				n_leiden_iterations=-1,
-				verbose=verbose)
+			n_seeds=50, n_leiden_iterations=-1)
 
 		self.subclusters = cluster_results['cluster_indices']
 
@@ -237,7 +173,7 @@ class AggregatedSeqlet():
 			if (subcluster not in subcluster_to_seqletsandalignments):
 				subcluster_to_seqletsandalignments[subcluster] = []
 			
-			subcluster_to_seqletsandalignments[subcluster].append((seqlet, 0))
+			subcluster_to_seqletsandalignments[subcluster].append(seqlet)
 
 		subcluster_to_subpattern = OrderedDict([
 			(subcluster, AggregatedSeqlet(seqletsandalignments))
@@ -251,10 +187,9 @@ class AggregatedSeqlet():
 				   key=lambda x: -len(x[1].seqlets)))
 
 	def copy(self):
-		return AggregatedSeqlet(seqlets_and_alnmts_arr=[(seqlet, alnmt) for seqlet, alnmt in self.seqlets_and_alnmts])
+		return AggregatedSeqlet(seqlets=[seqlet for seqlet in self.seqlets])
 
-	def trim_to_support(self,
-			min_frac, min_num, verbose=True):
+	def trim_to_support(self, min_frac, min_num):
 		max_support = max(self.per_position_counts)
 		num = min(min_num, max_support*min_frac)
 		
@@ -266,78 +201,33 @@ class AggregatedSeqlet():
 		while self.per_position_counts[right_idx-1] < num:
 			right_idx -= 1
 		
-		return self.trim_to_idx(start_idx=left_idx, end_idx=right_idx,
-			no_skip=False) 
+		return self.trim_to_idx(start_idx=left_idx, end_idx=right_idx) 
 
 
-	def trim_to_idx(self, start_idx, end_idx, no_skip=True):
-		new_seqlets_and_alnmnts = [] 
-		for seqlet, alnmt in self.seqlets_and_alnmts:
-			if alnmt < end_idx and (alnmt + len(seqlet)) > start_idx:
-				if alnmt > start_idx:
-					seqlet_start_idx_trim = 0 
-					new_alnmt = alnmt - start_idx
-				else:
-					seqlet_start_idx_trim = start_idx - alnmt 
-					new_alnmt = 0
+	def trim_to_idx(self, start_idx, end_idx):
+		new_seqlets = []
+		for seqlet in self.seqlets:
+				new_seqlet = seqlet.trim(start_idx=start_idx, end_idx=end_idx)
+				new_seqlets.append(new_seqlet)
+		return AggregatedSeqlet(seqlets=new_seqlets)
 
-				if (alnmt+len(seqlet)) < end_idx:
-					seqlet_end_idx_trim = len(seqlet)
-				else:
-					seqlet_end_idx_trim = end_idx - alnmt
+	def _add_seqlet(self, seqlet):
+		n = len(seqlet)
 
-				new_seqlet = seqlet.trim(start_idx=seqlet_start_idx_trim,
-					end_idx=seqlet_end_idx_trim)
-				
-				new_seqlets_and_alnmnts.append((new_seqlet, new_alnmt))
+		self.seqlets.append(seqlet)
+		self.unique_seqlets[seqlet.string] = seqlet
+		self.per_position_counts[:n] += 1.0 
 
-		return AggregatedSeqlet(seqlets_and_alnmts_arr=new_seqlets_and_alnmnts)
+		ppc = self.per_position_counts[:, None]
+		ppc = ppc + 1E-7 * (ppc == 0)
 
+		self._sequence_sum[:n] += seqlet.sequence
+		self._contrib_sum[:n] += seqlet.contrib_scores
+		self._hypothetical_sum[:n] += seqlet.hypothetical_contribs
 
-	@property
-	def seqlets(self):
-		return [seqlet for seqlet, _ in self.seqlets_and_alnmts]
-
-	@property
-	def num_seqlets(self):
-		return len(self.seqlets_and_alnmts)
-
-	def _add_pattern_with_valid_alnmt(self, pattern, alnmt):
-		slice_obj = slice(alnmt, alnmt+len(pattern))
-
-		self.seqlets_and_alnmts.append((pattern, alnmt))
-		self.unique_seqlets[pattern.exidx_start_end_string] = pattern
-		self.per_position_counts[slice_obj] += 1.0 
-
-		for track_name in self._track_name_to_agg:
-			self._track_name_to_agg[track_name][slice_obj] += pattern.snippets[track_name].fwd 
-
-			ppc = self.per_position_counts[:, None]
-			track = self._track_name_to_agg[track_name] / (ppc + 1E-7*(ppc == 0))
-
-			self.snippets[track_name] = Snippet(
-				fwd=track, rev=track[::-1, ::-1]
-			)
+		self.sequence = self._sequence_sum / ppc
+		self.contrib_scores = self._contrib_sum / ppc
+		self.hypothetical_contribs = self._hypothetical_sum / ppc
 
 	def __len__(self):
 		return self.length
-
-
-def get_2d_data_from_patterns(patterns, track_names, track_transformer):
-	all_fwd_data, all_rev_data = [], []
-
-	for pattern in patterns:
-		snippets = [pattern.snippets[track_name] for track_name in track_names] 
-
-		fwd_data = np.concatenate([track_transformer(
-				 np.reshape(snippet.fwd, (len(snippet.fwd), -1)))
-				for snippet in snippets], axis=1)
-
-		rev_data = np.concatenate([track_transformer(
-				np.reshape(snippet.rev, (len(snippet.rev), -1)))
-				for snippet in snippets], axis=1)
-
-		all_fwd_data.append(fwd_data)
-		all_rev_data.append(rev_data)
-	
-	return np.array(all_fwd_data), np.array(all_rev_data)

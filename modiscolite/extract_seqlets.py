@@ -1,11 +1,10 @@
-# coordproducers.py
+# extract_seqlets.py
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
 import numpy as np
 
-from .core import Seqlet
-
+from . import core
 from sklearn.isotonic import IsotonicRegression
 
 def _bin_mode(values, bins=1000):
@@ -72,10 +71,8 @@ def _iterative_extract_seqlets(score_track, window_size, flank, suppress):
 
 			#need to be able to expand without going off the edge
 			if argmax >= flank and argmax < (d-flank): 
-				seqlet = Seqlet(
-					example_idx=example_idx,
-					start=argmax-flank,
-					end=argmax+window_size+flank,
+				seqlet = core.Seqlet(example_idx=example_idx, 
+					start=argmax-flank, end=argmax+window_size+flank,
 					is_revcomp=False)
 
 				seqlets.append(seqlet)

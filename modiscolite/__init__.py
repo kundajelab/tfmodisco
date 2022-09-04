@@ -1,7 +1,6 @@
-from __future__ import division, print_function, absolute_import
 from . import aggregator
 from . import affinitymat
-from . import coordproducers
+from . import extract_seqlets
 from . import core
 from . import gapped_kmer
 from . import util

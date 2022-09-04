@@ -1,3 +1,7 @@
+# affinitymat.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
+
 import sklearn
 import sklearn.manifold
 
@@ -6,27 +10,13 @@ import numpy as np
 import scipy
 from scipy.sparse import coo_matrix
 
-import time
-
 from tqdm import tqdm
 from numba import njit
 from numba import prange
 
-from . import core
+from . import util
 from . import gapped_kmer
 
-class MagnitudeNormalizer():
-	def __call__(self, inp):
-		inp = inp - np.mean(inp)
-		return (inp / (np.linalg.norm(inp.ravel())+0.0000001))
-
-class L1Normalizer():
-	def __call__(self, inp):
-		abs_sum = np.sum(np.abs(inp))
-		if (abs_sum==0):
-			return inp
-		else:
-			return (inp/abs_sum)
 
 @njit('float64(float64[:], int64[:], int64[:], float64[:], int64[:], int64[:], int64, int64)')
 def _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, j):
@@ -70,15 +60,11 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
 	alphabet_size=4):
 
-	tic = time.time()
 	X_fwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, 
 		min_k, max_k, max_gap, max_len, max_entries, True, sign)
-	print(time.time() - tic, "a")
 
-	tic = time.time()
 	X_bwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, 
 			max_len, max_entries, False, sign)
-	print(time.time() - tic, "b")
 
 	X = sklearn.preprocessing.normalize(X_fwd, norm='l2', axis=1)
 	Y = sklearn.preprocessing.normalize(X_bwd, norm='l2', axis=1)
@@ -99,20 +85,17 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 	return sims, neighbors
 
 
-def jaccard_from_seqlets(seqlets, track_names, transformer, min_overlap,
-		filter_seqlets=None, seqlet_neighbors=None):
+def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, 
+	seqlet_neighbors=None):
 
-	all_fwd_data, all_rev_data = core.get_2d_data_from_patterns(seqlets,
-		track_names=track_names, track_transformer=transformer)
+	all_fwd_data, all_rev_data = util.get_2d_data_from_patterns(seqlets)
 
 	if filter_seqlets is None:
 		filter_seqlets = seqlets
 		filters_all_fwd_data = all_fwd_data
 		filters_all_rev_data = all_rev_data
 	else:
-		filters_all_fwd_data, filters_all_rev_data = core.get_2d_data_from_patterns(
-			filter_seqlets, track_names=track_names,
-			track_transformer=transformer)
+		filters_all_fwd_data, filters_all_rev_data = util.get_2d_data_from_patterns(filter_seqlets)
 
 	if seqlet_neighbors is None:
 		seqlet_neighbors = [list(range(len(filter_seqlets)))
@@ -134,7 +117,7 @@ def jaccard_from_seqlets(seqlets, track_names, transformer, min_overlap,
 
 
 def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil, 
-	return_sparse=False, verbose=True):
+	return_sparse=False):
 
 	if seqlet_neighbors is None:
 		seqlet_neighbors = np.tile(np.arange(X.shape[0]), (Y.shape[0], 1))
@@ -228,9 +211,8 @@ def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):
 
 
 class NNTsneConditionalProbs():
-	def __init__(self, perplexity, verbose=1):
+	def __init__(self, perplexity):
 		self.perplexity = perplexity 
-		self.verbose=verbose
 
 	def __call__(self, affinity_mat, nearest_neighbors):
 		distmat_nn = np.log((1.0/(0.5*np.maximum(affinity_mat, 0.0000001)))-1)
@@ -256,7 +238,7 @@ class NNTsneConditionalProbs():
 		neighbors = neighbors_nn
 		
 		conditional_P = sklearn.manifold._utils._binary_search_perplexity(
-			distances, self.perplexity, self.verbose)
+			distances, self.perplexity, verbose=False)
 
 		#normalize the conditional_P to sum to 1 across the rows
 		conditional_P = conditional_P/np.sum(conditional_P, axis=-1)[:,None]

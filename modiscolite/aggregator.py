@@ -1,13 +1,16 @@
+# aggregator.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
+
 import numpy as np
+
 from . import affinitymat
 from . import core
 from . import util
-from collections import OrderedDict, defaultdict
-import itertools
-import sys
-from joblib import Parallel, delayed
+
+from collections import OrderedDict
 from sklearn.metrics import roc_auc_score
-import time
+
 
 def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg_freq):
 	pattern = pattern.trim_to_support(min_frac=min_frac, min_num=min_num)
@@ -17,7 +20,7 @@ def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg
 		right_flank_to_add=flank)
 
 	# Trim by IC
-	ppm = pattern.snippets["sequence"].fwd
+	ppm = pattern.sequence
 	per_pos_ic = util.compute_per_position_ic(
 		ppm=ppm, background=bg_freq, pseudocount=0.001)
 
@@ -36,11 +39,10 @@ def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg
 def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 	right_flank_to_add):
 
-	new_seqlets_and_alnmts = []
-	for seqlet, alnmt in pattern.seqlets_and_alnmts:
-		left_expansion = alnmt + left_flank_to_add 
-		right_expansion = ((len(pattern) - 
-						   (alnmt+len(seqlet))) + right_flank_to_add)
+	new_seqlets = []
+	for seqlet in pattern.seqlets:
+		left_expansion = left_flank_to_add 
+		right_expansion = len(pattern) - len(seqlet) + right_flank_to_add
 
 		if seqlet.is_revcomp == False:
 			start = seqlet.start - left_expansion
@@ -51,30 +53,27 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 		
 		if start >= 0 and end <= track_set.length:
 			seqlet = track_set.create_seqlets(
-				seqlets=[core.Seqlet(
-					example_idx=seqlet.example_idx,
-					start=start, end=end,
-					is_revcomp=seqlet.is_revcomp)])[0]
+				seqlets=[core.Seqlet(example_idx=seqlet.example_idx,
+					start=start, end=end, is_revcomp=seqlet.is_revcomp)])[0]
 
-			new_seqlets_and_alnmts.append((seqlet, 0))
+			new_seqlets.append(seqlet)
 
-	if len(new_seqlets_and_alnmts) > 0:
-		return core.AggregatedSeqlet(seqlets_and_alnmts_arr=
-			new_seqlets_and_alnmts)
+	if len(new_seqlets) > 0:
+		return core.AggregatedSeqlet(seqlets=new_seqlets)
 	else:
 		return None
 
 
 def _align_patterns(parent_pattern, child_pattern, metric, min_overlap, 
-	track_names, track_transformer):
+	transformer, include_hypothetical):
 
-	fwd_data_parent, rev_data_parent = core.get_2d_data_from_patterns(
-		[parent_pattern], track_names=track_names, 
-		track_transformer=track_transformer)
+	fwd_data_parent, rev_data_parent = util.get_2d_data_from_patterns(
+		[parent_pattern], transformer=transformer,
+		include_hypothetical=include_hypothetical)
 
-	fwd_data_child, rev_data_child = core.get_2d_data_from_patterns(
-		[child_pattern], track_names=track_names,
-		track_transformer=track_transformer)
+	fwd_data_child, rev_data_child = util.get_2d_data_from_patterns(
+		[child_pattern], transformer=transformer,
+		include_hypothetical=include_hypothetical)
 
 	best_crossmetric, best_crossmetric_argmax = metric(fwd_data_child, 
 		fwd_data_parent, min_overlap).squeeze()
@@ -89,14 +88,14 @@ def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
 
 
 def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
-	track_set, track_names, metric, min_overlap, track_transformer, 
-	verbose=True):
+	track_set, metric, min_overlap, transformer='l1', 
+	include_hypothetical=True):
 
 	parent_pattern = parent_pattern.copy()
 
 	for seqlet in seqlets_to_merge:
 		alnmt, revcomp_match, alnmt_score = _align_patterns(parent_pattern, 
-			seqlet, metric, min_overlap, track_names, track_transformer)
+			seqlet, metric, min_overlap, transformer, include_hypothetical)
 		
 		if revcomp_match:
 			seqlet = seqlet.revcomp()
@@ -139,9 +138,8 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 
 		#add the seqlet in at alignment 0, assuming it's not already
 		# part of the pattern
-		if seqlet.exidx_start_end_string not in parent_pattern.unique_seqlets:
-			parent_pattern._add_pattern_with_valid_alnmt(
-							pattern=seqlet, alnmt=0)
+		if seqlet.string not in parent_pattern.unique_seqlets:
+			parent_pattern._add_seqlet(seqlet=seqlet)
 
 	return parent_pattern
 
@@ -152,17 +150,6 @@ class PatternMergeHierarchy(object):
 
 	def add_level(self, level_arr):
 		self.levels.append(level_arr)
-
-	def save_hdf5(self, grp):
-		root_node_names = []
-		for i in range(len(self.root_nodes)):
-			node_name = "root_node"+str(i)
-			root_node_names.append(node_name) 
-			self.root_nodes[i].save_hdf5(grp.create_group(node_name))
-		util.save_string_list(root_node_names,
-							  dset_name="root_node_names",
-							  grp=grp) 
-
 
 class PatternMergeHierarchyNode(object):
 
@@ -178,40 +165,17 @@ class PatternMergeHierarchyNode(object):
 		self.submat_crosscontam = submat_crosscontam
 		self.submat_alignersim = submat_alignersim
 
-	def save_hdf5(self, grp):
-		if (self.indices_merged is not None):
-			grp.create_dataset("indices_merged",
-							   data=np.array(self.indices_merged)) 
-			grp.create_dataset("submat_crosscontam",
-							   data=np.array(self.submat_crosscontam)) 
-			grp.create_dataset("submat_alignersim",
-							   data=np.array(self.submat_alignersim)) 
-		self.pattern.save_hdf5(grp=grp.create_group("pattern"))
-		if (self.child_nodes is not None):
-			child_node_names = []
-			for i in range(len(self.child_nodes)):
-				child_node_name = "child_node"+str(i)
-				child_node_names.append(child_node_name)
-				self.child_nodes[i].save_hdf5(
-					grp.create_group(child_node_name))
-			util.save_string_list(child_node_names,
-								  dset_name="child_node_names",
-								  grp=grp)
-
 
 def _detect_spurious_merging(patterns, track_set, perplexity,
 	min_in_subcluster, min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
-	verbose=True, max_seqlets_subsample=1000, n_cores=1):
+	max_seqlets_subsample=1000):
 
 	to_return = []
 	for i, pattern in enumerate(patterns):
 		if len(pattern.seqlets) > min_in_subcluster:
-			pattern.compute_subclusters_and_embedding(
-				verbose=False,
-				compute_embedding=False,
-				perplexity=perplexity, n_jobs=n_cores)
+			pattern.compute_subclusters_and_embedding(perplexity=perplexity)
 
 			subpatterns = pattern.subcluster_to_subpattern.values()
 			refined_subpatterns = SimilarPatternsCollapser(patterns=subpatterns, 
@@ -219,8 +183,7 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
 				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, verbose=True, max_seqlets_subsample=1000, n_cores=1)
-
+				bg_freq=bg_freq, max_seqlets_subsample=1000)
 
 			to_return.extend(refined_subpatterns[0]) 
 		else:
@@ -231,13 +194,13 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
 				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, verbose=True, max_seqlets_subsample=1000, n_cores=1)
+				bg_freq=bg_freq, max_seqlets_subsample=1000)
 
 def SimilarPatternsCollapser(patterns, track_set,
 	min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
-	verbose=True, max_seqlets_subsample=1000, n_cores=1):
+	max_seqlets_subsample=1000):
 	patterns = [x.copy() for x in patterns]
 
 	merge_hierarchy_levels = []        
@@ -259,13 +222,18 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 		#Let's subsample 'patterns' to prevent runtime from being too
 		# large in calculating pairwise sims. 
-		subsample_patterns = [
-			(x if x.num_seqlets <= max_seqlets_subsample
-			 else util.subsample_pattern(x, num_to_subsample=max_seqlets_subsample)) for x in patterns]
+		subsample_patterns = []
+		for pattern in patterns:
+			if len(pattern.seqlets) > max_seqlets_subsample:
+				subsample = np.random.RandomState(1234).choice(
+					a=pattern.seqlets, replace=False, size=num_to_subsample)
+				pattern = core.AggregatedSeqlet(seqlets=subsample)
 
-		for i, (pattern1, subsample_pattern1) in enumerate(zip(patterns, subsample_patterns)):
-			for j, (pattern2, subsample_pattern2) in enumerate(
-										zip(patterns, subsample_patterns)):
+			subsample_patterns.append(pattern)
+
+		n = len(patterns)
+		for i in range(n):
+			for j in range(n):
 				#Note: I compute both i,j AND j,i because although
 				# the result is the same for the sim, it can be different
 				# for the auroc because a different motif is getting
@@ -280,41 +248,32 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 				#Compute best alignment between pattern pair
 				alnmt, rc, aligner_sim =\
-					_align_patterns(parent_pattern=pattern1, child_pattern=pattern2, 
+					_align_patterns(parent_pattern=patterns[i], 
+						child_pattern=patterns[j], 
 						metric=affinitymat.pearson_correlation, 
 						min_overlap=min_overlap, 
-						track_names=['task0_contrib_scores'],
-						track_transformer=affinitymat.MagnitudeNormalizer()) 
+						include_hypothetical=False,
+						transformer='magnitude') 
 
 				pairwise_sims[i, j] = aligner_sim
 
 				#get realigned pattern2
-				#pattern2_coords = [x.coor for x in subsample_pattern2.seqlets]
-				pattern2_coords = subsample_pattern2.seqlets
+				pattern2_coords = subsample_patterns[j].seqlets
 				if rc: #flip strand if needed to align
 					pattern2_coords  = [x.revcomp() for x in pattern2_coords]
 
 				#now apply the alignment
-				pattern2_coords = [
-					x.shift((1 if x.is_revcomp else -1)*alnmt)
+				pattern2_coords = [x.shift((1 if x.is_revcomp else -1)*alnmt)
 					for x in pattern2_coords] 
 
 				pattern2_shifted_seqlets = track_set.create_seqlets(
 					seqlets=pattern2_coords)
 
 				pattern1_fwdseqdata, _ =\
-				  core.get_2d_data_from_patterns(
-					patterns=subsample_pattern1.seqlets,
-					track_names=['task0_hypothetical_contribs', 
-						'task0_contrib_scores'] ,
-					track_transformer=affinitymat.L1Normalizer())
+				  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
 
 				pattern2_fwdseqdata, _ =\
-				  core.get_2d_data_from_patterns(
-					patterns=pattern2_shifted_seqlets,
-					track_names=['task0_hypothetical_contribs', 
-						'task0_contrib_scores'] ,
-					track_transformer=affinitymat.L1Normalizer())
+				  util.get_2d_data_from_patterns(pattern2_shifted_seqlets)
 
 				#Flatten, compute continjacc sim at this alignment
 				flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
@@ -342,8 +301,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 		#pairwise_sims is not symmetric; differ based on which pattern is
 		# padded with zeros.
-		patterns_to_patterns_aligner_sim =\
-			0.5*(pairwise_sims + pairwise_sims.T)
+		patterns_to_patterns_aligner_sim = 0.5*(pairwise_sims+pairwise_sims.T)
 		cross_contamination = 2*(1-np.maximum(pairwise_aurocs,0.5))
 
 		indices_to_merge = []
@@ -397,12 +355,12 @@ def SimilarPatternsCollapser(patterns, track_set,
 						merge_partners_so_far[an_idx]=\
 							merge_under_consideration 
 
-		for i,j in indices_to_merge:
+		for i, j in indices_to_merge:
 			pattern1 = patterns[i]
 			pattern2 = patterns[j]
 
 			if pattern1 != pattern2: #if not the same object
-				if pattern1.num_seqlets < pattern2.num_seqlets:
+				if len(pattern1.seqlets) < len(pattern2.seqlets):
 					parent_pattern, child_pattern = pattern2, pattern1
 				else:
 					parent_pattern, child_pattern = pattern1, pattern2
@@ -410,12 +368,11 @@ def SimilarPatternsCollapser(patterns, track_set,
 				new_pattern = merge_in_seqlets_filledges(
 					parent_pattern=parent_pattern,
 					seqlets_to_merge=child_pattern.seqlets,
-					track_names=['task0_contrib_scores'],
+					include_hypothetical=False,
 					metric=affinitymat.pearson_correlation,
 					min_overlap=min_overlap,
-					track_transformer=affinitymat.MagnitudeNormalizer(),
-					track_set=track_set,
-					verbose=verbose)
+					transformer='magnitude',
+					track_set=track_set)
 
 				new_pattern = polish_pattern(new_pattern, min_frac=min_frac, 
 					min_num=min_num, track_set=track_set, flank=flank_to_add, 
@@ -438,7 +395,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 			old_to_new_pattern_mapping = patterns
 
 			#sort by size and remove redundant patterns
-			patterns = sorted(patterns, key=lambda x: -x.num_seqlets)
+			patterns = sorted(patterns, key=lambda x: -len(x.seqlets))
 			patterns = list(OrderedDict([(x,1) for x in patterns]).keys())
 
 			#let's figure out which indices don't require recomputation
@@ -528,7 +485,6 @@ def SimilarPatternsCollapser(patterns, track_set,
 											old_pattern_node) 
 
 							old_pattern_node.parent_node = next_level_node
-						
 
 			current_level_nodes = next_level_nodes
 
