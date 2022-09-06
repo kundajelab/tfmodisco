@@ -238,17 +238,22 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 			filtered_seqlets = seqlets
 			filtered_affmat_nn = fine_affmat_nn
 
+		del coarse_affmat_nn
+		del fine_affmat_nn
+		del seqlets
+
 		# Step 4: Density adaptation
 		csr_density_adapted_affmat = _density_adaptation(
 			filtered_affmat_nn, seqlet_neighbors, tsne_perplexity)
+
+		del filtered_affmat_nn
+		del seqlet_neighbors
 
 		# Step 5: Clustering
 		cluster_results = cluster.LeidenCluster(
 			csr_density_adapted_affmat,
 			n_seeds=n_leiden_runs,
 			n_leiden_iterations=n_leiden_iterations)
-
-		#adwawadwa
 
 		del csr_density_adapted_affmat
 
@@ -268,6 +273,7 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 		seqlets = list(dict([(y.string, y)
 						 for x in motifs for y in x.seqlets]).values())
 
+	del seqlets
 
 	merged_patterns, pattern_merge_hierarchy = aggregator._detect_spurious_merging(
 		patterns=motifs, track_set=track_set, perplexity=subcluster_perplexity, 
@@ -278,7 +284,8 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 		min_frac=frac_support_to_trim_to, min_num=min_num_to_trim_to,
 		flank_to_add=initial_flank_to_add,
 		window_size=trim_to_window_size, bg_freq=bg_freq,
-		max_seqlets_subsample=merging_max_seqlets_subsample)
+		max_seqlets_subsample=merging_max_seqlets_subsample,
+		n_seeds=n_leiden_runs)
 
 	#Now start merging patterns 
 	#merged_patterns, pattern_merge_hierarchy = similar_patterns_collapser(patterns=split_patterns) 
@@ -291,7 +298,8 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 
 	#apply subclustering procedure on the final patterns
 	for patternidx, pattern in enumerate(final_patterns):
-		pattern.compute_subclusters_and_embedding(subcluster_perplexity)
+		pattern.compute_subpatterns(subcluster_perplexity, 
+			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations)
 
 	return {
 		'success': True,

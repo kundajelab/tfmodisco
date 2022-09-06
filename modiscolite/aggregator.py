@@ -170,12 +170,12 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 	min_in_subcluster, min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
-	max_seqlets_subsample=1000):
+	n_seeds, max_seqlets_subsample=1000):
 
 	to_return = []
 	for i, pattern in enumerate(patterns):
 		if len(pattern.seqlets) > min_in_subcluster:
-			pattern.compute_subclusters_and_embedding(perplexity=perplexity)
+			pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds)
 
 			subpatterns = pattern.subcluster_to_subpattern.values()
 			refined_subpatterns = SimilarPatternsCollapser(patterns=subpatterns, 
@@ -226,7 +226,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 		for pattern in patterns:
 			if len(pattern.seqlets) > max_seqlets_subsample:
 				subsample = np.random.RandomState(1234).choice(
-					a=pattern.seqlets, replace=False, size=num_to_subsample)
+					a=pattern.seqlets, replace=False, size=max_seqlets_subsample)
 				pattern = core.AggregatedSeqlet(seqlets=subsample)
 
 			subsample_patterns.append(pattern)

@@ -7,9 +7,7 @@ import igraph as ig
 
 from joblib import Parallel, delayed
 
-def LeidenCluster(affinity_mat, n_seeds=10, n_leiden_iterations=-1, verbose=True):
-    seeds = range(1, n_seeds+1)
-
+def LeidenCluster(affinity_mat, n_seeds=2, n_leiden_iterations=-1):
     n_vertices = affinity_mat.shape[0]
     n_cols = affinity_mat.indptr
     sources = np.concatenate([np.ones(n_cols[i+1] - n_cols[i], dtype='int32') * i for i in range(n_vertices)])
@@ -21,7 +19,7 @@ def LeidenCluster(affinity_mat, n_seeds=10, n_leiden_iterations=-1, verbose=True
     best_clustering = None
     best_quality = None
 
-    for seed in [1, 2]:
+    for seed in range(1, n_seeds+1):
         partition = leidenalg.find_partition(
             graph=g,
             partition_type=leidenalg.ModularityVertexPartition,
@@ -36,9 +34,6 @@ def LeidenCluster(affinity_mat, n_seeds=10, n_leiden_iterations=-1, verbose=True
         if best_quality is None or quality > best_quality:
             best_quality = quality
             best_clustering = membership
-
-            if verbose:
-                print("Quality:",best_quality)
 
     return {
         'cluster_indices': best_clustering,

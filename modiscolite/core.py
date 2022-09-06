@@ -117,7 +117,7 @@ class AggregatedSeqlet():
 		self.subclusters = None
 		self.subcluster_to_subpattern = None
 
-	def compute_subclusters_and_embedding(self, perplexity):
+	def compute_subpatterns(self, perplexity, n_seeds, n_iterations=-1):
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0
 		fwd_seqlet_data, _ = util.get_2d_data_from_patterns(self.seqlets)
@@ -162,7 +162,7 @@ class AggregatedSeqlet():
 
 		#Do Leiden clustering
 		cluster_results = cluster.LeidenCluster(sp_density_adapted_affmat,
-			n_seeds=50, n_leiden_iterations=-1)
+			n_seeds=n_seeds, n_leiden_iterations=n_iterations)
 
 		self.subclusters = cluster_results['cluster_indices']
 
