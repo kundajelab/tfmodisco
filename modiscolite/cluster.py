@@ -1,11 +1,10 @@
-import os
-import re
-import uuid
+# cluster.py
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# adapted from code written by Avanti Shrikumar 
+
 import leidenalg
 import numpy as np
 import igraph as ig
-
-from joblib import Parallel, delayed
 
 def LeidenCluster(affinity_mat, n_seeds=2, n_leiden_iterations=-1):
     n_vertices = affinity_mat.shape[0]
