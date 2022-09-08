@@ -138,6 +138,9 @@ def _plot_weights(array, path, figsize=(10,3), **kwargs):
 	plt.close()
 	
 def make_logo(match, logo_dir, meme_motif_db):
+	if match == 'NA':
+		return
+
 	background = np.array([0.25, 0.25, 0.25, 0.25])
 	ppm = np.loadtxt("{}/{}.pfm".format(meme_motif_db, match), delimiter='\t')
 	ppm = np.transpose(ppm)
@@ -183,8 +186,8 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 
 	return names
 
-def visualize_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
-	top_n_matches=3, trim_threshold=0.3, trim_min_length=3):
+def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
+	suffix='./', top_n_matches=3, trim_threshold=0.3, trim_min_length=3):
 
 	if not os.path.isdir(output_dir + '/trimmed_logos/'):
 		os.mkdir(output_dir + '/trimmed_logos/')
@@ -196,8 +199,8 @@ def visualize_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 		top_n_matches=top_n_matches, tomtom_exec="tomtom", 
 		trim_threshold=trim_threshold, trim_min_length=trim_min_length)
 
-	tomtom_df['modisco_cwm_fwd'] = ['{}trimmed_logos/{}.cwm.fwd.png'.format(output_dir, name) for name in names]
-	tomtom_df['modisco_cwm_rev'] = ['{}trimmed_logos/{}.cwm.rev.png'.format(output_dir, name) for name in names]
+	tomtom_df['modisco_cwm_fwd'] = ['{}trimmed_logos/{}.cwm.fwd.png'.format(suffix, name) for name in names]
+	tomtom_df['modisco_cwm_rev'] = ['{}trimmed_logos/{}.cwm.rev.png'.format(suffix, name) for name in names]
 
 	reordered_columns = ['pattern', 'num_seqlets', 'modisco_cwm_fwd', 'modisco_cwm_rev']
 	for i in range(top_n_matches):
@@ -206,8 +209,11 @@ def visualize_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 
 		for index, row in tomtom_df.iterrows():
 			if name in tomtom_df.columns:
-				make_logo(row[name], output_dir, meme_motif_dir)
-				logos.append("{}{}.png".format(output_dir, row[name]))
+				if pandas.isnull(row[name]):
+					logos.append("NA")
+				else:
+					make_logo(row[name], output_dir, meme_motif_dir)
+					logos.append("{}{}.png".format(suffix, row[name]))
 			else:
 				break
 
