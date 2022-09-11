@@ -6,3 +6,4 @@ from . import gapped_kmer
 from . import util
 from . import tfmodisco
 from . import cluster
+from . import report

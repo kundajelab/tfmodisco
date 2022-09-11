@@ -132,7 +132,7 @@ def _plot_weights(array, path, figsize=(10,3), **kwargs):
 
 	crp_logo = logomaker.Logo(df, ax=ax, font_name='Arial Rounded')
 	crp_logo.style_spines(visible=False)
-	plt.ylim(0, df.max().max())
+	plt.ylim(min(df.sum().min(), 0), df.sum().max())
 
 	plt.savefig(path)
 	plt.close()
@@ -188,6 +188,9 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 
 def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 	suffix='./', top_n_matches=3, trim_threshold=0.3, trim_min_length=3):
+
+	if not os.path.isdir(output_dir):
+		os.mkdir(output_dir)
 
 	if not os.path.isdir(output_dir + '/trimmed_logos/'):
 		os.mkdir(output_dir + '/trimmed_logos/')
