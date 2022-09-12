@@ -6,7 +6,7 @@ The outputs of TF-MoDISco are motifs that summarize repeated patterns with high 
 
 ![image](https://user-images.githubusercontent.com/3916816/189726765-47e043c5-c942-4547-9b69-bfc8b5ba3131.png)
 
-tfmodisco-lite is a lightweight version of the original [tfmodisco](https://github.com/kundajelab/tfmodisco) implementation, which takes significantly less memory, runs faster, and is significantly less code, making it easier to understand. This rewrite is an exact reimplementation (except for one minor fix) and so should be able to be used as a drop-in replacement for existing tfmodisco pipelines. 
+tfmodisco-lite is a lightweight version of the original [tfmodisco](https://github.com/kundajelab/tfmodisco) implementation, which takes significantly less memory, (sometimes) runs faster, and is significantly less code, making it easier to understand. This rewrite is an exact reimplementation (except for one minor fix) and so should be able to be used as a drop-in replacement for existing tfmodisco pipelines. 
 
 ### Installation
 
