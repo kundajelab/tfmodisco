@@ -266,6 +266,10 @@ def SimilarPatternsCollapser(patterns, track_set,
 				pattern2_coords = [x.shift((1 if x.is_revcomp else -1)*alnmt)
 					for x in pattern2_coords] 
 
+				# Filter out bad seqlets
+				pattern2_coords = [seqlet for seqlet in pattern2_coords 
+					if seqlet.start >= 0 and seqlet.end < track_set.length]
+
 				pattern2_shifted_seqlets = track_set.create_seqlets(
 					seqlets=pattern2_coords)
 
@@ -280,7 +284,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 					(len(pattern1_fwdseqdata), -1))
 				flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
 					(len(pattern2_fwdseqdata), -1))
-			
+
 				between_pattern_sims = affinitymat.jaccard(
 					flat_pattern1_fwdseqdata[:, :, None], 
 					flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()

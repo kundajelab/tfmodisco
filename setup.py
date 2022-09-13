@@ -1,8 +1,8 @@
 from setuptools import setup
 
 setup(
-	name='modiscolite',
-	version='0.0.5',
+	name='modisco-lite',
+	version='0.0.6',
 	author='Jacob Schreiber',
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
