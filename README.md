@@ -10,7 +10,7 @@ tfmodisco-lite is a lightweight version of the original [tfmodisco](https://gith
 
 ### Installation
 
-You can install tfmodisco-lite using `pip install modiscolite`
+You can install tfmodisco-lite using `pip install modisco-lite`
 
 ### Command Line Tools
 
