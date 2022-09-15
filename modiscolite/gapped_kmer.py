@@ -14,8 +14,8 @@ value_type = numba.types.float64
 @njit(parallel=True)
 def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 	nx = X.shape[0]
-	keys = np.zeros((nx, max_entries), dtype='int64') - 1
-	scores = np.zeros((nx, max_entries), dtype='float64') - 1.0
+	keys = np.zeros((nx, max_entries), dtype='int64')
+	scores = np.zeros((nx, max_entries), dtype='float64')
 
 	for xi in prange(nx):
 		n = X.shape[1]
@@ -74,7 +74,6 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 						if k >= min_k:
 							gkmer_attrs[new_gkmer_hash] = gkmer_attrs.get(new_gkmer_hash, 0) + new_gkmer_attr / k
 
-
 				if len(gkmers_) == 0:
 					last_k_gkmers[j] = np.zeros(0, dtype='int32')
 					last_k_gkmers_attrs[j] = np.zeros(0, dtype='float64')
@@ -83,7 +82,6 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 					last_k_gkmers[j] = np.array(gkmers_, dtype='int32')
 					last_k_gkmers_attrs[j] = np.array(gkmer_attrs_, dtype='float64')
 					last_k_gkmers_hashes[j] = np.array(gkmer_hashes_, dtype='int64')
-
 		
 		ny = len(gkmer_attrs)
 		keys_ = np.empty(ny, dtype='int64')
@@ -99,8 +97,6 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 		scores[xi] = scores_[idxs]
 
 	return keys, scores
-
-
 
 def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len, 
 	max_entries, take_fwd, sign):
@@ -126,9 +122,8 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 		Xs.append(X_)
 
 	X = np.array(Xs)
-	keys, scores = _extract_gkmers(X, min_k=min_k, 
-		max_k=max_k, max_gap=max_gap, max_len=max_len, max_entries=max_entries)
-
+	keys, scores = _extract_gkmers(X, min_k=min_k, max_k=max_k, 
+		max_gap=max_gap, max_len=max_len, max_entries=max_entries)
 
 	row_idxs = np.repeat(range(keys.shape[0]), keys.shape[1])
 	csr_mat = scipy.sparse.csr_matrix((scores.flatten(), 

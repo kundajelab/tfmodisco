@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
 	name='modisco-lite',
-	version='0.0.6',
+	version='0.0.8',
 	author='Jacob Schreiber',
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
@@ -18,5 +18,9 @@ setup(
 		'leidenalg == 0.8.10',
 		'igraph == 0.9.11',
 		'tqdm >= 4.38.0',
+		'pandas >= 1.4.3',
+		'logomaker >= 0.8',
+		'h5py >= 3.7.0',
+		'hdf5plugin'
 	]
 )

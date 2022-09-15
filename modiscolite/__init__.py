@@ -7,3 +7,5 @@ from . import util
 from . import tfmodisco
 from . import cluster
 from . import report
+
+__version__ = '0.0.8'
