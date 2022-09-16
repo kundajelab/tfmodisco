@@ -56,8 +56,6 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 
 	affmat_diags = scipy.sparse.diags(1.0 / normfactors)
 	affmat_nn += affmat_diags
-
-
 	return affmat_nn
 
 def _filter_patterns(patterns, min_seqlet_support, window_size, 
@@ -117,8 +115,9 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 			min_num=min_num, track_set=track_set, flank=flank_to_add, 
 			window_size=window_size, bg_freq=bg_freq)
 
-		if np.sign(np.sum(pattern.contrib_scores)) == track_sign:
-			cluster_to_motif.append(pattern)
+		if pattern is not None:
+			if np.sign(np.sum(pattern.contrib_scores)) == track_sign:
+				cluster_to_motif.append(pattern)
 
 	return cluster_to_motif
 

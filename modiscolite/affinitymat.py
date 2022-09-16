@@ -240,8 +240,12 @@ class NNTsneConditionalProbs():
 		conditional_P = sklearn.manifold._utils._binary_search_perplexity(
 			distances, self.perplexity, verbose=False)
 
+		eps = 1e-8
+		marginal_sum = conditional_P.sum(axis=-1)
+		marginal_sum[marginal_sum < eps] = eps
+
 		#normalize the conditional_P to sum to 1 across the rows
-		conditional_P = conditional_P/np.sum(conditional_P, axis=-1)[:,None]
+		conditional_P = conditional_P / marginal_sum[:,None]
 
 		data = []
 		rows = []

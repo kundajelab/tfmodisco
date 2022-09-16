@@ -19,6 +19,9 @@ def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg
 		track_set=track_set, left_flank_to_add=flank,
 		right_flank_to_add=flank)
 
+	if pattern is None:
+		return None
+
 	# Trim by IC
 	ppm = pattern.sequence
 	per_pos_ic = util.compute_per_position_ic(
@@ -382,13 +385,14 @@ def SimilarPatternsCollapser(patterns, track_set,
 					min_num=min_num, track_set=track_set, flank=flank_to_add, 
 					window_size=window_size, bg_freq=bg_freq)
 
-				for k in range(len(patterns)):
-					#Replace EVERY case where the parent or child
-					# pattern is present with the new pattern. This
-					# effectively does single-linkage.
-					if (patterns[k]==parent_pattern or
-						patterns[k]==child_pattern):
-						patterns[k]=new_pattern
+				if new_pattern is not None:
+					for k in range(len(patterns)):
+						#Replace EVERY case where the parent or child
+						# pattern is present with the new pattern. This
+						# effectively does single-linkage.
+						if (patterns[k]==parent_pattern or
+							patterns[k]==child_pattern):
+							patterns[k]=new_pattern
 
 		merge_occurred_last_iteration = (len(indices_to_merge) > 0)
 

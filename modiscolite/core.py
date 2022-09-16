@@ -140,7 +140,6 @@ class AggregatedSeqlet():
 		distmat_nn = np.log((1.0/(0.5*np.maximum(affmat_nn, 0.0000001)))-1)
 		distmat_nn = np.maximum(distmat_nn, 0.0) #eliminate tiny neg floats
 
-
 		distmat_sp = scipy.sparse.coo_matrix(
 				(np.concatenate(distmat_nn, axis=0),
 				 (np.array([i for i in range(len(seqlet_neighbors))
@@ -151,11 +150,8 @@ class AggregatedSeqlet():
 		distmat_sp.sort_indices()
 
 		#do density adaptation
-		density_adapted_affmat_transformer =\
-			affinitymat.NNTsneConditionalProbs(
-				perplexity=perplexity)
-		sp_density_adapted_affmat = density_adapted_affmat_transformer(
-										affmat_nn, seqlet_neighbors)
+		sp_density_adapted_affmat = affinitymat.NNTsneConditionalProbs(
+				perplexity=perplexity)(affmat_nn, seqlet_neighbors)
 
 		sp_density_adapted_affmat += sp_density_adapted_affmat.T
 		sp_density_adapted_affmat /= np.sum(sp_density_adapted_affmat.data)
