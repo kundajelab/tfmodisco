@@ -100,7 +100,7 @@ def save_seqlet_coords(seqlets, dset_name, grp):
 	save_string_list(string_list=coords_strings,
 					 dset_name=dset_name, grp=grp)
 
-def motif_discovery_main(sequences, attributions, output, max_seqlets):
+def motif_discovery_main(sequences, attributions, output, max_seqlets, n_leiden_runs):
 	(multitask_seqlet_creation_results, metaclustering_results, 
 		metacluster_idx_to_submetacluster_results) = modiscolite.tfmodisco.TFMoDISco(
 		hypothetical_contribs=attributions, one_hot=sequences,
@@ -108,7 +108,7 @@ def motif_discovery_main(sequences, attributions, output, max_seqlets):
 		sliding_window_size=20,
 		flank_size=5,
 		target_seqlet_fdr=0.05,
-		n_leiden_runs=2)
+		n_leiden_runs=n_leiden_runs)
 
 	########
 	### Ugly saving code
@@ -213,6 +213,8 @@ motifs_parser.add_argument("-i", "--h5py", type=str,
 	help="A legacy h5py file containing the one-hot encoded sequences and shap scores.")
 motifs_parser.add_argument("-n", "--max_seqlets", type=int, required=True,
 	help="The maximum number of seqlets per metacluster.")
+motifs_parser.add_argument("-l", "--n_leiden", type=int, default=2,
+	help="The number of Leiden clusterings to perform with different random seeds.")
 motifs_parser.add_argument("-w", "--window", type=int, default=400,
 	help="The window surrounding the peak center that will be considered for motif discovery.")
 motifs_parser.add_argument("-o", "--output", type=str, default="modisco_results.h5",
@@ -277,7 +279,7 @@ if args.cmd == "motifs":
 		attributions = attributions[:, :, start:end].transpose(0, 2, 1)
 
 	motif_discovery_main(sequences, attributions, args.output, 
-		args.max_seqlets)
+		args.max_seqlets, args.n_leiden)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, suffix=args.suffix, 

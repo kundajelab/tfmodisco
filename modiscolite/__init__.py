@@ -8,4 +8,4 @@ from . import tfmodisco
 from . import cluster
 from . import report
 
-__version__ = '0.0.9'
+__version__ = '1.0.0'

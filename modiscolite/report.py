@@ -55,6 +55,7 @@ def fetch_tomtom_matches(ppm, cwm, motifs_db,
 	"""
 
 	_, fname = tempfile.mkstemp()
+	_, tomtom_fname = tempfile.mkstemp()
 
 	score = np.sum(np.abs(cwm), axis=1)
 	trim_thresh = np.max(score) * trim_threshold  # Cut off anything less than 30% of max score
@@ -69,11 +70,11 @@ def fetch_tomtom_matches(ppm, cwm, motifs_db,
 	write_meme_file(trimmed, background, fname)
 
 	# run tomtom
-	cmd = '%s -no-ssc -oc . --verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s > .tomtom.tmp' % (tomtom_exec_path, fname, motifs_db)
+	cmd = '%s -no-ssc -oc . --verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s > %s' % (tomtom_exec_path, fname, motifs_db, tomtom_fname)
 
 	os.system(cmd)
-	tomtom_results = pandas.read_csv(".tomtom.tmp", sep="\t", usecols=(1, 5))
-	os.system("rm .tomtom.tmp")
+	tomtom_results = pandas.read_csv(tomtom_fname, sep="\t", usecols=(1, 5))
+	os.system('rm ' + tomtom_fname)
 	os.system('rm ' + fname)
 	return tomtom_results
 
