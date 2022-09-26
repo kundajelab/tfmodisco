@@ -112,8 +112,8 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 
 		#get the top n positiosn
 		per_pos_imp = np.sum(contrib_scores, axis=-1)
-		per_pos_bases = np.argmax(contrib_scores, axis=-1)
-		#per_pos_bases = np.argmax(onehot, axis=-1) # <- THIS IS CORRECT BUT KEEP COMMENTED
+		#per_pos_bases = np.argmax(contrib_scores, axis=-1)
+		per_pos_bases = np.argmax(onehot, axis=-1) # <- THIS IS CORRECT BUT KEEP COMMENTED
 		#get the top n positions
 		topn_pos = np.argsort(-per_pos_imp)[:topn]
 
