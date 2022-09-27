@@ -10,7 +10,6 @@ import numpy as np
 import scipy
 from scipy.sparse import coo_matrix
 
-from tqdm import tqdm
 from numba import njit
 from numba import prange
 
@@ -44,17 +43,26 @@ def _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, 
 
 	return dot
 
-@njit('double[:](float64[:], int64[:], int64[:], float64[:], int64[:], int64[:], int64)', parallel=True)
-def _sparse_vm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i):
+@njit(parallel=True)
+def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
 	n_rows = len(Y_indptr) - 1
-	dot = np.zeros(n_rows, dtype='float64')
 
-	for j in prange(n_rows):
-		xdot = _sparse_vv_dot(X_data, X_indices, X_indptr, X_data, X_indices, X_indptr, i, j)
-		ydot = _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, j)
-		dot[j] = max(xdot, ydot) 
+	neighbors = np.empty((n_rows, k), dtype='int32')
+	sims = np.empty((n_rows, k), dtype='float64')
 
-	return dot
+	for i in prange(n_rows):
+		dot = np.zeros(n_rows, dtype='float64')
+
+		for j in range(n_rows):
+			xdot = _sparse_vv_dot(X_data, X_indices, X_indptr, X_data, X_indices, X_indptr, i, j)
+			ydot = _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, j)
+			dot[j] = max(xdot, ydot)
+
+		dot_argsort = np.argsort(-dot, kind='mergesort')[:k]
+		neighbors[i] = dot_argsort
+		sims[i] = dot[dot_argsort]
+
+	return sims, neighbors
 
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
 	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
@@ -71,18 +79,7 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 
 	n, d = X.shape
 	k = min(n_neighbors+1, n)
-
-	sims = np.empty((n, k), dtype='float64')
-	neighbors = np.empty((n, k), dtype='int32')
-
-	for i in tqdm(range(n)):
-		dotprod = _sparse_vm_dot(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr, i)
-		dotprod_argsort = np.argsort(-dotprod, kind='quicksort') 
-
-		neighbors[i] = dotprod_argsort[:k] 
-		sims[i] = dotprod[dotprod_argsort[:k]]
-
-	return sims, neighbors
+	return _sparse_mm_dot(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr, k)
 
 
 def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, 
@@ -148,6 +145,42 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 		results[i, :, 1] = argmaxs[i] - n_pad
 
 	return results
+
+@njit(parallel=True)
+def pairwise_jaccard(X, k):
+	n, m = X.shape
+
+	jaccards = np.empty((n, k), dtype='float64')
+	neighbors = np.empty((n, k), dtype='int32')
+
+	for i in prange(n):
+		jaccard_ = np.empty(n, dtype='float64')
+
+		for j in range(n):
+			min_sum = 0.0
+			max_sum = 0.0
+
+			for l in range(m):
+				sign = np.sign(X[i, l]) * np.sign(X[j, l])
+				xi = abs(X[i, l])
+				xj = abs(X[j, l])
+
+				if xi > xj:
+					min_sum += xj * sign
+					max_sum += xi
+				else:
+					min_sum += xi * sign
+					max_sum += xj 
+
+			jaccard_[j] = min_sum / max_sum
+
+		idxs = np.argsort(-jaccard_, kind='mergesort')[:k]
+
+		jaccards[i] = jaccard_[idxs]
+		neighbors[i] = idxs
+
+	return jaccards, neighbors
+
 
 @njit('void(float32[:, :, :], float32[:, :, :], int32[:, :], float32[:, :, :])', parallel=True)
 def _jaccard(X, Y, neighbors, scores):

@@ -120,23 +120,14 @@ class AggregatedSeqlet():
 	def compute_subpatterns(self, perplexity, n_seeds, n_iterations=-1):
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0
-		fwd_seqlet_data, _ = util.get_2d_data_from_patterns(self.seqlets)
-		fwd_seqlet_data_vectors = fwd_seqlet_data.reshape(len(fwd_seqlet_data), -1)
+		X = util.get_2d_data_from_patterns(self.seqlets)[0]
+		X = X.reshape(len(X), -1)
 	
-		n_neighb = min(int(perplexity*3 + 2), len(fwd_seqlet_data_vectors))
+		n = len(X)
+		n_neighb = min(int(perplexity*3 + 2), len(X))
 
-		affmat_nn = []
-		seqlet_neighbors = []
-		for x in fwd_seqlet_data_vectors:
-			affmat = affinitymat.jaccard(X=x[None, :, None], 
-				Y=fwd_seqlet_data_vectors[:, :, None])[:, 0, 0]
-			
-			neighbors = np.argsort(-affmat)[:n_neighb]
+		affmat_nn, seqlet_neighbors = affinitymat.pairwise_jaccard(X, n_neighb)
 
-			affmat_nn.append(affmat[neighbors])
-			seqlet_neighbors.append(neighbors)
-
-		affmat_nn = np.array(affmat_nn)
 		distmat_nn = np.log((1.0/(0.5*np.maximum(affmat_nn, 0.0000001)))-1)
 		distmat_nn = np.maximum(distmat_nn, 0.0) #eliminate tiny neg floats
 
