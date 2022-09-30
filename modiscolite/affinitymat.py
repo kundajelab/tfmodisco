@@ -130,6 +130,7 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	X = X.astype('float32')
 	Y = Y.astype('float32')
+
 	seqlet_neighbors = seqlet_neighbors.astype('int32')
 	scores = np.zeros((Y.shape[0], seqlet_neighbors.shape[1], len_output), dtype='float32')
 	_jaccard(X, Y, seqlet_neighbors, scores)

@@ -188,8 +188,7 @@ def extract_seqlets(attribution_scores, window_size, flank, suppress,
 	smoothed_tracks[:, :flank] = -np.inf
 	smoothed_tracks[:, -flank:] = -np.inf
 
-	seqlets = _iterative_extract_seqlets(
-		score_track=smoothed_tracks,
+	seqlets = _iterative_extract_seqlets(score_track=smoothed_tracks,
 		window_size=window_size,
 		flank=flank,
 		suppress=suppress)
@@ -201,7 +200,4 @@ def extract_seqlets(attribution_scores, window_size, flank, suppress,
 
 	threshold = distribution[int(weak_thresh * len(distribution))]
 
-	return {
-		'seqlets': seqlets,
-		'threshold': threshold
-	}
+	return seqlets, threshold

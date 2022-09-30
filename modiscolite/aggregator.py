@@ -62,7 +62,7 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 			new_seqlets.append(seqlet)
 
 	if len(new_seqlets) > 0:
-		return core.AggregatedSeqlet(seqlets=new_seqlets)
+		return core.SeqletSet(seqlets=new_seqlets)
 	else:
 		return None
 
@@ -230,7 +230,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 			if len(pattern.seqlets) > max_seqlets_subsample:
 				subsample = np.random.RandomState(1234).choice(
 					a=pattern.seqlets, replace=False, size=max_seqlets_subsample)
-				pattern = core.AggregatedSeqlet(seqlets=subsample)
+				pattern = core.SeqletSet(seqlets=subsample)
 
 			subsample_patterns.append(pattern)
 

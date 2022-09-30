@@ -1,4 +1,5 @@
 import os
+import pickle
 import h5py
 import pandas
 import tempfile
@@ -88,25 +89,23 @@ def run_tomtom(modisco_h5py, output_prefix, meme_motif_db, top_n_matches=3,
 		tomtom_results['match{}'.format(i)] = []
 		tomtom_results['qval{}'.format(i)] = []
 
-	for metacluster_name in modisco_results['metacluster_idx_to_submetacluster_results']:
-		metacluster = modisco_results['metacluster_idx_to_submetacluster_results'][metacluster_name]
-		if "patterns" not in metacluster["seqlets_to_patterns_result"].keys():
+	for name in ['pos_patterns', 'neg_patterns']:
+		if name not in modisco_results.keys():
 			continue
 
-		all_pattern_names = [x.decode("utf-8") for x in list(metacluster["seqlets_to_patterns_result"]["patterns"]["all_pattern_names"][:])]
+		metacluster = modisco_results[name]
+		for pattern_name, pattern in metacluster.items():
+			ppm = np.array(pattern['sequence'][:])
+			cwm = np.array(pattern["contrib_scores"][:])
 
-		for pattern_name in all_pattern_names:
-			ppm = np.array(metacluster['seqlets_to_patterns_result']['patterns'][pattern_name]['sequence']['fwd'])
-			cwm = np.array(metacluster['seqlets_to_patterns_result']['patterns'][pattern_name]["task0_contrib_scores"]['fwd'])
-
-			num_seqlets = len(metacluster['seqlets_to_patterns_result']['patterns'][pattern_name]['seqlets_and_alnmts']['seqlets'])
-			name = '{}.{}'.format(metacluster_name, pattern_name)
+			num_seqlets = pattern['seqlets']['n_seqlets'][:][0]
+			tag = '{}.{}'.format(name, pattern_name)
 
 			r = fetch_tomtom_matches(ppm, cwm, motifs_db=meme_motif_db,
 				tomtom_exec_path=tomtom_exec, trim_threshold=trim_threshold,
 				trim_min_length=trim_min_length)
 
-			tomtom_results['pattern'].append(name)
+			tomtom_results['pattern'].append(tag)
 			tomtom_results['num_seqlets'].append(num_seqlets)
 
 			for i, (target, qval) in r.iloc[:top_n_matches].iterrows():
@@ -133,7 +132,7 @@ def _plot_weights(array, path, figsize=(10,3), **kwargs):
 
 	crp_logo = logomaker.Logo(df, ax=ax, font_name='Arial Rounded')
 	crp_logo.style_spines(visible=False)
-	plt.ylim(min(df.sum().min(), 0), df.sum().max())
+	plt.ylim(min(df.sum(axis=1).min(), 0), df.sum(axis=1).max())
 
 	plt.savefig(path)
 	plt.close()
@@ -151,21 +150,20 @@ def make_logo(match, logo_dir, meme_motif_db):
 		
 
 def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
-	hdf5_results = h5py.File(modisco_file, 'r')
+	results = h5py.File(modisco_file, 'r')
 	names = []
 
-	for metacluster_name in hdf5_results["metacluster_idx_to_submetacluster_results"]:
-		metacluster = hdf5_results["metacluster_idx_to_submetacluster_results"][metacluster_name]
-		if "patterns" not in metacluster["seqlets_to_patterns_result"].keys():
+	for name in ["pos_patterns", "neg_patterns"]:
+		if name not in results.keys():
 			continue
 
-		all_pattern_names = [x.decode("utf-8") for x in list(metacluster["seqlets_to_patterns_result"]["patterns"]["all_pattern_names"][:])]
-		for pattern_name in all_pattern_names:
-			name = '{}.{}'.format(metacluster_name, pattern_name)
+		metacluster = results[name]
+		for pattern_name, pattern in metacluster.items():
+			name = '{}.{}'.format(name, pattern_name)
 			names.append(name)
 
-			cwm_fwd = np.array(metacluster['seqlets_to_patterns_result']['patterns'][pattern_name]['task0_contrib_scores']['fwd'])
-			cwm_rev = np.array(metacluster['seqlets_to_patterns_result']['patterns'][pattern_name]['task0_contrib_scores']['rev'])
+			cwm_fwd = np.array(pattern['contrib_scores'][:])
+			cwm_rev = cwm_fwd[::-1, ::-1]
 
 			score_fwd = np.sum(np.abs(cwm_fwd), axis=1)
 			score_rev = np.sum(np.abs(cwm_rev), axis=1)

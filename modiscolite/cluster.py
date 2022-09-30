@@ -34,8 +34,4 @@ def LeidenCluster(affinity_mat, n_seeds=2, n_leiden_iterations=-1):
             best_quality = quality
             best_clustering = membership
 
-    return {
-        'cluster_indices': best_clustering,
-        'quality': best_quality
-    }
-
+    return best_clustering

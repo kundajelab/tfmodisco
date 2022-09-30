@@ -2,6 +2,8 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+import pickle
+
 import numpy as np
 import scipy.sparse
 
@@ -94,7 +96,7 @@ class Seqlet(object):
 		return new_seqlet
 
 
-class AggregatedSeqlet():
+class SeqletSet():
 	def __init__(self, seqlets):
 		self.seqlets = []
 		self.unique_seqlets = {}
@@ -148,10 +150,8 @@ class AggregatedSeqlet():
 		sp_density_adapted_affmat /= np.sum(sp_density_adapted_affmat.data)
 
 		#Do Leiden clustering
-		cluster_results = cluster.LeidenCluster(sp_density_adapted_affmat,
-			n_seeds=n_seeds, n_leiden_iterations=n_iterations)
-
-		self.subclusters = cluster_results['cluster_indices']
+		self.subclusters = cluster.LeidenCluster(sp_density_adapted_affmat,
+			n_seeds=n_seeds, n_leiden_iterations=n_iterations) 
 
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0
@@ -163,7 +163,7 @@ class AggregatedSeqlet():
 			subcluster_to_seqletsandalignments[subcluster].append(seqlet)
 
 		subcluster_to_subpattern = OrderedDict([
-			(subcluster, AggregatedSeqlet(seqletsandalignments))
+			(subcluster, SeqletSet(seqletsandalignments))
 			for subcluster,seqletsandalignments in
 			subcluster_to_seqletsandalignments.items()])
 
@@ -174,7 +174,7 @@ class AggregatedSeqlet():
 				   key=lambda x: -len(x[1].seqlets)))
 
 	def copy(self):
-		return AggregatedSeqlet(seqlets=[seqlet for seqlet in self.seqlets])
+		return SeqletSet(seqlets=[seqlet for seqlet in self.seqlets])
 
 	def trim_to_support(self, min_frac, min_num):
 		max_support = max(self.per_position_counts)
@@ -190,13 +190,12 @@ class AggregatedSeqlet():
 		
 		return self.trim_to_idx(start_idx=left_idx, end_idx=right_idx) 
 
-
 	def trim_to_idx(self, start_idx, end_idx):
 		new_seqlets = []
 		for seqlet in self.seqlets:
 				new_seqlet = seqlet.trim(start_idx=start_idx, end_idx=end_idx)
 				new_seqlets.append(new_seqlet)
-		return AggregatedSeqlet(seqlets=new_seqlets)
+		return SeqletSet(seqlets=new_seqlets)
 
 	def _add_seqlet(self, seqlet):
 		n = len(seqlet)
@@ -218,3 +217,14 @@ class AggregatedSeqlet():
 
 	def __len__(self):
 		return self.length
+
+	def save_seqlets(self, filename):
+		bases = np.array(['A', 'C', 'G', 'T'])
+
+		with open(filename, "w") as outfile:
+			for seqlet in self.seqlets:
+				sequence = "".join(bases[np.argmax(seqlet.sequence, axis=-1)])
+				example_index = seqlet.example_idx
+				start, end = seqlet.start, seqlet.end
+				outfile.write(">example%d:%d-%d\n" % (example_index, start, end))
+				outfile.write(sequence + "\n")

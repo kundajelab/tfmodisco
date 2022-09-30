@@ -34,7 +34,7 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	affmat_nn.eliminate_zeros()
 
 	counts_nn = scipy.sparse.csr_matrix((np.ones_like(affmat_nn.data), 
-		affmat_nn.indices, affmat_nn.indptr), shape=affmat_nn.shape, dtype='float32')
+		affmat_nn.indices, affmat_nn.indptr), shape=affmat_nn.shape, dtype='float64')
 
 	affmat_nn += affmat_nn.T
 	counts_nn += counts_nn.T
@@ -58,21 +58,20 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	affmat_nn += affmat_diags
 	return affmat_nn
 
+
 def _filter_patterns(patterns, min_seqlet_support, window_size, 
 	min_ic_in_window, background, ppm_pseudocount):
-	passing_patterns, filtered_patterns = [], []
+	passing_patterns = []
 	for pattern in patterns:
 		if len(pattern.seqlets) < min_seqlet_support:
-			filtered_patterns.append(pattern)
 			continue
 
 		ppm = pattern.sequence
-		per_position_ic = util.compute_per_position_ic(
-			ppm=ppm, background=background, pseudocount=ppm_pseudocount)
+		per_position_ic = util.compute_per_position_ic(ppm=ppm, 
+			background=background, pseudocount=ppm_pseudocount)
 
 		if len(per_position_ic) < window_size:       
 			if np.sum(per_position_ic) < min_ic_in_window:
-				filtered_patterns.append(pattern)
 				continue
 		else:
 			#do the sliding window sum rearrangement
@@ -80,15 +79,14 @@ def _filter_patterns(patterns, min_seqlet_support, window_size,
 				a=per_position_ic, window=window_size), axis=-1)
 
 			if np.max(windowed_ic) < min_ic_in_window:
-				filtered_patterns.append(pattern)
 				continue
 
 		passing_patterns.append(pattern)
 
-	return passing_patterns, filtered_patterns
+	return passing_patterns
 
 
-def _motif_from_clusters(seqlets, track_set, min_overlap,
+def _patterns_from_clusters(seqlets, track_set, min_overlap,
 	min_frac, min_num, flank_to_add, window_size, bg_freq, cluster_indices, 
 	track_sign):
 
@@ -96,14 +94,13 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 	num_clusters = max(cluster_indices+1)
 	cluster_to_seqlets = defaultdict(list) 
 
-	for seqlet,idx in zip(seqlets, cluster_indices):
+	for seqlet, idx in zip(seqlets, cluster_indices):
 		cluster_to_seqlets[idx].append(seqlet)
 
-	cluster_to_motif = []
-
+	patterns = []
 	for i in range(num_clusters):
 		sorted_seqlets = sorted(cluster_to_seqlets[i], key=seqlet_sort_metric) 
-		pattern = core.AggregatedSeqlet([sorted_seqlets[0]])
+		pattern = core.SeqletSet([sorted_seqlets[0]])
 
 		if len(sorted_seqlets) > 1:
 			pattern = aggregator.merge_in_seqlets_filledges(
@@ -117,9 +114,9 @@ def _motif_from_clusters(seqlets, track_set, min_overlap,
 
 		if pattern is not None:
 			if np.sign(np.sum(pattern.contrib_scores)) == track_sign:
-				cluster_to_motif.append(pattern)
+				patterns.append(pattern)
 
-	return cluster_to_motif
+	return patterns
 
 
 def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn, 
@@ -156,23 +153,7 @@ def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn,
 	return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
 
 
-def _extract_seqlet_data(one_hot_sequence, contrib_scores, hypothetical_contribs, seqlets):
-	X_ohe = []
-	X_contrib = []
-	X_hypo_contrib = []
-
-	for seqlet in seqlets:
-		idx = seqlet.example_idx
-		start, end = seqlet.start, seqlet.end
-
-		X_ohe.append(one_hot_sequence[idx][start:end])
-		X_contrib.append(contrib_scores[idx][start:end])
-		X_hypo_contrib.append(hypothetical_contribs[idx][start:end])
-
-	return X_ohe, X_contrib, X_hypo_contrib
-
-def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores, 
-	hypothetical_contribs, track_set, track_signs=None, 
+def seqlets_to_patterns(seqlets, track_set, track_signs=None, 
 	min_overlap_while_sliding=0.7, nearest_neighbors_to_compute=500, 
 	affmat_correlation_threshold=0.15, tsne_perplexity=10.0, 
 	n_leiden_iterations=-1, n_leiden_runs=50, frac_support_to_trim_to=0.2,
@@ -183,41 +164,16 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 	final_min_cluster_size=20,min_ic_in_window=0.6, min_ic_windowsize=6,
 	ppm_pseudocount=0.001):
 
-	X_ohe, X_contrib, X_hypo_contrib = _extract_seqlet_data(one_hot_sequence, 
-		contrib_scores, hypothetical_contribs, seqlets)
-
-	bg_freq = np.mean(X_ohe, axis=(0,1))
-	del X_ohe, X_contrib, X_hypo_contrib
-
-	other_config={
-			 'onehot_track_name': "sequence",
-			 'contrib_scores_track_names': ["task0_contrib_scores"],
-			 'hypothetical_contribs_track_names':["task0_hypothetical_contribs"],
-			 'track_signs': [track_signs], 
-			 'other_comparison_track_names': []
-	}
+	bg_freq = np.mean([seqlet.sequence for seqlet in seqlets], axis=(0, 1)) 
 
 	seqlets_sorter = (lambda arr: sorted(arr, key=lambda x:
 		-np.sum(np.abs(x.contrib_scores))))
 
 	seqlets = seqlets_sorter(seqlets)
 
-	failure = {
-				'each_round_initcluster_motifs': None,
-				'patterns': None,
-				'remaining_patterns': None,
-				'pattern_merge_hierarchy': None,
-				'cluster_results': None, 
-				'total_time_taken': None,
-				'success': False,
-				'seqlets': None,
-				'affmat': None,
-				'other_config': other_config
-	}
-
-	for round_idx in range(2):			
+	for round_idx in range(2):
 		if len(seqlets) == 0:
-			return failure
+			return None
 
 		# Step 1: Generate coarse resolution
 		coarse_affmat_nn, seqlet_neighbors = affinitymat.cosine_similarity_from_seqlets(
@@ -249,14 +205,14 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 		del seqlet_neighbors
 
 		# Step 5: Clustering
-		cluster_results = cluster.LeidenCluster(
+		cluster_indices = cluster.LeidenCluster(
 			csr_density_adapted_affmat,
 			n_seeds=n_leiden_runs,
 			n_leiden_iterations=n_leiden_iterations)
 
 		del csr_density_adapted_affmat
 
-		motifs = _motif_from_clusters(filtered_seqlets, 
+		patterns = _patterns_from_clusters(filtered_seqlets, 
 			track_set=track_set, 
 			min_overlap=min_overlap_while_sliding, 
 			min_frac=frac_support_to_trim_to, 
@@ -264,18 +220,17 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 			flank_to_add=initial_flank_to_add, 
 			window_size=trim_to_window_size, 
 			bg_freq=bg_freq, 
-			cluster_indices=cluster_results['cluster_indices'], 
+			cluster_indices=cluster_indices, 
 			track_sign=track_signs)
-
 
 		#obtain unique seqlets from adjusted motifs
 		seqlets = list(dict([(y.string, y)
-						 for x in motifs for y in x.seqlets]).values())
+						 for x in patterns for y in x.seqlets]).values())
 
 	del seqlets
 
 	merged_patterns, pattern_merge_hierarchy = aggregator._detect_spurious_merging(
-		patterns=motifs, track_set=track_set, perplexity=subcluster_perplexity, 
+		patterns=patterns, track_set=track_set, perplexity=subcluster_perplexity, 
 		min_in_subcluster=max(final_min_cluster_size, subcluster_perplexity), 
 		min_overlap=min_overlap_while_sliding,
 		prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
@@ -287,76 +242,43 @@ def seqlets_to_patterns(seqlets, one_hot_sequence, contrib_scores,
 		n_seeds=n_leiden_runs)
 
 	#Now start merging patterns 
-	#merged_patterns, pattern_merge_hierarchy = similar_patterns_collapser(patterns=split_patterns) 
 	merged_patterns = sorted(merged_patterns, key=lambda x: -len(x.seqlets))
 
-	final_patterns, remaining_patterns = _filter_patterns(merged_patterns, 
+	patterns = _filter_patterns(merged_patterns, 
 		min_seqlet_support=final_min_cluster_size, 
 		window_size=min_ic_windowsize, min_ic_in_window=min_ic_in_window, 
 		background=bg_freq, ppm_pseudocount=ppm_pseudocount)
 
 	#apply subclustering procedure on the final patterns
-	for patternidx, pattern in enumerate(final_patterns):
+	for patternidx, pattern in enumerate(patterns):
 		pattern.compute_subpatterns(subcluster_perplexity, 
 			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations)
 
-	return {
-		'success': True,
-		'each_round_initcluster_motifs': None,             
-		'patterns': final_patterns,
-		'remaining_patterns': remaining_patterns,
-		'seqlets': filtered_seqlets, 
-		'cluster_results': cluster_results, 
-		'merged_patterns': merged_patterns,
-		'pattern_merge_hierarchy': pattern_merge_hierarchy,
-		'other_config': other_config
-	}
-
-def _sign_split_seqlets(seqlets, central_window, min_cluster_size, threshold):
-	attr_scores = []
-	for seqlet in seqlets:
-		flank = int(0.5*(len(seqlet)-central_window))
-		val = np.sum(seqlet.contrib_scores[flank:-flank])
-		attr_scores.append(val)
-
-	pos_count = (attr_scores > threshold).sum()
-	neg_count =  (attr_scores < -threshold).sum()
-	counts = sorted([(-1, neg_count), (1, pos_count)], key=lambda x: -x[1])
-
-	final_surviving_activity_patterns = [sign for sign, count
-		in counts if count > min_cluster_size]
-	
-	cluster_idxs = {str(x[1][0]): x[0] for x in enumerate(counts)}
-	activity_patterns = {x[0]: int(x[1][0]) for x in enumerate(counts)}
-
-	metacluster = []
-	for x in attr_scores:
-		val = int(np.sign(x) * (np.abs(x) > threshold))
-
-		if val in final_surviving_activity_patterns:
-			metacluster.append(cluster_idxs[str(val)])
-		else:
-			metacluster.append(-1)
-
-	return {
-		'metacluster_indices': metacluster,
-		'pattern_to_cluster_idx': cluster_idxs,
-		'activity_patterns': activity_patterns,
-	}
+	return patterns
 
 
 def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21, 
-	flank_size=10, overlap_portion=0.5, min_metacluster_size=100,
+	flank_size=10, min_metacluster_size=100,
 	weak_threshold_for_counting_sign=0.8, max_seqlets_per_metacluster=20000,
 	target_seqlet_fdr=0.2, min_passing_windows_frac=0.03,
-	max_passing_windows_frac=0.2, n_leiden_runs=50):
+	max_passing_windows_frac=0.2, n_leiden_runs=50, n_leiden_iterations=-1, 
+	min_overlap_while_sliding=0.7, nearest_neighbors_to_compute=500, 
+	affmat_correlation_threshold=0.15, tsne_perplexity=10.0, 
+	frac_support_to_trim_to=0.2, min_num_to_trim_to=30, trim_to_window_size=20, 
+	initial_flank_to_add=5,
+	prob_and_pertrack_sim_merge_thresholds=[(0.8,0.8), (0.5, 0.85), (0.2, 0.9)],
+	prob_and_pertrack_sim_dealbreaker_thresholds=[(0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
+	subcluster_perplexity=50, merging_max_seqlets_subsample=300,
+	final_min_cluster_size=20, min_ic_in_window=0.6, min_ic_windowsize=6,
+	ppm_pseudocount=0.001, verbose=False):
 
 	contrib_scores = np.multiply(one_hot, hypothetical_contribs)
 
-	track_set = core.TrackSet(one_hot=one_hot, contrib_scores=contrib_scores,
+	track_set = core.TrackSet(one_hot=one_hot, 
+		contrib_scores=contrib_scores,
 		hypothetical_contribs=hypothetical_contribs)
 
-	seqlet_coords = extract_seqlets.extract_seqlets(
+	seqlet_coords, threshold = extract_seqlets.extract_seqlets(
 		attribution_scores=contrib_scores.sum(axis=2),
 		window_size=sliding_window_size,
 		flank=flank_size,
@@ -366,40 +288,76 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 		max_passing_windows_frac=max_passing_windows_frac,
 		weak_threshold_for_counting_sign=weak_threshold_for_counting_sign) 
 
-	seqlets = track_set.create_seqlets(seqlets=seqlet_coords['seqlets']) 
+	seqlets = track_set.create_seqlets(seqlet_coords) 
 
-	multitask_seqlet_creation_results = {
-		'final_seqlets': seqlets,
-		'task_name_to_coord_producer_results': {
-			'task0': seqlet_coords
-		}
-	}
+	pos_seqlets, neg_seqlets = [], []
+	for seqlet in seqlets:
+		flank = int(0.5*(len(seqlet)-sliding_window_size))
+		attr = np.sum(seqlet.contrib_scores[flank:-flank])
 
-	metaclustering_results = _sign_split_seqlets(seqlets, 
-		min_cluster_size=min_metacluster_size, 
-		central_window=sliding_window_size,					
-		threshold=seqlet_coords['threshold'])
+		if attr > threshold:
+			pos_seqlets.append(seqlet)
+		elif attr < -threshold:
+			neg_seqlets.append(seqlet)
 
-	metacluster = np.array(metaclustering_results['metacluster_indices'])
-	submetacluster_results = OrderedDict()
+	del seqlets
 
-	for idx in range(max(metacluster)+1):
-		metacluster_seqlets = [seqlet for seqlet, idx_ in zip(
-			seqlets, metacluster) if idx_ == idx]
-		metacluster_seqlets = metacluster_seqlets[:max_seqlets_per_metacluster]
+	if len(pos_seqlets) > min_metacluster_size:
+		pos_seqlets = pos_seqlets[:max_seqlets_per_metacluster]
+		if verbose:
+			print("Using {} positive seqlets".format(len(pos_seqlets)))
 
-		seqlets_to_patterns_results = seqlets_to_patterns(
-			one_hot_sequence=one_hot, contrib_scores=contrib_scores, 
-			hypothetical_contribs=hypothetical_contribs, 
-			seqlets=metacluster_seqlets,
-			track_set=track_set,
-			track_signs=metaclustering_results['activity_patterns'][idx],
-			n_leiden_runs=n_leiden_runs)
+		pos_patterns = seqlets_to_patterns(seqlets=pos_seqlets,
+			track_set=track_set, 
+			track_signs=1,
+			min_overlap_while_sliding=min_overlap_while_sliding,
+			nearest_neighbors_to_compute=nearest_neighbors_to_compute,
+			affmat_correlation_threshold=affmat_correlation_threshold,
+			tsne_perplexity=tsne_perplexity,
+			n_leiden_iterations=n_leiden_iterations,
+			n_leiden_runs=n_leiden_runs,
+			frac_support_to_trim_to=frac_support_to_trim_to,
+			min_num_to_trim_to=min_num_to_trim_to,
+			trim_to_window_size=trim_to_window_size,
+			initial_flank_to_add=initial_flank_to_add,
+			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+			subcluster_perplexity=subcluster_perplexity,
+			merging_max_seqlets_subsample=merging_max_seqlets_subsample,
+			final_min_cluster_size=final_min_cluster_size,
+			min_ic_in_window=min_ic_in_window,
+			min_ic_windowsize=min_ic_windowsize,
+			ppm_pseudocount=ppm_pseudocount)
+	else:
+		pos_patterns = None
 
-		submetacluster_results[idx] = {
-			'metacluster_size': len(metacluster_seqlets),
-			'seqlets': metacluster_seqlets,
-			'seqlets_to_patterns_result': seqlets_to_patterns_results
-		}
+	if len(neg_seqlets) > min_metacluster_size:
+		neg_seqlets = neg_seqlets[:max_seqlets_per_metacluster]
+		if verbose:
+			print("Extracted {} negative seqlets".format(len(neg_seqlets)))
 
-	return multitask_seqlet_creation_results, metaclustering_results, submetacluster_results
+		neg_patterns = seqlets_to_patterns(seqlets=neg_seqlets,
+			track_set=track_set, 
+			track_signs=-1,
+			min_overlap_while_sliding=min_overlap_while_sliding,
+			nearest_neighbors_to_compute=nearest_neighbors_to_compute,
+			affmat_correlation_threshold=affmat_correlation_threshold,
+			tsne_perplexity=tsne_perplexity,
+			n_leiden_iterations=n_leiden_iterations,
+			n_leiden_runs=n_leiden_runs,
+			frac_support_to_trim_to=frac_support_to_trim_to,
+			min_num_to_trim_to=min_num_to_trim_to,
+			trim_to_window_size=trim_to_window_size,
+			initial_flank_to_add=initial_flank_to_add,
+			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+			subcluster_perplexity=subcluster_perplexity,
+			merging_max_seqlets_subsample=merging_max_seqlets_subsample,
+			final_min_cluster_size=final_min_cluster_size,
+			min_ic_in_window=min_ic_in_window,
+			min_ic_windowsize=min_ic_windowsize,
+			ppm_pseudocount=ppm_pseudocount)
+	else:
+		neg_patterns = None
+
+	return pos_patterns, neg_patterns

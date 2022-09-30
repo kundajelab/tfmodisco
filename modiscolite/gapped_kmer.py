@@ -113,7 +113,7 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 		#get the top n positiosn
 		per_pos_imp = np.sum(contrib_scores, axis=-1)
 		per_pos_bases = np.argmax(onehot, axis=-1)
-		
+
 		#get the top n positions
 		topn_pos = np.argsort(-per_pos_imp)[:topn]
 
@@ -124,7 +124,7 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 	X = np.array(Xs)
 	keys, scores = _extract_gkmers(X, min_k=min_k, max_k=max_k, 
 		max_gap=max_gap, max_len=max_len, max_entries=max_entries)
-
+	
 	row_idxs = np.repeat(range(keys.shape[0]), keys.shape[1])
 	csr_mat = scipy.sparse.csr_matrix((scores.flatten(), 
 		(row_idxs, keys.flatten())), shape=(len(keys), 5**max_len))
