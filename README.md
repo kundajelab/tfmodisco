@@ -24,7 +24,39 @@ You can run tfmodisco-lite using the command line tool `modisco` which comes wit
 
 `modisco motifs -s ohe.npz -a shap.npz -n 2000 -o modisco_results.h5`
 
-This command will run modisco on the one-hot encoded sequences in `ohe.npz`, use the attributions from `shap.npz`, use a maximum of 2000 seqlets per metacluster (this is low, but a good starting point for testing the algorithm on your own data), and will output the results to `modisco_results.h5`. Note that you can also use `npy` files if you don't want to use compressed data for some reason. The output saved in `modisco_results.h5` will include all of the patterns, all of the seqlets found per pattern, and a large amount of information about the run.
+This command will run modisco on the one-hot encoded sequences in `ohe.npz`, use the attributions from `shap.npz`, use a maximum of 2000 seqlets per metacluster (this is low, but a good starting point for testing the algorithm on your own data), and will output the results to `modisco_results.h5`. The one-hot encoded sequences and attributions are assumed to be in length-last format, i.e., have the shape (# examples, 4, sequence length). Note that you can also use `npy` files if you don't want to use compressed data for some reason. 
+
+The output saved in `modisco_results.h5` will include all of the patterns and has the following struture:
+
+```
+pos_patterns/
+    pattern_0/
+        sequence: [...]
+        contrib_scores: [...]
+        hypothetical_contribs: [...]
+        seqlets/
+            n_seqlets: [...]
+            start: [...]
+            end: [...]
+            example_idx: [...]
+            is_revcomp: [...]
+            sequence: [...]
+            contrib_scores: [...]
+            hypothetical_contribs: [...]
+        subpattern_0/
+            ...
+    pattern_1/
+        ...
+    ...
+neg_patterns/
+    pattern_0/
+        ...
+    pattern_1/
+        ...
+    ...
+```
+
+where `[...]` denotes that data is stored at that attribute. Importantly, the seqlets are all in the correct orientation. If a seqlet has been flipped to be the reverse complement, the sequence, contribution scores, and coordinates have also been flipped. In cases where there are not enough seqlets to consider a metacluster, that attribute (`neg_patterns` or `pos_patterns`) may not appear in the file.
 
 #### Generating reports
 
