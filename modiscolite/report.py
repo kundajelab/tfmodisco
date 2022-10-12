@@ -94,7 +94,8 @@ def run_tomtom(modisco_h5py, output_prefix, meme_motif_db, top_n_matches=3,
 			continue
 
 		metacluster = modisco_results[name]
-		for pattern_name, pattern in metacluster.items():
+		key = lambda x: int(x[0].split("_")[-1])
+		for pattern_name, pattern in sorted(metacluster.items(), key=key):
 			ppm = np.array(pattern['sequence'][:])
 			cwm = np.array(pattern["contrib_scores"][:])
 
@@ -151,7 +152,7 @@ def make_logo(match, logo_dir, meme_motif_db):
 
 def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 	results = h5py.File(modisco_file, 'r')
-	names = []
+	tags = []
 
 	for name in ["pos_patterns", "neg_patterns"]:
 		if name not in results.keys():
@@ -159,8 +160,8 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 
 		metacluster = results[name]
 		for pattern_name, pattern in metacluster.items():
-			name = '{}.{}'.format(name, pattern_name)
-			names.append(name)
+			tag = '{}.{}'.format(name, pattern_name)
+			tags.append(tag)
 
 			cwm_fwd = np.array(pattern['contrib_scores'][:])
 			cwm_rev = cwm_fwd[::-1, ::-1]
@@ -180,10 +181,10 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 			trimmed_cwm_fwd = cwm_fwd[start_fwd:end_fwd]
 			trimmed_cwm_rev = cwm_rev[start_rev:end_rev]
 
-			_plot_weights(trimmed_cwm_fwd, path='{}/{}.cwm.fwd.png'.format(modisco_logo_dir, name))
-			_plot_weights(trimmed_cwm_rev, path='{}/{}.cwm.rev.png'.format(modisco_logo_dir, name))
+			_plot_weights(trimmed_cwm_fwd, path='{}/{}.cwm.fwd.png'.format(modisco_logo_dir, tag))
+			_plot_weights(trimmed_cwm_rev, path='{}/{}.cwm.rev.png'.format(modisco_logo_dir, tag))
 
-	return names
+	return sorted(tags, key=lambda x: int(x.split("_")[-1]))
 
 def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 	suffix='./', top_n_matches=3, trim_threshold=0.3, trim_min_length=3):

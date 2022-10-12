@@ -273,6 +273,11 @@ def SimilarPatternsCollapser(patterns, track_set,
 				pattern2_coords = [seqlet for seqlet in pattern2_coords 
 					if seqlet.start >= 0 and seqlet.end < track_set.length]
 
+				if len(pattern2_coords) == 0:
+					pairwise_sims[i, j] = 0.0
+					pairwise_aurocs[i, j] = 0.5
+					continue
+
 				pattern2_shifted_seqlets = track_set.create_seqlets(
 					seqlets=pattern2_coords)
 

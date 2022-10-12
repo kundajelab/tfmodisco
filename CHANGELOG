@@ -1,0 +1,90 @@
+===============
+Release History
+===============
+
+Version 2.0.1
+==============
+
+Highlights
+----------
+
+	- This is the first complete release that includes breaking changes compared
+	with the original code. They are detailed below.
+
+
+aggregator.py
+-------------
+
+	- A minor bug was fixed where, when collapsing patterns in the final step,
+	some patterns would have no seqlets after the filtering step and the code
+	would crash. Now, if a pattern has no seqlets after the filtering, it is
+	ignored.
+
+
+report.py
+---------
+
+	- The patterns are now displayed in numeric order 1-10, followed by 11-20,
+	etc., as opposed to by alphabetical order 1, 10-19, 2, 20-29, etc.
+
+
+Version 2.0.0
+==============
+
+Highlights
+----------
+
+	- This is the first complete release that includes breaking changes compared
+	with the original code. They are detailed below.
+
+
+affinitymat.py
+--------------
+
+	- When calculating the coarse-grained resolution, an argsort is done to find
+	the nearest neighbors of each seqlet. This is done in numpy using a sorting
+	algorithm that is not stable. This new version uses "mergesort" instead of
+	the default "quicksort", as it is a stable algorithm. This change allows
+	us to use numpy within numba, assigning more work to each thread, and
+	ultimately speeding the code up ~2-3x. 
+
+
+core.py
+-------
+
+	- AggregatedSeqlet was renamed SeqletSet.
+
+
+gapped_kmer.py
+--------------
+
+	- A bug in the original codebase where the nucleotide identity was done
+	on the argmax of the contribution score, rather than the one-hot encoded
+	sequence, caused incorrect nucleotide calls for positions that had a
+	negative contribution. This effects only the gapped k-mer representation
+	used to calculate coarse-grained representations, not the found patterns.
+
+
+io.py
+-----
+
+	- This code was added to handle saving the outputs of the TFMoDISco function
+	to disk and the conversion of the old outputs into the new format.
+
+
+tfmodisco.py
+------------
+
+	- The output of TFMoDISco is now a tuple of two lists, where the first
+	list contains the positive patterns and the second list contains the
+	negative patterns. Each pattern is represented as a `SeqletSet` object.
+
+
+Version 1.0.0
+==============
+
+Highlights
+----------
+
+	- This is the first complete release that perfectly reproduces the outputs
+	of the original TF-MoDISco code. 
