@@ -20,8 +20,7 @@ Version 2.0.1
 Highlights
 ----------
 
-	- This is the first complete release that includes breaking changes compared
-	with the original code. They are detailed below.
+	- A minor bug and a minor convenience issue have been resolved.
 
 
 aggregator.py
