@@ -159,7 +159,8 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 			continue
 
 		metacluster = results[name]
-		for pattern_name, pattern in metacluster.items():
+		key = lambda x: int(x[0].split("_")[-1])
+		for pattern_name, pattern in sorted(metacluster.items(), key=key):
 			tag = '{}.{}'.format(name, pattern_name)
 			tags.append(tag)
 
@@ -184,7 +185,7 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 			_plot_weights(trimmed_cwm_fwd, path='{}/{}.cwm.fwd.png'.format(modisco_logo_dir, tag))
 			_plot_weights(trimmed_cwm_rev, path='{}/{}.cwm.rev.png'.format(modisco_logo_dir, tag))
 
-	return sorted(tags, key=lambda x: int(x.split("_")[-1]))
+	return tags
 
 def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 	suffix='./', top_n_matches=3, trim_threshold=0.3, trim_min_length=3):

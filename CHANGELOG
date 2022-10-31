@@ -2,6 +2,18 @@
 Release History
 ===============
 
+
+Version 2.0.2
+==============
+
+report.py
+---------
+	
+	- Fixed a display issue where the patterns were being displayed in the
+	wrong order.
+
+
+
 Version 2.0.1
 ==============
 
