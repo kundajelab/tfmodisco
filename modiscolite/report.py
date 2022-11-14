@@ -109,13 +109,14 @@ def run_tomtom(modisco_h5py, output_prefix, meme_motif_db, top_n_matches=3,
 			tomtom_results['pattern'].append(tag)
 			tomtom_results['num_seqlets'].append(num_seqlets)
 
+			i = -1
 			for i, (target, qval) in r.iloc[:top_n_matches].iterrows():
 				tomtom_results['match{}'.format(i)].append(target)
 				tomtom_results['qval{}'.format(i)].append(qval)
 
 			for j in range(i+1, top_n_matches):
-				tomtom_results['match{}'.format(i)].append(None)
-				tomtom_results['qval{}'.format(i)].append(None)			
+				tomtom_results['match{}'.format(j)].append(None)
+				tomtom_results['qval{}'.format(j)].append(None)			
 
 	modisco_results.close()
 	return pandas.DataFrame(tomtom_results)
