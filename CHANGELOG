@@ -3,6 +3,17 @@ Release History
 ===============
 
 
+Version 2.0.3
+==============
+
+report.py
+---------
+	
+	- Fixed a minor error where results would not display properly if fewer
+	than the specified number of TOMTOM hits were found for a motif.
+
+
+
 Version 2.0.2
 ==============
 
