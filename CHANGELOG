@@ -3,6 +3,23 @@ Release History
 ===============
 
 
+Version 2.0.4
+==============
+
+report.py
+---------
+	
+	- Removed the need to supply both a MEME file with motifs and a directory
+	with extracted PFMs. The PFMs will be read directly from the MEME file now.
+
+
+modisco
+-------
+
+	- Removed the need to supply both a MEME file with motifs and a directory
+	with extracted PFMs. The PFMs will be read directly from the MEME file now.
+
+
 Version 2.0.3
 ==============
 

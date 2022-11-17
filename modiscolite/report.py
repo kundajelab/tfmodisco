@@ -15,6 +15,35 @@ import logomaker
 
 pd.options.display.max_colwidth = 500
 
+def read_meme(filename):
+	motifs = {}
+
+	with open(filename, "r") as infile:
+		motif, width, i = None, None, 0
+
+		for line in infile:
+			if motif is None:
+				if line[:5] == 'MOTIF':
+					motif = line.split()[1]
+				else:
+					continue
+
+			elif width is None:
+				if line[:6] == 'letter':
+					width = int(line.split()[5])
+					pwm = np.zeros((width, 4))
+
+			elif i < width:
+				pwm[i] = list(map(float, line.split()))
+				i += 1
+
+			else:
+				motifs[motif] = pwm
+				motif, width, i = None, None, 0
+
+	return motifs
+
+
 def compute_per_position_ic(ppm, background, pseudocount):
     alphabet_len = len(background)
     ic = ((np.log((ppm+pseudocount)/(1 + pseudocount*alphabet_len))/np.log(2))
@@ -139,13 +168,12 @@ def _plot_weights(array, path, figsize=(10,3), **kwargs):
 	plt.savefig(path)
 	plt.close()
 	
-def make_logo(match, logo_dir, meme_motif_db):
+def make_logo(match, logo_dir, motifs):
 	if match == 'NA':
 		return
 
 	background = np.array([0.25, 0.25, 0.25, 0.25])
-	ppm = np.loadtxt("{}/{}.pfm".format(meme_motif_db, match), delimiter='\t')
-	ppm = np.transpose(ppm)
+	ppm = motifs[match]
 	ic = compute_per_position_ic(ppm, background, 0.001)
 
 	_plot_weights(ppm*ic[:, None], path='{}/{}.png'.format(logo_dir, match))
@@ -188,8 +216,8 @@ def create_modisco_logos(modisco_file, modisco_logo_dir, trim_threshold):
 
 	return tags
 
-def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
-	suffix='./', top_n_matches=3, trim_threshold=0.3, trim_min_length=3):
+def report_motifs(modisco_h5py, output_dir, meme_motif_db, suffix='./', 
+	top_n_matches=3, trim_threshold=0.3, trim_min_length=3):
 
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
@@ -198,6 +226,7 @@ def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 		os.mkdir(output_dir + '/trimmed_logos/')
 	modisco_logo_dir = output_dir + '/trimmed_logos/'
 
+	motifs = read_meme(meme_motif_db)
 	names = create_modisco_logos(modisco_h5py, modisco_logo_dir, trim_threshold)
 
 	tomtom_df = run_tomtom(modisco_h5py, output_dir, meme_motif_db, 
@@ -217,7 +246,7 @@ def report_motifs(modisco_h5py, output_dir, meme_motif_db, meme_motif_dir,
 				if pandas.isnull(row[name]):
 					logos.append("NA")
 				else:
-					make_logo(row[name], output_dir, meme_motif_dir)
+					make_logo(row[name], output_dir, motifs)
 					logos.append("{}{}.png".format(suffix, row[name]))
 			else:
 				break
