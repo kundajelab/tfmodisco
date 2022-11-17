@@ -1,4 +1,9 @@
 # tfmodisco-lite
+> **Note**
+> This is a rewrite of the original TF-MoDISCo code, which can be found at https://github.com/kundajelab/tfmodisco
+
+> **Warning**
+> tfmodisco-lite v2.0.0 and above may produce slightly different results from the original TF-MoDISCo code as minor bugs are fixed and some speed improvements required swapping sorting algorithms.
 
 TF-MoDISco is a biological motif discovery algorithm that differentiates itself by using attribution scores from a machine learning model, in addition to the sequence itselves, to guide the discovery. Most other methods use only the sequence itself, but derive the sequences to be used from some external information. In contrast, tfmodisco incorporates this external information by having a machine learning model predict it diectly using only nucleotide sequence and an attribution algorithm calculate the weight of each nucleotide. The resulting attributions highlight the portions of the sequence relevant for predicting the external information.
 
