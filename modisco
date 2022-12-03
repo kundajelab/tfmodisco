@@ -55,6 +55,11 @@ convert_parser.add_argument("-i", "--h5py", type=str, required=True,
 convert_parser.add_argument("-o", "--output", type=str, required=True,
 	help="An HDF5 file formatted in the new way.")
 
+convertback_parser = subparsers.add_parser("convert-backward", help="Convert a new h5py to the old format.")
+convertback_parser.add_argument("-i", "--h5py", type=str, required=True,
+	help="An HDF5 file formatted in the new way.")
+convertback_parser.add_argument("-o", "--output", type=str, required=True,
+	help="An HDF5 file formatted in the old way.")
 
 
 # Pull the arguments
@@ -118,3 +123,6 @@ elif args.cmd == 'report':
 
 elif args.cmd == 'convert':
 	modiscolite.io.convert(args.h5py, args.output)
+
+elif args.cmd == 'convert-backward':
+	modiscolite.io.convert_new_to_old(args.h5py, args.output)
