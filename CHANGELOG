@@ -2,6 +2,15 @@
 Release History
 ===============
 
+Version 2.0.5
+==============
+
+report.py
+---------
+	
+	- Removes the use of the Arial Rounded font, hopefully reducing the number
+	of warnings produced.
+
 
 Version 2.0.4
 ==============

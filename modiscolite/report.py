@@ -161,7 +161,7 @@ def _plot_weights(array, path, figsize=(10,3), **kwargs):
 	df = pandas.DataFrame(array, columns=['A', 'C', 'G', 'T'])
 	df.index.name = 'pos'
 
-	crp_logo = logomaker.Logo(df, ax=ax, font_name='Arial Rounded')
+	crp_logo = logomaker.Logo(df, ax=ax)
 	crp_logo.style_spines(visible=False)
 	plt.ylim(min(df.sum(axis=1).min(), 0), df.sum(axis=1).max())
 
