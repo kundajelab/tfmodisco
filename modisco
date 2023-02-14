@@ -105,6 +105,9 @@ if args.cmd == "motifs":
 		sequences = sequences[:, :, start:end].transpose(0, 2, 1)
 		attributions = attributions[:, :, start:end].transpose(0, 2, 1)
 
+	sequences = sequences.astype('float32')
+	attributions = attributions.astype('float32')
+
 	pos_patterns, neg_patterns = modiscolite.tfmodisco.TFMoDISco(
 		hypothetical_contribs=attributions, 
 		one_hot=sequences,

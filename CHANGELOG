@@ -2,6 +2,18 @@
 Release History
 ===============
 
+
+Version 2.0.6
+==============
+
+modisco
+-------
+	
+	- Adds an explicit casting of the one-hot encoded sequence and the
+	attributions to 32-bit floats. This allows files to be compressed to
+	16-bit floats to save space.
+
+
 Version 2.0.5
 ==============
 
