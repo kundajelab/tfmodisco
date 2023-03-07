@@ -3,6 +3,15 @@ Release History
 ===============
 
 
+Version 2.0.7
+==============
+
+modisco
+-------
+	
+	- Adds an error if the window is larger than the sequences.
+
+
 Version 2.0.6
 ==============
 
@@ -51,7 +60,6 @@ report.py
 	than the specified number of TOMTOM hits were found for a motif.
 
 
-
 Version 2.0.2
 ==============
 
@@ -60,7 +68,6 @@ report.py
 	
 	- Fixed a display issue where the patterns were being displayed in the
 	wrong order.
-
 
 
 Version 2.0.1

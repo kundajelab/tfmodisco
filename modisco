@@ -105,6 +105,10 @@ if args.cmd == "motifs":
 		sequences = sequences[:, :, start:end].transpose(0, 2, 1)
 		attributions = attributions[:, :, start:end].transpose(0, 2, 1)
 
+	if sequences.shape[1] < args.window:
+		raise ValueError("Window ({}) cannot be ".format(args.window) +
+			"longer than the sequences".format(sequences.shape))
+
 	sequences = sequences.astype('float32')
 	attributions = attributions.astype('float32')
 
