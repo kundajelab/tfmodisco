@@ -6,6 +6,7 @@ setup(
 	author='Jacob Schreiber',
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
+	python_requires='>=3.7, <=3.10',
 	scripts=['modisco'],
 	url='https://github.com/jmschrei/tfmodisco-lite',
 	license='LICENSE.txt',
