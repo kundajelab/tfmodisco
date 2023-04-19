@@ -44,7 +44,7 @@ report_parser.add_argument("-o", "--output", type=str, required=True,
 	help="A directory to put the output results including the html report.")
 report_parser.add_argument("-s", "--suffix", type=str, default="./",
 	help="The suffix to add to the beginning of images. Should be equal to the output if using a Jupyter notebook.")
-report_parser.add_argument("-m", "--meme_db", type=str, required=True,
+report_parser.add_argument("-m", "--meme_db", type=str, required=False,
 	help="A MEME file containing motifs.")
 report_parser.add_argument("-n", "--n_matches", type=int, default=3,
 	help="The number of top TOMTOM matches to include in the report.")
