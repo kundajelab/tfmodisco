@@ -155,6 +155,7 @@ def path_to_image_html(path):
 	return '<img src="'+ path + '" width="240" >'
 
 def _plot_weights(array, path, figsize=(10,3)):
+	"""Plot weights as a sequence logo and save to file."""
 	fig = plt.figure(figsize=figsize)
 	ax = fig.add_subplot(111) 
 
@@ -180,6 +181,7 @@ def make_logo(match, logo_dir, motifs):
 		
 
 def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_threshold, pattern_groups: List[str]):
+	"""Open a modisco results file and create and write logos to file for each pattern."""
 	modisco_results = h5py.File(modisco_h5py, 'r')
 
 	tags = []
