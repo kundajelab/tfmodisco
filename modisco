@@ -44,7 +44,7 @@ report_parser.add_argument("-o", "--output", type=str, required=True,
 	help="A directory to put the output results including the html report.")
 report_parser.add_argument("-s", "--suffix", type=str, default="./",
 	help="The suffix to add to the beginning of images. Should be equal to the output if using a Jupyter notebook.")
-report_parser.add_argument("-m", "--meme_db", type=str, required=True,
+report_parser.add_argument("-m", "--meme_db", type=str, default=None,
 	help="A MEME file containing motifs.")
 report_parser.add_argument("-n", "--n_matches", type=int, default=3,
 	help="The number of top TOMTOM matches to include in the report.")
@@ -125,8 +125,8 @@ if args.cmd == "motifs":
 	modiscolite.io.save_hdf5(args.output, pos_patterns, neg_patterns)
 
 elif args.cmd == 'report':
-	modiscolite.report.report_motifs(args.h5py, args.output, suffix=args.suffix, 
-		top_n_matches=args.n_matches, meme_motif_db=args.meme_db)
+	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 
+		top_n_matches=args.n_matches)
 
 elif args.cmd == 'convert':
 	modiscolite.io.convert(args.h5py, args.output)
