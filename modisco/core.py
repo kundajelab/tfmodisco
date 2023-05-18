@@ -772,11 +772,11 @@ class AggregatedSeqlet(Pattern):
         #convert to csr and sort by indices to (try to) get rid of efficiency warning
         distmat_sp = distmat_sp.tocsr()
         distmat_sp.sort_indices()
-
         if (compute_embedding):
             twod_embedding = sklearn.manifold.TSNE(
                 perplexity=perplexity,
                 metric='precomputed',
+                init="random",
                 verbose=3, random_state=1234).fit_transform(distmat_sp) 
             self.twod_embedding = twod_embedding
 
