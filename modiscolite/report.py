@@ -254,48 +254,37 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 				results['modisco_cwm_rev'].append(os.path.join(img_path_suffix, 'trimmed_logos', f'{pattern_tag}.cwm.rev.png'))
 
 	patterns_df = pd.DataFrame(results)
-
 	reordered_columns = ['pattern', 'num_seqlets', 'modisco_cwm_fwd', 'modisco_cwm_rev']
 
-	patterns_df = patterns_df[reordered_columns]
-
-	patterns_df.to_html(open(os.path.join(output_dir, 'motifs.html'), 'w'),
-		escape=False, formatters=dict(
-			modisco_cwm_fwd=path_to_image_html,
-			modisco_cwm_rev=path_to_image_html), 
-		index=False)
-
 	# If the optional meme_motif_db is not provided, then we won't generate TOMTOM comparison.
-	if meme_motif_db is None:
-		return
+	if meme_motif_db is not None:
+		motifs = read_meme(meme_motif_db)
 
-	motifs = read_meme(meme_motif_db)
+		tomtom_df = generate_tomtom_dataframe(modisco_h5py, meme_motif_db, 
+			top_n_matches=top_n_matches, tomtom_exec='tomtom', 
+			pattern_groups=pattern_groups, trim_threshold=trim_threshold,
+			trim_min_length=trim_min_length)
+		patterns_df = pandas.concat([patterns_df, tomtom_df], axis=1)
 
-	tomtom_df = generate_tomtom_dataframe(modisco_h5py, meme_motif_db, 
-		top_n_matches=top_n_matches, tomtom_exec='tomtom', 
-		pattern_groups=pattern_groups, trim_threshold=trim_threshold,
-		trim_min_length=trim_min_length)
-	tomtom_df = pandas.concat([patterns_df, tomtom_df], axis=1)
+		for i in range(top_n_matches):
+			name = f'match{i}'
+			logos = []
 
-	for i in range(top_n_matches):
-		name = f'match{i}'
-		logos = []
-
-		for _, row in tomtom_df.iterrows():
-			if name in tomtom_df.columns:
-				if pandas.isnull(row[name]):
-					logos.append("NA")
+			for _, row in patterns_df.iterrows():
+				if name in patterns_df.columns:
+					if pandas.isnull(row[name]):
+						logos.append("NA")
+					else:
+						make_logo(row[name], output_dir, motifs)
+						logos.append(f'{img_path_suffix}{row[name]}.png')
 				else:
-					make_logo(row[name], output_dir, motifs)
-					logos.append(f'{row[name]}.png')
-			else:
-				break
+					break
 
-		tomtom_df[f"{name}_logo"] = logos
-		reordered_columns.extend([name, f'qval{i}', f'{name}_logo'])
+			patterns_df[f"{name}_logo"] = logos
+			reordered_columns.extend([name, f'qval{i}', f'{name}_logo'])
 
-	tomtom_df = tomtom_df[reordered_columns]
-	tomtom_df.to_html(open(os.path.join(output_dir, 'motifs.tomtom.html'), 'w'),
+	patterns_df = patterns_df[reordered_columns]
+	patterns_df.to_html(open(os.path.join(output_dir, 'motifs.html'), 'w'),
 		escape=False, formatters=dict(modisco_cwm_fwd=path_to_image_html,
 			modisco_cwm_rev=path_to_image_html, match0_logo=path_to_image_html,
 			match1_logo=path_to_image_html, match2_logo=path_to_image_html), 
