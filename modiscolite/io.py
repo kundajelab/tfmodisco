@@ -1,10 +1,15 @@
 # io.py
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 
+import os
+
 import h5py
 import hdf5plugin
 
 import numpy as np
+
+from . import util
+from . import meme_writer
 
 def convert(old_filename, filename):
 	old_grp = h5py.File(old_filename, "r")['metacluster_idx_to_submetacluster_results']
@@ -156,6 +161,59 @@ def save_hdf5(filename, pos_patterns, neg_patterns):
 		for idx, pattern in enumerate(neg_patterns):
 			neg_pattern = neg_group.create_group("pattern_"+str(idx))
 			save_pattern(pattern, neg_pattern)
+
+
+def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, output_filename: os.PathLike) -> None:
+	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
+
+	Parameters
+	----------
+	filename: str
+		The name of the h5 file to read.
+	datatype: MemeDataType
+		The datatype to use for the MEME file.
+	output_filename: str
+		The name of the MEME file to write.
+	"""
+
+	writer = meme_writer.MemeWriter(
+		memesuite_version='5',
+		alphabet='ACGT',
+		background_frequencies='A 0.25 C 0.25 G 0.25 T 0.25'
+	)
+
+	with h5py.File(filename, 'r') as grp:
+		for (name, datasets) in grp['pos_patterns'].items():
+
+			probability_matrix = None
+			if datatype == util.MemeDataType.PFM:
+				probability_matrix = datasets['sequence'][:] / np.sum(datasets['sequence'][:], axis=1, keepdims=True)
+			elif datatype == util.MemeDataType.CWM:
+				probability_matrix = datasets['contrib_scores'][:]
+			elif datatype == util.MemeDataType.hCWM:
+				probability_matrix = datasets['hypothetical_contribs'][:]
+			elif datatype == util.MemeDataType.CWM_PFM:
+				# Softmax version of CWM.
+				probability_matrix = np.exp(datasets['contrib_scores'][:]) / np.sum(np.exp(datasets['contrib_scores'][:]), axis=1, keepdims=True)
+			elif datatype == util.MemeDataType.hCWM_PFM:
+				# Softmax version of hCWM.
+				probability_matrix = np.exp(datasets['hypothetical_contribs'][:]) / np.sum(np.exp(datasets['hypothetical_contribs'][:]), axis=1, keepdims=True)
+			else:
+				raise ValueError("Unknown datatype: {}".format(datatype))
+
+			motif = meme_writer.MemeWriterMotif(
+						name=name,
+						probability_matrix=probability_matrix,
+						alphabet_length=4,
+						source_sites=1)
+
+			writer.add_motif(motif)
+	
+	new_output_filename = output_filename
+	if output_filename is None:
+		file_without_extension = os.path.splitext(filename)[0]
+		new_output_filename = os.Path(f'{file_without_extension}.{datatype.name}.meme')
+	writer.write(new_output_filename)
 
 
 def convert_new_to_old(new_format_filename, old_format_filename):

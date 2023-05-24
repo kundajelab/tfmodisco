@@ -2,6 +2,8 @@
 from typing import List, Optional
 import numpy as np
 
+from os import PathLike
+
 class MemeWriterMotif:
 	"""Class for handling Motif for MEME file writing."""
 
@@ -103,7 +105,19 @@ class MemeWriter:
 	def add_motif(self, motif: MemeWriterMotif) -> None:
 		self._motifs.append(motif)
 
-	def write(self, file_path: str) -> None:
+	def write(self, file_path: PathLike) -> None:
+
+		def array_to_string(array: np.ndarray, precision: int) -> str:
+			"""Convert a 2D numpy array to a string with the given precision."""
+			# create a format string with the desired precision
+			float_formatter = "{:." + str(precision) + "f}"
+			
+			# manually format each float in the array and join them with spaces
+			string_rows = [" ".join(float_formatter.format(x) for x in row) for row in array]
+
+			# join rows with line breaks to retain 2D structure
+			return "\n".join(string_rows)
+
 		output = ""
 		output += f"MEME version {self._memesuite_version}\n\n"
 		if self._alphabet:
@@ -123,11 +137,19 @@ class MemeWriter:
  				output += f"E= {motif.e_value}"
 			output += "\n"
 			# Iterate through rows in nparray
-			for row in motif.probability_matrix:
-				output += " ".join([str(x) for x in row])
+			output += array_to_string(motif.probability_matrix, 6)
 			output += "\n"
 			if motif.url:
-				output += f"URL {motif.url}"
+				output += f"URL {motif.url}\n"
+			output += "\n"
+		try:
+			# Open the file in write mode
+			with open(file_path, "w") as file:
+				# Write the string to the file
+				file.write(output)
+			print(f"Successfully wrote to the file {file_path}.")
+		except IOError:
+			print(f"An error occurred while writing to the file {file_path}.")
 	
 
 	def __repr__(self) -> str:

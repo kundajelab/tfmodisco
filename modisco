@@ -141,7 +141,7 @@ if args.cmd == "motifs":
 	modiscolite.io.save_hdf5(args.output, pos_patterns, neg_patterns)
 
 elif args.cmd == 'meme':
-	modiscolite.io.write_meme(args.h5py, args.datatype)
+	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 
