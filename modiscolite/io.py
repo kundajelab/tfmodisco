@@ -207,6 +207,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 						name=name,
 						probability_matrix=probability_matrix,
 						source_sites=1,
+						alphabet=alphabet,
 						alphabet_length=4)
 
 			writer.add_motif(motif)
