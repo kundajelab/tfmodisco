@@ -176,7 +176,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 		The name of the MEME file to write.
 	"""
 
-	writer = meme_writer.MemeWriter(
+	writer = meme_writer.MEMEWriter(
 		memesuite_version='5',
 		alphabet='ACGT',
 		background_frequencies='A 0.25 C 0.25 G 0.25 T 0.25'
@@ -201,7 +201,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 			else:
 				raise ValueError("Unknown datatype: {}".format(datatype))
 
-			motif = meme_writer.MemeWriterMotif(
+			motif = meme_writer.MEMEWriterMotif(
 						name=name,
 						probability_matrix=probability_matrix,
 						alphabet_length=4,

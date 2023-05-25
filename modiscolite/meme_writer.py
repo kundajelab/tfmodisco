@@ -5,7 +5,7 @@ import numpy as np
 
 from os import PathLike
 
-class MemeWriterMotif:
+class MEMEWriterMotif:
 	"""Class for handling Motif for MEME file writing."""
 
 	def __init__(
@@ -51,7 +51,7 @@ class MemeWriterMotif:
 		return self._url
 
 	def __repr__(self) -> str:
-		return f"MemeWriterMotif(name={self._name})"
+		return f"MEMEWriterMotif(name={self._name})"
 
 	def __str__(self) -> str:
 		output = (f'''\
@@ -64,14 +64,14 @@ letter-probability matrix: alength= {str(self.alphabet_length)} w= {self.probabi
 
 
 
-class MemeWriter:
+class MEMEWriter:
 	"""Class for handling MEME file writing."""
 
 	def __init__(
 		self,
 		memesuite_version: str,
 		# May also be added incrementally using `add_motif()`.
-		motifs: List[MemeWriterMotif] = [],
+		motifs: List[MEMEWriterMotif] = [],
 		# Optional (Recommended) by MEME Suite.
 		alphabet: Optional[str] = None,
 		background_frequencies: Optional[str] = None,
@@ -113,7 +113,7 @@ class MemeWriter:
 	def strands(self):
 		return self._strands
 
-	def add_motif(self, motif: MemeWriterMotif) -> None:
+	def add_motif(self, motif: MEMEWriterMotif) -> None:
 		self._motifs.append(motif)
 
 	def write(self, file_path: PathLike) -> None:
@@ -143,7 +143,7 @@ class MemeWriter:
 	
 
 	def __repr__(self) -> str:
-		return f"MemeWriter(memesuite_version={self._memesuite_version}, motifs={self._motifs}, alphabet={self._alphabet}, background_frequencies={self._background_frequencies}, strands={self._strands})"
+		return f"MEMEWriter(memesuite_version={self._memesuite_version}, motifs={self._motifs}, alphabet={self._alphabet}, background_frequencies={self._background_frequencies}, strands={self._strands})"
 
 
 def array_to_string(array: np.ndarray, precision: int) -> str:
