@@ -16,13 +16,15 @@ class MEMEWriterMotif:
 		alphabet_length: int,
 		# `source_sites` is known as 'nsites' in MEME Suite.
 		source_sites: int,
+		alphabet: str,
+		alphabet_length: Optional[int] = None,
 		e_value: Optional[str] = None,
 		url: Optional[str] = None
 	) -> None:
 		self._name = name
 		self._probability_matrix = probability_matrix
-		self._alphabet_length = alphabet_length
 		self._source_sites = source_sites
+		self._alphabet_length = len(alphabet) if alphabet_length is None else alphabet_length
 		self._e_value = e_value
 		self._url = url
 
