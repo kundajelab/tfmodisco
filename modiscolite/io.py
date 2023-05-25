@@ -7,6 +7,7 @@ import h5py
 import hdf5plugin
 
 import numpy as np
+import scipy
 
 from . import util
 from . import meme_writer
@@ -194,10 +195,10 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 				probability_matrix = datasets['hypothetical_contribs'][:]
 			elif datatype == util.MemeDataType.CWM_PFM:
 				# Softmax version of CWM.
-				probability_matrix = np.exp(datasets['contrib_scores'][:]) / np.sum(np.exp(datasets['contrib_scores'][:]), axis=1, keepdims=True)
+				probability_matrix = scipy.special.softmax(datasets['contrib_scores'][:], axis=1)
 			elif datatype == util.MemeDataType.hCWM_PFM:
 				# Softmax version of hCWM.
-				probability_matrix = np.exp(datasets['hypothetical_contribs'][:]) / np.sum(np.exp(datasets['hypothetical_contribs'][:]), axis=1, keepdims=True)
+				probability_matrix = scipy.special.softmax(datasets['hypothetical_contribs'][:], axis=1)
 			else:
 				raise ValueError("Unknown datatype: {}".format(datatype))
 
@@ -212,7 +213,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 	new_output_filename = output_filename
 	if output_filename is None:
 		file_without_extension = os.path.splitext(filename)[0]
-		new_output_filename = os.Path(f'{file_without_extension}.{datatype.name}.meme')
+		new_output_filename = f'{file_without_extension}.{datatype.name}.meme'
 	writer.write(new_output_filename)
 
 
