@@ -65,8 +65,8 @@ convertback_parser.add_argument("-o", "--output", type=str, required=True,
 meme_parser = subparsers.add_parser("meme", help="Create a MEME file from a modisco results file.", formatter_class=argparse.RawTextHelpFormatter)
 meme_parser.add_argument("-i", "--h5py", type=str, required=True,
 	help="An HDF5 file containing the output from modiscolite.")
-meme_parser.add_argument("-t", "--datatype", type=modiscolite.util.case_insensitive_meme_datatype, choices=list(modiscolite.util.MemeDataType), required=True,
-	help="""A case-insensitive string specifying the desired data of the output file.,
+meme_parser.add_argument("-t", "--datatype", type=modiscolite.util.MemeDataType, choices=list(modiscolite.util.MemeDataType), required=True,
+	help="""A case-sensitive string specifying the desired data of the output file.,
 The options are as follows:
 - 'PFM':      The position-frequency matrix.
 - 'CWM':      The contribution-weight matrix.

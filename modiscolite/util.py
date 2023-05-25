@@ -8,19 +8,15 @@ from numba import njit
 
 
 class MemeDataType(Enum):
-	PFM = "pfm"
-	CWM = "cwm"
-	hCWM = "hcwm"
-	CWM_PFM = "cwm-pfm"
-	hCWM_PFM = "hcwm-pfm"
+	PFM = "PFM"
+	CWM = "CWM"
+	hCWM = "hCWM"
+	CWM_PFM = "CWM-PFM"
+	hCWM_PFM = "hCWM-PFM"
 
 	def __str__(self):
 		return self.value
 
-
-def case_insensitive_meme_datatype(arg_str):
-	arg_str = arg_str.lower()
-	return MemeDataType(arg_str)
 
 
 def cpu_sliding_window_sum(arr, window_size):
