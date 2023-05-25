@@ -1,5 +1,5 @@
 # io.py
-# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 
 import os
 

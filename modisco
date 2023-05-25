@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # tf-modisco command-line tool
-# Author: Jacob Schreiber <jmschreiber91@gmail.com>
+# Author: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 
 import h5py
 import hdf5plugin

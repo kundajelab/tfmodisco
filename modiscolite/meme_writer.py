@@ -1,4 +1,5 @@
 # Create a class that can be used to write MEME files.
+# Authors: Ivy Raine <ivy.ember.raine@gmail.com>, Jacob Schreiber <jmschreiber91@gmail.com>
 from typing import List, Optional
 import numpy as np
 

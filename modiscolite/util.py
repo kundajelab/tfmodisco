@@ -1,5 +1,5 @@
 # util.py
-# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
 from enum import Enum
