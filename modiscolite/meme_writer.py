@@ -53,6 +53,16 @@ class MemeWriterMotif:
 	def __repr__(self) -> str:
 		return f"MemeWriterMotif(name={self._name})"
 
+	def __str__(self) -> str:
+		output = (f'''\
+MOTIF {self.name}
+letter-probability matrix: alength= {str(self.alphabet_length)} w= {self.probability_matrix.shape[0]} nsites= {str(self.source_sites)}{f"E= {self.e_value}" if self.e_value is not None else ""}
+{array_to_string(self.probability_matrix, 6)}''')
+		if self.url is not None:
+			output += f"URL {self.url}"	
+		return output
+
+
 
 class MemeWriter:
 	"""Class for handling MEME file writing."""
@@ -108,17 +118,6 @@ class MemeWriter:
 
 	def write(self, file_path: PathLike) -> None:
 
-		def array_to_string(array: np.ndarray, precision: int) -> str:
-			"""Convert a 2D numpy array to a string with the given precision."""
-			# create a format string with the desired precision
-			float_formatter = "{:." + str(precision) + "f}"
-			
-			# manually format each float in the array and join them with spaces
-			string_rows = [" ".join(float_formatter.format(x) for x in row) for row in array]
-
-			# join rows with line breaks to retain 2D structure
-			return "\n".join(string_rows)
-
 		output = ""
 		output += f"MEME version {self._memesuite_version}\n\n"
 		if self._alphabet:
@@ -132,26 +131,29 @@ class MemeWriter:
 			output += "\n"
 			output += f"{self._background_frequencies}\n\n"
 		for motif in self._motifs:
-			output += f"MOTIF {motif.name}\n"
-			output += f"letter-probability matrix: alength= {str(motif.alphabet_length)} w= {motif.probability_matrix.shape[0]} nsites= {str(motif.source_sites)}"
-			if motif.e_value:
- 				output += f"E= {motif.e_value}"
-			output += "\n"
-			# Iterate through rows in nparray
-			output += array_to_string(motif.probability_matrix, 6)
-			output += "\n"
-			if motif.url:
-				output += f"URL {motif.url}\n"
-			output += "\n"
+			output += str(motif)
+			output += "\n\n"
 		try:
 			# Open the file in write mode
 			with open(file_path, "w") as file:
 				# Write the string to the file
 				file.write(output)
-			print(f"Successfully wrote to the file {file_path}.")
+			print(f"Successfully wrote to the file {file_path}")
 		except IOError:
-			print(f"An error occurred while writing to the file {file_path}.")
+			print(f"An error occurred while writing to the file {file_path}")
 	
 
 	def __repr__(self) -> str:
 		return f"MemeWriter(memesuite_version={self._memesuite_version}, motifs={self._motifs}, alphabet={self._alphabet}, background_frequencies={self._background_frequencies}, strands={self._strands})"
+
+
+def array_to_string(array: np.ndarray, precision: int) -> str:
+	"""Convert a 2D numpy array to a string with the given precision."""
+	# create a format string with the desired precision
+	float_formatter = "{:." + str(precision) + "f}"
+	
+	# manually format each float in the array and join them with spaces
+	string_rows = [" ".join(float_formatter.format(x) for x in row) for row in array]
+
+	# join rows with line breaks to retain 2D structure
+	return "\n".join(string_rows)
