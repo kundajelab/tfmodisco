@@ -138,7 +138,6 @@ class MemeWriter:
 			with open(file_path, "w") as file:
 				# Write the string to the file
 				file.write(output)
-			print(f"Successfully wrote to the file {file_path}")
 		except IOError:
 			print(f"An error occurred while writing to the file {file_path}")
 	
