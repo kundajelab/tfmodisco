@@ -6,15 +6,31 @@ import numpy as np
 from os import PathLike
 
 class MEMEWriterMotif:
-	"""Class for handling Motif for MEME file writing."""
+	"""Class for handling Motif for MEME file writing.
+	
+	Parameters
+	----------
+	name : str
+		The name of the motif.
+	probability_matrix : np.ndarray
+		The probability matrix of the motif.
+	alphabet : str
+		The alphabet of the motif. Used in calculating the alphabet length.
+		However, it does not work with custom alphabets currently. 
+	alphabet_length : Optional[int]
+		The length of the alphabet. Also known as 'alength' in MEME Suite.
+	source_sites : int
+		The number of source sites. Also known as 'nsites' in MEME Suite.
+	e_value : Optional[str]
+		The E-value of the motif.
+	url : Optional[str]
+		The URL of the motif.
+	"""
 
 	def __init__(
 		self,
 		name: str,
 		probability_matrix: np.ndarray,
-		# `alphabet_length` is known as 'alength' in MEME Suite.
-		alphabet_length: int,
-		# `source_sites` is known as 'nsites' in MEME Suite.
 		source_sites: int,
 		alphabet: str,
 		alphabet_length: Optional[int] = None,
@@ -67,28 +83,43 @@ letter-probability matrix: alength= {str(self.alphabet_length)} w= {self.probabi
 
 
 class MEMEWriter:
-	"""Class for handling MEME file writing."""
+	"""Class for writing MEME files based on MEME Suite specifications, from
+	user-provided motifs.
+	
+	Parameters
+	----------
+	memesuite_version : str
+		The version of MEME Suite used to create the file.
+		May also be added incrementally using `add_motif()`.
+	motifs : List[MEMEWriterMotif]
+		The motifs to be written to the file.
+	alphabet : Optional[str]
+		The alphabet of the motifs. Optional but recommended.
+		Example: "ACGT".
+	background_frequencies : Optional[str]
+		The background frequencies of the motifs.
+		Example: "A 0.25 C 0.25 G 0.25 T 0.25".
+	background_frequencies_source : Optional[str]
+		The source of the background frequencies.
+	strands : Optional[List[str]]
+		The strands of the motifs. Optional.
+		Example: "+ -".
+	"""
 
 	def __init__(
 		self,
 		memesuite_version: str,
-		# May also be added incrementally using `add_motif()`.
 		motifs: List[MEMEWriterMotif] = [],
-		# Optional (Recommended) by MEME Suite.
 		alphabet: Optional[str] = None,
 		background_frequencies: Optional[str] = None,
 		background_frequencies_source: Optional[str] = None,
-		# Optional by MEME Suite.
 		strands: Optional[List[str]] = None,
 	) -> None:
 		self._memesuite_version = memesuite_version
 		self._motifs = motifs if motifs is not None else []
-		# Alphabet example: "ACGT".
 		self._alphabet = alphabet
-		# Background frequncies example: "A 0.25 C 0.25 G 0.25 T 0.25".
 		self._background_frequencies = background_frequencies
 		self._background_frequencies_source = background_frequencies_source
-		# Strands example: "+ -".
 		self._strands = strands
 
 	@property
