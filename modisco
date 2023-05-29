@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # tf-modisco command-line tool
-# Author: Jacob Schreiber <jmschreiber91@gmail.com>
+# Author: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 
 import h5py
 import hdf5plugin
@@ -8,6 +8,7 @@ import argparse
 import modiscolite
 
 import numpy as np
+
 
 desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 	sequence and the attributions from a neural network model and return motifs
@@ -17,7 +18,7 @@ desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 
 # Read in the arguments
 parser = argparse.ArgumentParser(description=desc)
-subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', or 'convert'.", required=True, dest='cmd')
+subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', or 'meme'.", required=True, dest='cmd')
 
 motifs_parser = subparsers.add_parser("motifs", help="Run TF-MoDISco and extract the motifs.")
 motifs_parser.add_argument("-s", "--sequences", type=str,
@@ -61,6 +62,21 @@ convertback_parser.add_argument("-i", "--h5py", type=str, required=True,
 convertback_parser.add_argument("-o", "--output", type=str, required=True,
 	help="An HDF5 file formatted in the old way.")
 
+meme_parser = subparsers.add_parser("meme", help="Create a MEME file from a modisco results file.", formatter_class=argparse.RawTextHelpFormatter)
+meme_parser.add_argument("-i", "--h5py", type=str, required=True,
+	help="An HDF5 file containing the output from modiscolite.")
+meme_parser.add_argument("-t", "--datatype", type=modiscolite.util.MemeDataType, choices=list(modiscolite.util.MemeDataType), required=True,
+	help="""A case-sensitive string specifying the desired data of the output file.,
+The options are as follows:
+- 'PFM':      The position-frequency matrix.
+- 'CWM':      The contribution-weight matrix.
+- 'hCWM':     The hypothetical contribution-weight matrix; hypothetical
+              contribution scores are the contributions of nucleotides not encoded
+              by the one-hot encoding sequence. 
+- 'CWM-PFM':  The softmax of the contribution-weight matrix.
+- 'hCWM-PFM': The softmax of the hypothetical contribution-weight matrix."""
+)
+meme_parser.add_argument("-o", "--output", type=str, help="The path to the output file.")
 
 # Pull the arguments
 args = parser.parse_args()
@@ -123,6 +139,9 @@ if args.cmd == "motifs":
 		verbose=args.verbose)
 
 	modiscolite.io.save_hdf5(args.output, pos_patterns, neg_patterns)
+
+elif args.cmd == 'meme':
+	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 

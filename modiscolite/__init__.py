@@ -8,5 +8,6 @@ from . import util
 from . import tfmodisco
 from . import cluster
 from . import report
+from . import meme_writer
 
 __version__ = '2.1.1'

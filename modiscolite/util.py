@@ -1,9 +1,23 @@
 # util.py
-# Authors: Jacob Schreiber <jmschreiber91@gmail.com>
+# Authors: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+from enum import Enum
 import numpy as np
 from numba import njit
+
+
+class MemeDataType(Enum):
+	PFM = "PFM"
+	CWM = "CWM"
+	hCWM = "hCWM"
+	CWM_PFM = "CWM-PFM"
+	hCWM_PFM = "hCWM-PFM"
+
+	def __str__(self):
+		return self.value
+
+
 
 def cpu_sliding_window_sum(arr, window_size):
 	to_return = np.zeros(len(arr)-window_size+1)
