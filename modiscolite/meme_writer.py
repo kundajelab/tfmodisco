@@ -37,39 +37,15 @@ class MEMEWriterMotif:
 		e_value: Optional[str] = None,
 		url: Optional[str] = None
 	) -> None:
-		self._name = name
-		self._probability_matrix = probability_matrix
-		self._source_sites = source_sites
-		self._alphabet_length = len(alphabet) if alphabet_length is None else alphabet_length
-		self._e_value = e_value
-		self._url = url
-
-	@property
-	def name(self):
-		return self._name
-
-	@property
-	def probability_matrix(self):
-		return self._probability_matrix
-
-	@property
-	def alphabet_length(self):
-		return self._alphabet_length
-	
-	@property
-	def source_sites(self):
-		return self._source_sites
-
-	@property
-	def e_value(self):
-		return self._e_value
-
-	@property
-	def url(self):
-		return self._url
+		self.name = name
+		self.probability_matrix = probability_matrix
+		self.source_sites = source_sites
+		self.alphabet_length = len(alphabet) if alphabet_length is None else alphabet_length
+		self.e_value = e_value
+		self.url = url
 
 	def __repr__(self) -> str:
-		return f"MEMEWriterMotif(name={self._name})"
+		return f"MEMEWriterMotif(name={self.name})"
 
 	def __str__(self) -> str:
 		output = (f'''\
@@ -115,55 +91,31 @@ class MEMEWriter:
 		background_frequencies_source: Optional[str] = None,
 		strands: Optional[List[str]] = None,
 	) -> None:
-		self._memesuite_version = memesuite_version
-		self._motifs = motifs if motifs is not None else []
-		self._alphabet = alphabet
-		self._background_frequencies = background_frequencies
-		self._background_frequencies_source = background_frequencies_source
-		self._strands = strands
-
-	@property
-	def memesuite_version(self):
-		return self._memesuite_version
-
-	@property
-	def motifs(self):
-		return self._motifs
-	
-	@property
-	def alphabet(self):
-		return self._alphabet
-	
-	@property
-	def background_frequencies(self):
-		return self._background_frequencies
-
-	@property
-	def background_frequencies_source(self):
-		return self._background_frequencies_source
-	
-	@property
-	def strands(self):
-		return self._strands
+		self.memesuite_version = memesuite_version
+		self.motifs = motifs if motifs is not None else []
+		self.alphabet = alphabet
+		self.background_frequencies = background_frequencies
+		self.background_frequencies_source = background_frequencies_source
+		self.strands = strands
 
 	def add_motif(self, motif: MEMEWriterMotif) -> None:
-		self._motifs.append(motif)
+		self.motifs.append(motif)
 
 	def write(self, file_path: PathLike) -> None:
 
 		output = ""
-		output += f"MEME version {self._memesuite_version}\n\n"
-		if self._alphabet:
-			output += f"ALPHABET= {self._alphabet}\n\n"
-		if self._strands:
-			output += f"strands: {self._strands}\n\n"
-		if self._background_frequencies:
+		output += f"MEME version {self.memesuite_version}\n\n"
+		if self.alphabet:
+			output += f"ALPHABET= {self.alphabet}\n\n"
+		if self.strands:
+			output += f"strands: {self.strands}\n\n"
+		if self.background_frequencies:
 			output += f"Background letter frequencies"
-			if self._background_frequencies_source:
-				output += f" (from {self._background_frequencies_source}):"
+			if self.background_frequencies_source:
+				output += f" (from {self.background_frequencies_source}):"
 			output += "\n"
-			output += f"{self._background_frequencies}\n\n"
-		for motif in self._motifs:
+			output += f"{self.background_frequencies}\n\n"
+		for motif in self.motifs:
 			output += str(motif)
 			output += "\n\n"
 		try:
@@ -174,9 +126,8 @@ class MEMEWriter:
 		except IOError:
 			print(f"An error occurred while writing to the file {file_path}")
 	
-
 	def __repr__(self) -> str:
-		return f"MEMEWriter(memesuite_version={self._memesuite_version}, motifs={self._motifs}, alphabet={self._alphabet}, background_frequencies={self._background_frequencies}, strands={self._strands})"
+		return f"MEMEWriter(memesuite_version={self.memesuite_version}, motifs={self.motifs}, alphabet={self.alphabet}, background_frequencies={self.background_frequencies}, strands={self.strands})"
 
 
 def array_to_string(array: np.ndarray, precision: int) -> str:
