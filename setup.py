@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
 	name='modisco-lite',
-	version='2.1.1',
+	version='2.2.0',
 	author='Jacob Schreiber',
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
