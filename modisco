@@ -18,7 +18,7 @@ desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 
 # Read in the arguments
 parser = argparse.ArgumentParser(description=desc)
-subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', or 'meme'.", required=True, dest='cmd')
+subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', 'meme, or 'seqlet-bed'.", required=True, dest='cmd')
 
 motifs_parser = subparsers.add_parser("motifs", help="Run TF-MoDISco and extract the motifs.")
 motifs_parser.add_argument("-s", "--sequences", type=str,
@@ -77,6 +77,12 @@ The options are as follows:
 - 'hCWM-PFM': The softmax of the hypothetical contribution-weight matrix."""
 )
 meme_parser.add_argument("-o", "--output", type=str, help="The path to the output file.")
+
+seqlet_bed_parser = subparsers.add_parser("seqlet-bed", help="Create a BED file of seqlets from a modisco results file.")
+seqlet_bed_parser.add_argument("-i", "--h5py", type=str, required=True,
+	help="An HDF5 file containing the output from modiscolite.")
+seqlet_bed_parser.add_argument("-o", "--output", type=str, required=True,
+	help="The path to the output file.")
 
 # Pull the arguments
 args = parser.parse_args()
@@ -142,6 +148,9 @@ if args.cmd == "motifs":
 
 elif args.cmd == 'meme':
 	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
+
+elif args.cmd == 'seqlet-bed':
+	modiscolite.io.write_bed_from_h5(args.h5py, args.output)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 
