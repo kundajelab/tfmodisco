@@ -88,6 +88,10 @@ seqlet_bed_parser.add_argument("-o", "--output", type=str, required=True,
 seqlet_bed_parser.add_argument("-p", "--peaksfile", type=str, required=True,
 	help="The path to the peaks file. This is to compute the absolute start and\
 end positions of the seqlets within a reference genome.")
+seqlet_bed_parser.add_argument("-w", "--windowsize", type=int,
+	help="""Optional. This is for backwards compatibility for older modisco h5
+files that don't contain the window size as an attribute. This should be set
+the to size of the window around the peak center that was used for.""")
 
 # Pull the arguments
 args = parser.parse_args()
@@ -155,7 +159,7 @@ elif args.cmd == 'meme':
 	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
 
 elif args.cmd == 'seqlet-bed':
-	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output)
+	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output, args.windowsize)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 

@@ -7,7 +7,7 @@ import os
 import h5py
 import hdf5plugin
 
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import scipy
@@ -225,7 +225,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 	writer.write(new_output_filename)
 
 
-def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike) -> None:
+def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, window_size: Union[None, int]) -> None:
 	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
 
 	Parameters
@@ -246,7 +246,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 	with h5py.File(modisco_results_filepath, 'r') as grp:
 
 		writer = bed_writer.BEDWriter()
-		window_size = grp.attrs['window_size']
+		window_size = grp.attrs['window_size'] if window_size is None else window_size
 
 		for (strand_dir, strand_char) in [('pos', '+'), ('neg', '-')]:
 
