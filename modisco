@@ -155,7 +155,7 @@ elif args.cmd == 'meme':
 	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
 
 elif args.cmd == 'seqlet-bed':
-	modiscolite.io.write_bed_from_h5(args.h5py, args.output)
+	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 
