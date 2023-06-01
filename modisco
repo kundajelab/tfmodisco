@@ -9,6 +9,8 @@ import modiscolite
 
 import numpy as np
 
+from modiscolite.util import calculate_window_end_offset, calculate_window_start_offset
+
 
 desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 	sequence and the attributions from a neural network model and return motifs
@@ -97,15 +99,15 @@ if args.cmd == "motifs":
 
 		try:
 			center = scores['hyp_scores'].shape[1] // 2
-			start = center - args.window // 2
-			end = center + args.window // 2
+			start = calculate_window_start_offset(center, args.window)
+			end = calculate_window_end_offset(center, args.window)
 			
 			attributions = scores['hyp_scores'][:, start:end, :]
 			sequences = scores['input_seqs'][:, start:end, :]
 		except KeyError:
 			center = scores['shap']['seq'].shape[2] // 2
-			start = center - args.window // 2
-			end = center + args.window // 2
+			start = calculate_window_start_offset(center, args.window)
+			end = calculate_window_end_offset(center, args.window)
 			
 			attributions = scores['shap']['seq'][:, :, start:end].transpose(0, 2, 1)
 			sequences = scores['raw']['seq'][:, :, start:end].transpose(0, 2, 1)
@@ -124,8 +126,8 @@ if args.cmd == "motifs":
 			attributions = np.load(args.attributions)['arr_0']
 
 		center = sequences.shape[2] // 2
-		start = center - args.window // 2
-		end = center + args.window // 2
+		start = calculate_window_start_offset(center, args.window)
+		end = calculate_window_end_offset(center, args.window)
 
 		sequences = sequences[:, :, start:end].transpose(0, 2, 1)
 		attributions = attributions[:, :, start:end].transpose(0, 2, 1)

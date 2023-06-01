@@ -132,3 +132,11 @@ def get_2d_data_from_patterns(patterns, transformer='l1', include_hypothetical=T
 		all_rev_data.append(rev_data)
 
 	return np.array(all_fwd_data), np.array(all_rev_data)
+
+
+def calculate_window_start_offset(center: int, window_size: int) -> int:
+	return center - window_size // 2
+
+
+def calculate_window_end_offset(center: int, window_size: int) -> int:
+	return center + window_size // 2
