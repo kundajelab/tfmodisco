@@ -245,61 +245,65 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 
 	with h5py.File(modisco_results_filepath, 'r') as grp:
 
+		writer = bed_writer.BEDWriter()
 		window_size = grp.attrs['window_size']
 
-		writer = bed_writer.BEDWriter()
+		for (strand_dir, strand_char) in [('pos', '+'), ('neg', '-')]:
 
-		for (pattern_name, datasets) in grp['pos_patterns'].items():
+			patterns_category = f'{strand_dir}_patterns'
+			if patterns_category not in grp:
+				continue
 
-			track = bed_writer.BEDTrack(
-				track_line=bed_writer.BEDTrackLine(
-					arguments=OrderedDict([
-						('name', pattern_name),
-						('description', f"TF-MoDISco pattern '{pattern_name}' on the positive strand.")
-					])
+			for (pattern_name, datasets) in grp[patterns_category].items():
+
+				track = bed_writer.BEDTrack(
+					track_line=bed_writer.BEDTrackLine(
+						arguments=OrderedDict([
+							('name', pattern_name),
+							('description', f"TF-MoDISco pattern '{pattern_name}' on the positive strand.")
+						])
+					)
 				)
-			)
 
-			assert datasets['seqlets']['start'].shape[0] == datasets['seqlets']['end'].shape[0]
+				assert datasets['seqlets']['start'].shape[0] == datasets['seqlets']['end'].shape[0]
 
-			# Process each seqlet within the pattern.
-			for idx in range(datasets['seqlets']['start'].shape[0]):
-				seqlet_name = f'{pattern_name}.{idx}'
+				# Process each seqlet within the pattern.
+				for idx in range(datasets['seqlets']['start'].shape[0]):
+					seqlet_name = f'{pattern_name}.{idx}'
 
-				row_num = datasets['seqlets']['example_idx'][idx]
-				peak_row = peak_rows[row_num].split('\t')
-				chrom = peak_row[0]
-				score = peak_row[4]
+					row_num = datasets['seqlets']['example_idx'][idx]
+					peak_row = peak_rows[row_num].split('\t')
+					chrom = peak_row[0]
+					score = peak_row[4]
+					
+					# Seqlet starts and ends are offsets relative to the given
+					# window, and the window's centers aligned with the peak's
+					# center.
+
+					# Calculate the start and ends.
+					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
+
+					window_center_offset = window_size // 2
+
+					seqlet_start_offset = datasets['seqlets']['start'][idx]
+					seqlet_end_offset = datasets['seqlets']['end'][idx]
+
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
+					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
+
+					track.add_row(
+						bed_writer.BEDRow(
+							chrom=chrom,
+							chrom_start=absolute_seqlet_start,
+							chrom_end=absolute_seqlet_end,
+							name=seqlet_name,
+							score=score,
+							strand=strand_char
+					))
 				
-				# Seqlet starts and ends are offsets relative to the given
-				# window, and the window's centers aligned with the peak's
-				# center.
-
-				# Calculate the start and ends.
-				absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
-
-				window_center_offset = window_size // 2
-
-				seqlet_start_offset = datasets['seqlets']['start'][idx]
-				seqlet_end_offset = datasets['seqlets']['end'][idx]
-
-				absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
-				absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
-
-				track.add_row(
-					bed_writer.BEDRow(
-						chrom=chrom,
-						chrom_start=absolute_seqlet_start,
-						chrom_end=absolute_seqlet_end,
-						name=seqlet_name,
-						score=score,
-						strand='+'
-				))
-			
-			writer.add_track(track)
+				writer.add_track(track)
 		
 		writer.write(output_filepath)
-
 
 
 def convert_new_to_old(new_format_filename, old_format_filename):
