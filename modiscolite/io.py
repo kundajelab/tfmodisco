@@ -6,6 +6,8 @@ import os
 import h5py
 import hdf5plugin
 
+from typing import List
+
 import numpy as np
 import scipy
 
@@ -128,7 +130,7 @@ def save_pattern(pattern, grp):
 			save_pattern(subpattern, subpattern_grp)
 
 
-def save_hdf5(filename, pos_patterns, neg_patterns):
+def save_hdf5(filename: os.PathLike, pos_patterns, neg_patterns, window_size: int):
 	"""Save the results of tf-modisco to a h5 file.
 
 	This function will save the SeqletSets and their associated seqlets in
@@ -150,6 +152,8 @@ def save_hdf5(filename, pos_patterns, neg_patterns):
 	"""
 
 	grp = h5py.File(filename, 'w')
+	
+	grp.attrs['window_size'] = window_size
 	
 	if pos_patterns is not None:
 		pos_group = grp.create_group("pos_patterns")

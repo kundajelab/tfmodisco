@@ -83,6 +83,9 @@ seqlet_bed_parser.add_argument("-i", "--h5py", type=str, required=True,
 	help="An HDF5 file containing the output from modiscolite.")
 seqlet_bed_parser.add_argument("-o", "--output", type=str, required=True,
 	help="The path to the output file.")
+seqlet_bed_parser.add_argument("-p", "--peaksfile", type=str, required=True,
+	help="The path to the peaks file. This is to compute the absolute start and\
+end positions of the seqlets within a reference genome.")
 
 # Pull the arguments
 args = parser.parse_args()
@@ -144,7 +147,7 @@ if args.cmd == "motifs":
 		n_leiden_runs=args.n_leiden,
 		verbose=args.verbose)
 
-	modiscolite.io.save_hdf5(args.output, pos_patterns, neg_patterns)
+	modiscolite.io.save_hdf5(args.output, pos_patterns, neg_patterns, args.window)
 
 elif args.cmd == 'meme':
 	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
