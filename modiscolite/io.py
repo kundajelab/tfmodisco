@@ -15,6 +15,7 @@ import scipy
 from . import util
 from . import meme_writer
 from . import bed_writer
+from . import fasta_writer
 
 def convert(old_filename, filename):
 	old_grp = h5py.File(old_filename, "r")['metacluster_idx_to_submetacluster_results']
@@ -302,6 +303,78 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 					))
 				
 				writer.add_track(track)
+		
+		writer.write(output_filepath)
+
+
+def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, fast_filepath: os.PathLike, output_filepath: os.PathLike, window_size: Union[None, int]) -> None:
+	"""Write a FASTA file from an h5 file output from TF-MoDISco. 
+
+	The results will look like:
+	><chrom>:<start>-<end> <strand> <pattern_name>.<seqlet_id>
+	FASTA sequence extracted from a fast file
+
+	Parameters
+	----------
+	modisco_results_filepath: str
+		The name of the h5 file to read.
+	fast_filepath: str
+		The name of the peaks file to read.
+	output_filepath: str
+		The name of the FASTA file to write.
+	"""
+	ref_seq = None
+	with open(fast_filepath, 'r') as fast_file:
+		ref_seq = fast_file.read().replace('\n', '')
+
+	peak_rows = None
+	with open(peaks_filepath, 'r') as peaks_file:
+		peak_rows = peaks_file.read().splitlines()
+
+	with h5py.File(modisco_results_filepath, 'r') as grp:
+
+		writer = fasta_writer.FASTAWriter()
+		if window_size is None:
+			if 'window_size' not in grp.attrs:
+				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
+			window_size = int(grp.attrs['window_size'])
+
+		for (strand_dir, strand_char) in [('pos', '+'), ('neg', '-')]:
+
+			patterns_category = f'{strand_dir}_patterns'
+			if patterns_category not in grp:
+				continue
+
+			for (pattern_name, datasets) in grp[patterns_category].items():
+
+				assert datasets['seqlets']['start'].shape[0] == datasets['seqlets']['end'].shape[0]
+
+				# Process each seqlet within the pattern.
+				for idx in range(datasets['seqlets']['start'].shape[0]):
+
+					row_num = datasets['seqlets']['example_idx'][idx]
+					peak_row = peak_rows[row_num].split('\t')
+					chrom = peak_row[0]
+
+					# Calculate the start and ends.
+					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
+
+					window_center_offset = window_size // 2
+
+					seqlet_start_offset = datasets['seqlets']['start'][idx]
+					seqlet_end_offset = datasets['seqlets']['end'][idx]
+
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
+					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
+
+					sequence = ref_seq[absolute_seqlet_start:absolute_seqlet_end+1]
+
+					writer.add_pair(
+						fasta_writer.FASTAEntry(
+							header=f'{chrom}:{absolute_seqlet_start}-{absolute_seqlet_end} {strand_char} {pattern_name}.{idx}',
+							sequence=sequence
+						)
+					)
 		
 		writer.write(output_filepath)
 
