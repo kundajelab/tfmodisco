@@ -37,7 +37,7 @@ class BEDTrackLine:
 	def __str__(self) -> str:
 		output = "track"
 		for key, value in self.arguments.items():
-			output += f" {key}={value}"
+			output += f' {key}="{value}"'
 		return output
 
 
