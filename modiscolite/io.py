@@ -247,7 +247,10 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 	with h5py.File(modisco_results_filepath, 'r') as grp:
 
 		writer = bed_writer.BEDWriter()
-		window_size = grp.attrs['window_size'] if window_size is None else window_size
+		if window_size is None:
+			if 'window_size' not in grp.attrs:
+				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
+			window_size = int(grp.attrs['window_size'])
 
 		for (strand_dir, strand_char) in [('pos', '+'), ('neg', '-')]:
 
