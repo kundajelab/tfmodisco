@@ -252,7 +252,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
 			window_size = int(grp.attrs['window_size'])
 
-		for (strand_dir, strand_char) in [('pos', '+'), ('neg', '-')]:
+		for strand_dir in ['pos', 'neg']:
 
 			patterns_category = f'{strand_dir}_patterns'
 			if patterns_category not in grp:
@@ -294,6 +294,8 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 
 					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
 					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
+
+					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
 
 					track.add_row(
 						bed_writer.BEDRow(
@@ -342,7 +344,7 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
 			window_size = int(grp.attrs['window_size'])
 
-		for (strand_dir, strand_char) in [('pos', '+'), ('neg', '-')]:
+		for strand_dir in ['pos', 'neg']:
 
 			patterns_category = f'{strand_dir}_patterns'
 			if patterns_category not in grp:
@@ -372,9 +374,11 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 
 					sequence = ref_seq[absolute_seqlet_start:absolute_seqlet_end+1]
 
+					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
+
 					writer.add_pair(
 						fasta_writer.FASTAEntry(
-							header=f'{chrom}:{absolute_seqlet_start}-{absolute_seqlet_end} {strand_char} {pattern_name}.{idx}',
+							header=f'{chrom}:{absolute_seqlet_start}-{absolute_seqlet_end} dir={strand_char} {pattern_name}.{idx}',
 							sequence=sequence
 						)
 					)
