@@ -157,7 +157,7 @@ def filter_bed_rows_by_chrom(peak_rows: List[str], valid_chroms: List[str]):
 		>>> result = filter_bed_rows_by_chrom(peak_rows, valid_chroms)
 	"""
 	try:
-		return [row for row in peak_rows if row[3:5].replace('\t', '') in valid_chroms]
+		return [row for row in peak_rows if row.split('\t')[0] in valid_chroms]
 	except IndexError:
 		raise IndexError(textwrap.dedent(f'''\
 			An error occurred while processing the BED file rows.

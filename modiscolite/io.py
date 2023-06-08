@@ -8,7 +8,7 @@ import textwrap
 import h5py
 import hdf5plugin
 
-from typing import List, Union
+from typing import List, Literal, Union
 
 import numpy as np
 import scipy
@@ -227,7 +227,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 		print(writer.get_output())
 
 
-def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, valid_chroms: List[str], window_size: Union[None, int], is_quiet: bool) -> None:
+def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, valid_chroms: Union[List[str], Literal['*']], window_size: Union[None, int], is_quiet: bool) -> None:
 	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
 
 	Parameters
@@ -253,7 +253,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 		# Filter here because each seqlet's `example_idx` is based on a list of
 		# just the target chrom(s).
 		peak_rows_filtered = util.filter_bed_rows_by_chrom(peak_rows,
-						     valid_chroms)
+						     valid_chroms) if valid_chroms != '*' else peak_rows
 
 	with h5py.File(modisco_results_filepath, 'r') as grp:
 
@@ -329,7 +329,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 			print(writer.get_output())
 
 
-def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, sequences_file: os.PathLike, output_filepath: Union[os.PathLike, None], valid_chroms: List[str], window_size: Union[None, int], is_quiet: bool) -> None:
+def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, sequences_file: os.PathLike, output_filepath: Union[os.PathLike, None], valid_chroms: Union[List[str], Literal['*']], window_size: Union[None, int], is_quiet: bool) -> None:
 	"""Write a FASTA file from an h5 file output from TF-MoDISco. 
 
 	The results will look like:
@@ -363,7 +363,7 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 		# Filter here because each seqlet's `example_idx` is based on a list of
 		# just the target chrom(s).
 		peak_rows_filtered = util.filter_bed_rows_by_chrom(peak_rows,
-						     valid_chroms)
+						     valid_chroms) if valid_chroms != '*' else peak_rows
 
 	sequences = np.load(sequences_file)
 
