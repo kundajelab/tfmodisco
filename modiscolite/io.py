@@ -267,9 +267,9 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 				exit(1)
 			window_size = int(grp.attrs['window_size'])
 
-		for strand_dir in ['pos', 'neg']:
+		for contribution_dir in ['pos', 'neg']:
 
-			patterns_category = f'{strand_dir}_patterns'
+			patterns_category = f'{contribution_dir}_patterns'
 			if patterns_category not in grp:
 				continue
 
@@ -393,9 +393,9 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
 			window_size = int(grp.attrs['window_size'])
 
-		for strand_dir in ['pos', 'neg']:
+		for contribution_dir in ['pos', 'neg']:
 
-			patterns_category = f'{strand_dir}_patterns'
+			patterns_category = f'{contribution_dir}_patterns'
 			if patterns_category not in grp:
 				continue
 
