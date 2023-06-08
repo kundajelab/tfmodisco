@@ -45,7 +45,7 @@ class FASTAWriter:
 		return f"FASTAWriter(entries={self.entries})"
 	
 	def __str__(self) -> str:
-		return "\n\n".join([str(entry) for entry in self.entries])
+		return "\n".join([str(entry) for entry in self.entries])
 	
 	def add_pair(self, pair: FASTAEntry) -> None:
 		"""Add a pair to the FASTAWriter.
