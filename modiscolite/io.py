@@ -407,7 +407,7 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 					peak_row = peak_rows_filtered[row_num].split('\t')
 					chrom = peak_row[0]
 
-					seqlet_start_offset = datasets['seqlets']['start'][idx]
+					seqlet_start_offset = datasets['seqlets']['start'][idx] + 1
 					seqlet_end_offset = datasets['seqlets']['end'][idx]
 
 					nucleotide_tracks = sequences[row_num]
@@ -422,7 +422,7 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 					# Calculate the start and ends.
 					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
 					window_center_offset = window_size // 2
-					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset + 1
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
 					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
 
 					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
