@@ -65,10 +65,13 @@ convertback_parser.add_argument("-i", "--h5py", type=str, required=True,
 convertback_parser.add_argument("-o", "--output", type=str, required=True,
 	help="An HDF5 file formatted in the old way.")
 
-meme_parser = subparsers.add_parser("meme", help="Create a MEME file from a modisco results file.", formatter_class=argparse.RawTextHelpFormatter)
-meme_parser.add_argument("-i", "--h5py", type=str, required=True,
+meme_parser = subparsers.add_parser("meme", help="""Output a MEME file from a
+modisco results file to stdout (default) and/or to a file (if specified).""",
+	formatter_class=argparse.RawTextHelpFormatter)
+meme_parser.add_argument("-i", "--h5py", type=str,
 	help="An HDF5 file containing the output from modiscolite.")
-meme_parser.add_argument("-t", "--datatype", type=modiscolite.util.MemeDataType, choices=list(modiscolite.util.MemeDataType), required=True,
+meme_parser.add_argument("-t", "--datatype", type=modiscolite.util.MemeDataType,
+	choices=list(modiscolite.util.MemeDataType), required=True,
 	help="""A case-sensitive string specifying the desired data of the output file.,
 The options are as follows:
 - 'PFM':      The position-frequency matrix.
@@ -80,11 +83,15 @@ The options are as follows:
 - 'hCWM-PFM': The softmax of the hypothetical contribution-weight matrix."""
 )
 meme_parser.add_argument("-o", "--output", type=str, help="The path to the output file.")
+meme_parser.add_argument("-q", "--quiet", action="store_true", default=False,
+	help="Suppress output to stdout.")
 
-seqlet_bed_parser = subparsers.add_parser("seqlet-bed", help="Create a BED file of seqlets from a modisco results file.")
+seqlet_bed_parser = subparsers.add_parser("seqlet-bed", help="""Output a BED
+file of seqlets from a modisco results file to stdout (default) and/or to a
+file (if specified).""")
 seqlet_bed_parser.add_argument("-i", "--h5py", type=str, required=True,
 	help="An HDF5 file containing the output from modiscolite.")
-seqlet_bed_parser.add_argument("-o", "--output", type=str, required=True,
+seqlet_bed_parser.add_argument("-o", "--output", type=str, default=None,
 	help="The path to the output file.")
 seqlet_bed_parser.add_argument("-p", "--peaksfile", type=str, required=True,
 	help="The path to the peaks file. This is to compute the absolute start and\
@@ -93,15 +100,19 @@ seqlet_bed_parser.add_argument("-c", "--chroms", type=str, required=True,
 	help="""A comma-delimited list of chromosomes, or '*', denoting which
 chromosomes to process. Should be the same set of chromosomes used during
 interpretation. Examples: 'chr1,chr2,chrX' || '*' || '1,2,X'.""")
+seqlet_bed_parser.add_argument("-q", "--quiet", action="store_true", default=False,
+	help="Suppress output to stdout.")
 seqlet_bed_parser.add_argument("-w", "--windowsize", type=int,
 	help="""Optional. This is for backwards compatibility for older modisco h5
 files that don't contain the window size as an attribute. This should be set
 the to size of the window around the peak center that was used for.""")
 
-seqlet_fasta_parser = subparsers.add_parser("seqlet-fasta", help="Create a FASTA file of seqlets from a modisco results file.")
+seqlet_fasta_parser = subparsers.add_parser("seqlet-fasta", help="""Output a FASTA 
+file of seqlets from a modisco results file to stdout (default) and/or to a
+file (if specified).""")
 seqlet_fasta_parser.add_argument("-i", "--h5py", type=str, required=True,
 	help="An HDF5 file containing the output from modiscolite.")
-seqlet_fasta_parser.add_argument("-o", "--output", type=str, required=True,
+seqlet_fasta_parser.add_argument("-o", "--output", type=str, default=None,
 	help="The path to the output file.")
 seqlet_fasta_parser.add_argument("-p", "--peaksfile", type=str, required=True,
 	help="The path to the peaks file. This is to compute the absolute start and\
@@ -112,6 +123,8 @@ seqlet_fasta_parser.add_argument("-c", "--chroms", type=str, required=True,
 	help="""A comma-delimited list of chromosomes, or '*', denoting which
 chromosomes to process. Should be the same set of chromosomes used during
 interpretation. Examples: 'chr1,chr2,chrX' || '*' || '1,2,X'.""")
+seqlet_fasta_parser.add_argument("-q", "--quiet", action="store_true", default=False,
+	help="Suppress output to stdout.")
 seqlet_fasta_parser.add_argument("-w", "--windowsize", type=int,
 	help="""Optional. This is for backwards compatibility for older modisco h5
 files that don't contain the window size as an attribute. This should be set
@@ -199,13 +212,13 @@ if args.cmd == "motifs":
 	modiscolite.io.save_hdf5(args.output, pos_patterns, neg_patterns, args.window)
 
 elif args.cmd == 'meme':
-	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
+	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output, args.quiet)
 
 elif args.cmd == 'seqlet-bed':
-	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize)
+	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize, args.quiet)
 
 elif args.cmd == 'seqlet-fasta':
-	modiscolite.io.write_fasta_from_h5(args.h5py, args.peaksfile, args.sequences, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize)
+	modiscolite.io.write_fasta_from_h5(args.h5py, args.peaksfile, args.sequences, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize, args.quiet)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 

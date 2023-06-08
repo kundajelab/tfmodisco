@@ -172,7 +172,7 @@ def save_hdf5(filename: os.PathLike, pos_patterns, neg_patterns, window_size: in
 			save_pattern(pattern, neg_pattern)
 
 
-def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, output_filename: os.PathLike) -> None:
+def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, output_filename: Union[os.PathLike, None], is_quiet: bool) -> None:
 	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
 
 	Parameters
@@ -191,6 +191,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 		alphabet=alphabet,
 		background_frequencies='A 0.25 C 0.25 G 0.25 T 0.25'
 	)
+
 
 	with h5py.File(filename, 'r') as grp:
 		for (name, datasets) in grp['pos_patterns'].items():
@@ -220,14 +221,13 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 
 			writer.add_motif(motif)
 	
-	new_output_filename = output_filename
-	if output_filename is None:
-		file_without_extension = os.path.splitext(filename)[0]
-		new_output_filename = f'{file_without_extension}.{datatype.name}.meme'
-	writer.write(new_output_filename)
+	if output_filename is not None:
+		writer.write(output_filename)
+	if not is_quiet:
+		print(writer.get_output())
 
 
-def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, valid_chroms: List[str], window_size: Union[None, int]) -> None:
+def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, valid_chroms: List[str], window_size: Union[None, int], is_quiet: bool) -> None:
 	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
 
 	Parameters
@@ -323,10 +323,13 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 				
 				writer.add_track(track)
 		
-		writer.write(output_filepath)
+		if output_filepath is not None:
+			writer.write(output_filepath)
+		if not is_quiet:
+			print(writer.get_output())
 
 
-def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, sequences_file: os.PathLike, output_filepath: os.PathLike, valid_chroms: List[str], window_size: Union[None, int]) -> None:
+def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, sequences_file: os.PathLike, output_filepath: Union[os.PathLike, None], valid_chroms: List[str], window_size: Union[None, int], is_quiet: bool) -> None:
 	"""Write a FASTA file from an h5 file output from TF-MoDISco. 
 
 	The results will look like:
@@ -434,7 +437,10 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 						)
 					)
 		
-		writer.write(output_filepath)
+		if output_filepath is not None:
+			writer.write(output_filepath)
+		if not is_quiet:
+			print(writer.get_output())
 
 
 def convert_new_to_old(new_format_filename, old_format_filename):
