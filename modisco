@@ -89,6 +89,10 @@ seqlet_bed_parser.add_argument("-o", "--output", type=str, required=True,
 seqlet_bed_parser.add_argument("-p", "--peaksfile", type=str, required=True,
 	help="The path to the peaks file. This is to compute the absolute start and\
 end positions of the seqlets within a reference genome, as well as the chroms.")
+seqlet_bed_parser.add_argument("-c", "--chroms", type=str, required=True,
+	help="""A comma-delimited list of chromosomes, or '*', denoting which
+chromosomes to process. Should be the same set of chromosomes used during
+interpretation. Examples: 'chr1,chr2,chrX' || '*' || '1,2,X'.""")
 seqlet_bed_parser.add_argument("-w", "--windowsize", type=int,
 	help="""Optional. This is for backwards compatibility for older modisco h5
 files that don't contain the window size as an attribute. This should be set
@@ -198,7 +202,7 @@ elif args.cmd == 'meme':
 	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
 
 elif args.cmd == 'seqlet-bed':
-	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output, args.windowsize)
+	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize)
 
 elif args.cmd == 'seqlet-fasta':
 	modiscolite.io.write_fasta_from_h5(args.h5py, args.peaksfile, args.sequences, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize)

@@ -227,7 +227,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 	writer.write(new_output_filename)
 
 
-def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, window_size: Union[None, int]) -> None:
+def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, valid_chroms: List[str], window_size: Union[None, int]) -> None:
 	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
 
 	Parameters
@@ -237,13 +237,23 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 	peaks_filepath: str
 		The name of the peaks file to read.
 	output_filepath: str
-		The name of the MEME file to write.
+		The name of the BED file to write.
+	valid_chroms: list
+		A list of valid chromosomes to filter the peaks file by.
+		Example: ['chr1', 'chr2', 'chrX'] || ['1', '2', 'X']
+	window_size: int or None
+		The window size to use for the BED file. If None, the window size will
+		be read from the h5 file.
 	"""
 
 	# Store the entire peaks file in memory.
-	peak_rows = None
+	peak_rows_filtered = None
 	with open(peaks_filepath, 'r') as peaks_file:
 		peak_rows = peaks_file.read().splitlines()
+		# Filter here because each seqlet's `example_idx` is based on a list of
+		# just the target chrom(s).
+		peak_rows_filtered = util.filter_bed_rows_by_chrom(peak_rows,
+						     valid_chroms)
 
 	with h5py.File(modisco_results_filepath, 'r') as grp:
 
@@ -281,7 +291,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 					seqlet_name = f'{pattern_name}.{idx}'
 
 					row_num = datasets['seqlets']['example_idx'][idx]
-					peak_row = peak_rows[row_num].split('\t')
+					peak_row = peak_rows_filtered[row_num].split('\t')
 					chrom = peak_row[0]
 					score = peak_row[4]
 					
@@ -296,8 +306,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 
 					seqlet_start_offset = datasets['seqlets']['start'][idx]
 					seqlet_end_offset = datasets['seqlets']['end'][idx]
-
-					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset + 1
 					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
 
 					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
@@ -328,20 +337,30 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 	----------
 	modisco_results_filepath: str
 		The name of the h5 file to read.
-	fast_filepath: str
+	peaks_filepath: str
 		The name of the peaks file to read.
+	sequences_file: str
+		The name of the sequences file to read.
 	output_filepath: str
 		The name of the FASTA file to write.
+	valid_chroms: List[str]
+		The list of valid chromosomes to consider.
+		Example: ['chr1', 'chr2', 'chrX'] || ['1', '2', 'X']
+	window_size: Union[None, int]
+		The window size to use when extracting sequences. If None, then the
+		window size will be read from the h5 file.
 	"""
 
 	# Note: Make sure this alphabet's order matches the order of the nucleotide tracks.
 	alphabet = ['A', 'C', 'G', 'T']
 
-	peak_rows = None
+	peak_rows_filtered = None
 	with open(peaks_filepath, 'r') as peaks_file:
 		peak_rows = peaks_file.read().splitlines()
-		# This list comprehension filters out the peaks that are not in the valid_chroms list.
-		peak_rows_filtered = [row for row in peak_rows if row[3:5].replace('\t', '') in valid_chroms]
+		# Filter here because each seqlet's `example_idx` is based on a list of
+		# just the target chrom(s).
+		peak_rows_filtered = util.filter_bed_rows_by_chrom(peak_rows,
+						     valid_chroms)
 
 	sequences = np.load(sequences_file)
 
