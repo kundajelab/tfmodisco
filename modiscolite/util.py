@@ -136,12 +136,8 @@ def get_2d_data_from_patterns(patterns, transformer='l1', include_hypothetical=T
 	return np.array(all_fwd_data), np.array(all_rev_data)
 
 
-def calculate_window_start_offset(center: int, window_size: int) -> int:
-	return center - window_size // 2
-
-
-def calculate_window_end_offset(center: int, window_size: int) -> int:
-	return center + window_size // 2
+def calculate_window_offsets(center: int, window_size: int) -> tuple:
+	return (center - window_size // 2, center + window_size // 2)
 
 
 def filter_bed_rows_by_chrom(peak_rows: List[str], valid_chroms: List[str]):
