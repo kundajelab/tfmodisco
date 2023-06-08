@@ -21,7 +21,7 @@ desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 
 # Read in the arguments
 parser = argparse.ArgumentParser(description=desc)
-subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', 'meme', 'seqlet-bed', or 'seqlet-fast'.", required=True, dest='cmd')
+subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', 'meme', 'seqlet-bed', or 'seqlet-fasta'.", required=True, dest='cmd')
 
 motifs_parser = subparsers.add_parser("motifs", help="Run TF-MoDISco and extract the motifs.")
 motifs_parser.add_argument("-s", "--sequences", type=str,
