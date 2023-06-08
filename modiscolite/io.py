@@ -304,9 +304,9 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 
 					window_center_offset = window_size // 2
 
-					seqlet_start_offset = datasets['seqlets']['start'][idx]
+					seqlet_start_offset = datasets['seqlets']['start'][idx] + 1
 					seqlet_end_offset = datasets['seqlets']['end'][idx]
-					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset + 1
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
 					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
 
 					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
