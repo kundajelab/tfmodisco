@@ -258,6 +258,19 @@ class BEDWriter:
 		self.tracks.append(track)
 
 
+	def get_output(
+		self
+	) -> str:
+		"""Get the output string for the BED file.
+
+		Returns
+		-------
+		str
+			The output string for the BED file.
+		"""
+		return "\n".join([str(track) for track in self.tracks])
+
+
 	def write(
 		self,
 		file: PathLike
@@ -270,7 +283,9 @@ class BEDWriter:
 			The file to write to.
 		"""
 
-		with open(file, 'w') as f:
-			for track in self.tracks:
-				f.write(str(track))
+		try:
+			with open(file, 'w') as f:
+				f.write(self.get_output())
+		except IOError:
+			raise IOError(f"BEDWriter: Could not write to file {file}.")
 

@@ -57,6 +57,16 @@ class FASTAWriter:
 		"""
 		self.entries.append(pair)
 
+	def get_output(self) -> str:
+		"""Get the FASTA file as a string.
+		
+		Returns
+		-------
+		str
+			The FASTA file as a string.
+		"""
+		return str(self)
+
 	def write(self, path: PathLike) -> None:
 		"""Write the FASTA file to the given path.
 		
@@ -65,5 +75,8 @@ class FASTAWriter:
 		path : PathLike
 			The path to write the FASTA file to.
 		"""
-		with open(path, "w") as f:
-			f.write(str(self))
+		try:
+			with open(path, "w") as f:
+				f.write(self.get_output())
+		except IOError:
+			raise IOError(f"FASTAWriter: Could not write to file {path}.")
