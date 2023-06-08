@@ -2,6 +2,7 @@
 # tf-modisco command-line tool
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 
+from typing import List
 import h5py
 import hdf5plugin
 import argparse
@@ -101,13 +102,35 @@ seqlet_fasta_parser.add_argument("-o", "--output", type=str, required=True,
 seqlet_fasta_parser.add_argument("-p", "--peaksfile", type=str, required=True,
 	help="The path to the peaks file. This is to compute the absolute start and\
 end positions of the seqlets within a reference genome, as well as the chroms.")
-seqlet_fasta_parser.add_argument("-f", "--fastfile", type=str, required=True,
-	help="The path to the FASTA/Q file containing the sequences.")
+seqlet_fasta_parser.add_argument("-s", "--sequences", type=str, required=True,
+	help="A .npy or .npz file containing the one-hot encoded sequences.")
+seqlet_fasta_parser.add_argument("-c", "--chroms", type=str, required=True,
+	help="""A comma-delimited list of chromosomes, or '*', denoting which
+chromosomes to process. Should be the same set of chromosomes used during
+interpretation. Examples: 'chr1,chr2,chrX' || '*' || '1,2,X'.""")
 seqlet_fasta_parser.add_argument("-w", "--windowsize", type=int,
 	help="""Optional. This is for backwards compatibility for older modisco h5
 files that don't contain the window size as an attribute. This should be set
 the to size of the window around the peak center that was used for.""")
 
+def convert_arg_chroms_to_list(chroms: str) -> List[str]:
+	"""Converts the chroms argument to a list of chromosomes."""
+	if chroms == "*":
+		# Return all chromosome numbers
+		return [str(i) for i in range(1, 23)] + ["X", "Y"]
+	else:
+		splits = chroms.split(",")
+		result = []
+		for chrom in splits:
+			if chrom.startswith('chr'):
+				chrom = chrom[3:]
+			if chrom.isnumeric() and int(chrom) >= 1 and int(chrom) <= 22:
+				result.append(chrom)
+			elif chrom == "X" or chrom == "Y":
+				result.append(chrom)
+			else:
+				raise ValueError("Invalid input chromosome. Return a valid option: " + chrom)
+		return result
 
 # Pull the arguments
 args = parser.parse_args()
@@ -178,7 +201,7 @@ elif args.cmd == 'seqlet-bed':
 	modiscolite.io.write_bed_from_h5(args.h5py, args.peaksfile, args.output, args.windowsize)
 
 elif args.cmd == 'seqlet-fasta':
-	modiscolite.io.write_fasta_from_h5(args.h5py, args.peaksfile, args.fastfile, args.output, args.windowsize)
+	modiscolite.io.write_fasta_from_h5(args.h5py, args.peaksfile, args.sequences, args.output, convert_arg_chroms_to_list(args.chroms), args.windowsize)
 
 elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 

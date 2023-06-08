@@ -3,6 +3,7 @@
 
 from collections import OrderedDict
 import os
+import textwrap
 
 import h5py
 import hdf5plugin
@@ -249,7 +250,11 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 		writer = bed_writer.BEDWriter()
 		if window_size is None:
 			if 'window_size' not in grp.attrs:
-				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
+				print(textwrap.dedent("""\
+					window_size must be specified either in the h5 file or as
+					an argument. Older versions of modisco does not store
+					`window_size` in the h5 file."""))
+				exit(1)
 			window_size = int(grp.attrs['window_size'])
 
 		for strand_dir in ['pos', 'neg']:
@@ -312,7 +317,7 @@ def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.
 		writer.write(output_filepath)
 
 
-def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, fast_filepath: os.PathLike, output_filepath: os.PathLike, window_size: Union[None, int]) -> None:
+def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, sequences_file: os.PathLike, output_filepath: os.PathLike, valid_chroms: List[str], window_size: Union[None, int]) -> None:
 	"""Write a FASTA file from an h5 file output from TF-MoDISco. 
 
 	The results will look like:
@@ -328,13 +333,35 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 	output_filepath: str
 		The name of the FASTA file to write.
 	"""
-	ref_seq = None
-	with open(fast_filepath, 'r') as fast_file:
-		ref_seq = fast_file.read().replace('\n', '')
+
+	# Note: Make sure this alphabet's order matches the order of the nucleotide tracks.
+	alphabet = ['A', 'C', 'G', 'T']
 
 	peak_rows = None
 	with open(peaks_filepath, 'r') as peaks_file:
 		peak_rows = peaks_file.read().splitlines()
+		# This list comprehension filters out the peaks that are not in the valid_chroms list.
+		peak_rows_filtered = [row for row in peak_rows if row[3:5].replace('\t', '') in valid_chroms]
+
+	sequences = np.load(sequences_file)
+
+	if 'arr_0' not in sequences:
+		print(textwrap.dedent("""\
+			The sequences file is incompatible as it does not
+			contain an 'arr_0' key. This is likely because the sequences file
+			was generated with an older version of modisco."""))
+		exit(1)
+
+	sequences = sequences['arr_0']
+
+	if sequences.shape[0] != len(peak_rows_filtered):
+		print(textwrap.dedent(f"""\
+			The number of rows in the sequences file ({sequences.shape[0]})
+			does not match the number of peaks in the peaks file ({len(peak_rows_filtered)}),
+			filtered by the set of user-provided chroms. Verify that the user-provided set
+			of chroms matches the set used in the interpretation step."""))
+		exit(1)
+
 
 	with h5py.File(modisco_results_filepath, 'r') as grp:
 
@@ -358,28 +385,33 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 				for idx in range(datasets['seqlets']['start'].shape[0]):
 
 					row_num = datasets['seqlets']['example_idx'][idx]
-					peak_row = peak_rows[row_num].split('\t')
+					peak_row = peak_rows_filtered[row_num].split('\t')
 					chrom = peak_row[0]
-
-					# Calculate the start and ends.
-					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
-
-					window_center_offset = window_size // 2
 
 					seqlet_start_offset = datasets['seqlets']['start'][idx]
 					seqlet_end_offset = datasets['seqlets']['end'][idx]
 
-					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
-					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
+					nucleotide_tracks = sequences[row_num]
+					assert nucleotide_tracks.shape[0] == 4
+					sequence = []
+					for pos in range(seqlet_start_offset, seqlet_end_offset):
+						bp_track = nucleotide_tracks[:, pos]
+						hit = np.argmax(bp_track)
+						sequence.append(alphabet[hit])
+					sequence_str = ''.join(sequence)
 
-					sequence = ref_seq[absolute_seqlet_start:absolute_seqlet_end+1]
+					# Calculate the start and ends.
+					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
+					window_center_offset = window_size // 2
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset + 1
+					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
 
 					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
 
 					writer.add_pair(
 						fasta_writer.FASTAEntry(
 							header=f'{chrom}:{absolute_seqlet_start}-{absolute_seqlet_end} dir={strand_char} {pattern_name}.{idx}',
-							sequence=sequence
+							sequence=sequence_str
 						)
 					)
 		
