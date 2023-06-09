@@ -113,7 +113,10 @@ def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 
 	os.system('rm ' + fname)
 	if is_writing_tomtom_matrix:
-		os.system(f'mv {tomtom_fname} {os.path.join(output_dir, f"{pattern_name}.tomtom.tsv")}')
+		output_subdir = os.path.join(output_dir, "tomtom")
+		os.makedirs(output_subdir, exist_ok=True)
+		output_filepath = os.path.join(output_subdir, f"{pattern_name}.tomtom.tsv")
+		os.system(f'mv {tomtom_fname} {output_filepath}')
 	else:
 		os.system('rm ' + tomtom_fname)
 	return tomtom_results
@@ -132,11 +135,11 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 		tomtom_results[f'qval{i}'] = []
 
 	with h5py.File(modisco_h5py, 'r') as modisco_results:
-		for name in pattern_groups:
-			if name not in modisco_results.keys():
+		for contribution_dir_name in pattern_groups:
+			if contribution_dir_name not in modisco_results.keys():
 				continue
 
-			metacluster = modisco_results[name]
+			metacluster = modisco_results[contribution_dir_name]
 			key = lambda x: int(x[0].split("_")[-1])
 
 			for idx, (_, pattern) in enumerate(sorted(metacluster.items(), key=key)):
@@ -145,7 +148,7 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 				ppm = np.array(pattern['sequence'][:])
 				cwm = np.array(pattern["contrib_scores"][:])
 
-				pattern_name = f'{name}.pattern_{idx}'
+				pattern_name = f'{contribution_dir_name}.pattern_{idx}'
 
 				r = fetch_tomtom_matches(ppm, cwm,
 			     	is_writing_tomtom_matrix=is_writing_tomtom_matrix,
