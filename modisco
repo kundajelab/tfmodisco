@@ -43,6 +43,9 @@ report_parser.add_argument("-i", "--h5py", type=str, required=True,
 	help="An HDF5 file containing the output from modiscolite.")
 report_parser.add_argument("-o", "--output", type=str, required=True,
 	help="A directory to put the output results including the html report.")
+report_parser.add_argument("-t", "--write-tomtom", action="store_true",
+	default=False,
+	help="Write the TOMTOM results to the output directory if flag is given.")
 report_parser.add_argument("-s", "--suffix", type=str, default="./",
 	help="The suffix to add to the beginning of images. Should be equal to the output if using a Jupyter notebook.")
 report_parser.add_argument("-m", "--meme_db", type=str, default=None,
@@ -144,7 +147,9 @@ elif args.cmd == 'meme':
 	modiscolite.io.write_meme_from_h5(args.h5py, args.datatype, args.output)
 
 elif args.cmd == 'report':
-	modiscolite.report.report_motifs(args.h5py, args.output, img_path_suffix=args.suffix, meme_motif_db=args.meme_db, 
+	modiscolite.report.report_motifs(args.h5py, args.output,
+		img_path_suffix=args.suffix, meme_motif_db=args.meme_db,
+		is_writing_tomtom_matrix=args.write_tomtom,
 		top_n_matches=args.n_matches)
 
 elif args.cmd == 'convert':

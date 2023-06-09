@@ -68,13 +68,17 @@ def write_meme_file(ppm, bg, fname):
 	f.close()
 
 
-def fetch_tomtom_matches(ppm, cwm, output_dir, motifs_db,
-	background=[0.25, 0.25, 0.25, 0.25], tomtom_exec_path='tomtom',
-	trim_threshold=0.3, trim_min_length=3):
+def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
+	pattern_name, motifs_db, background=[0.25, 0.25, 0.25, 0.25],
+	tomtom_exec_path='tomtom', trim_threshold=0.3, trim_min_length=3):
 
 	"""Fetches top matches from a motifs database using TomTom.
 	Args:
 		ppm: position probability matrix- numpy matrix of dimension (N,4)
+		cwm: contribution weight matrix- numpy matrix of dimension (N,4)
+		is_writing_tomtom_matrix: if True, write the tomtom matrix to a file
+		output_dir: directory for writing the TOMTOM file
+		pattern_name: the name of the pattern, to be used for writing to file
 		background: list with ACGT background probabilities
 		tomtom_exec_path: path to TomTom executable
 		motifs_db: path to motifs database in meme format
@@ -88,7 +92,7 @@ def fetch_tomtom_matches(ppm, cwm, output_dir, motifs_db,
 	"""
 
 	_, fname = tempfile.mkstemp()
-	_, tomtom_fname = os.path.join(output_dir, 'tomtom.tsv')
+	_, tomtom_fname = tempfile.mkstemp()
 
 	score = np.sum(np.abs(cwm), axis=1)
 	trim_thresh = np.max(score) * trim_threshold  # Cut off anything less than 30% of max score
@@ -104,15 +108,20 @@ def fetch_tomtom_matches(ppm, cwm, output_dir, motifs_db,
 
 	# run tomtom
 	cmd = '%s -no-ssc -oc . --verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s > %s' % (tomtom_exec_path, fname, motifs_db, tomtom_fname)
-
 	os.system(cmd)
 	tomtom_results = pandas.read_csv(tomtom_fname, sep="\t", usecols=(1, 5))
+
 	os.system('rm ' + fname)
+	if is_writing_tomtom_matrix:
+		os.system(f'mv {tomtom_fname} {os.path.join(output_dir, f"{pattern_name}.tomtom.tsv")}')
+	else:
+		os.system('rm ' + tomtom_fname)
 	return tomtom_results
 
 
-def generate_tomtom_dataframe(modisco_h5py: os.PathLike, output_dir: os.PathLike,
-		meme_motif_db: Union[os.PathLike, None],  pattern_groups: List[str],
+def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
+		output_dir: os.PathLike, meme_motif_db: Union[os.PathLike, None],
+		is_writing_tomtom_matrix: bool, pattern_groups: List[str], 
 		top_n_matches=3, tomtom_exec: str="tomtom", trim_threshold=0.3,
 		trim_min_length=3):
 
@@ -130,12 +139,19 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike, output_dir: os.PathLike
 			metacluster = modisco_results[name]
 			key = lambda x: int(x[0].split("_")[-1])
 
-			for _, pattern in sorted(metacluster.items(), key=key):
+			for idx, (_, pattern) in enumerate(sorted(metacluster.items(), key=key)):
+   				# Rest of your code goes here
+
 				ppm = np.array(pattern['sequence'][:])
 				cwm = np.array(pattern["contrib_scores"][:])
 
-				r = fetch_tomtom_matches(ppm, cwm, output_dir=output_dir, motifs_db=meme_motif_db,
-					tomtom_exec_path=tomtom_exec, trim_threshold=trim_threshold,
+				pattern_name = f'{name}.pattern_{idx}'
+
+				r = fetch_tomtom_matches(ppm, cwm,
+			     	is_writing_tomtom_matrix=is_writing_tomtom_matrix,
+					output_dir=output_dir, pattern_name=pattern_name,
+					motifs_db=meme_motif_db, tomtom_exec_path=tomtom_exec,
+					trim_threshold=trim_threshold,
 					trim_min_length=trim_min_length)
 
 				i = -1
@@ -220,7 +236,7 @@ def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_thres
 	return tags
 
 def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: os.PathLike, 
-	meme_motif_db: Union[os.PathLike, None], top_n_matches=3,
+	meme_motif_db: Union[os.PathLike, None], is_writing_tomtom_matrix: bool, top_n_matches=3,
 	trim_threshold=0.3, trim_min_length=3):
 
 	if not os.path.isdir(output_dir):
@@ -260,6 +276,7 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 		motifs = read_meme(meme_motif_db)
 
 		tomtom_df = generate_tomtom_dataframe(modisco_h5py, output_dir, meme_motif_db,
+			is_writing_tomtom_matrix,
 			top_n_matches=top_n_matches, tomtom_exec='tomtom', 
 			pattern_groups=pattern_groups, trim_threshold=trim_threshold,
 			trim_min_length=trim_min_length)
