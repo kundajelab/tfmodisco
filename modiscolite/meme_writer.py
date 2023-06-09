@@ -101,8 +101,7 @@ class MEMEWriter:
 	def add_motif(self, motif: MEMEWriterMotif) -> None:
 		self.motifs.append(motif)
 
-	def write(self, file_path: PathLike) -> None:
-
+	def get_output(self) -> str:
 		output = ""
 		output += f"MEME version {self.memesuite_version}\n\n"
 		if self.alphabet:
@@ -118,13 +117,16 @@ class MEMEWriter:
 		for motif in self.motifs:
 			output += str(motif)
 			output += "\n\n"
+		return output
+
+	def write(self, file_path: PathLike) -> None:
 		try:
 			# Open the file in write mode
 			with open(file_path, "w") as file:
 				# Write the string to the file
-				file.write(output)
+				file.write(self.get_output())
 		except IOError:
-			print(f"An error occurred while writing to the file {file_path}")
+			raise IOError(f"MEMEWriter: Could not write to file {file_path}")
 	
 	def __repr__(self) -> str:
 		return f"MEMEWriter(memesuite_version={self.memesuite_version}, motifs={self.motifs}, alphabet={self.alphabet}, background_frequencies={self.background_frequencies}, strands={self.strands})"

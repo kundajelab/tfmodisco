@@ -1,16 +1,22 @@
 # io.py
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 
+from collections import OrderedDict
 import os
+import textwrap
 
 import h5py
 import hdf5plugin
+
+from typing import List, Literal, Union
 
 import numpy as np
 import scipy
 
 from . import util
 from . import meme_writer
+from . import bed_writer
+from . import fasta_writer
 
 def convert(old_filename, filename):
 	old_grp = h5py.File(old_filename, "r")['metacluster_idx_to_submetacluster_results']
@@ -128,7 +134,7 @@ def save_pattern(pattern, grp):
 			save_pattern(subpattern, subpattern_grp)
 
 
-def save_hdf5(filename, pos_patterns, neg_patterns):
+def save_hdf5(filename: os.PathLike, pos_patterns, neg_patterns, window_size: int):
 	"""Save the results of tf-modisco to a h5 file.
 
 	This function will save the SeqletSets and their associated seqlets in
@@ -151,6 +157,8 @@ def save_hdf5(filename, pos_patterns, neg_patterns):
 
 	grp = h5py.File(filename, 'w')
 	
+	grp.attrs['window_size'] = window_size
+	
 	if pos_patterns is not None:
 		pos_group = grp.create_group("pos_patterns")
 		for idx, pattern in enumerate(pos_patterns):
@@ -164,7 +172,7 @@ def save_hdf5(filename, pos_patterns, neg_patterns):
 			save_pattern(pattern, neg_pattern)
 
 
-def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, output_filename: os.PathLike) -> None:
+def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, output_filename: Union[os.PathLike, None], is_quiet: bool) -> None:
 	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
 
 	Parameters
@@ -183,6 +191,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 		alphabet=alphabet,
 		background_frequencies='A 0.25 C 0.25 G 0.25 T 0.25'
 	)
+
 
 	with h5py.File(filename, 'r') as grp:
 		for (name, datasets) in grp['pos_patterns'].items():
@@ -212,11 +221,226 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 
 			writer.add_motif(motif)
 	
-	new_output_filename = output_filename
-	if output_filename is None:
-		file_without_extension = os.path.splitext(filename)[0]
-		new_output_filename = f'{file_without_extension}.{datatype.name}.meme'
-	writer.write(new_output_filename)
+	if output_filename is not None:
+		writer.write(output_filename)
+	if not is_quiet:
+		print(writer.get_output())
+
+
+def write_bed_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, output_filepath: os.PathLike, valid_chroms: Union[List[str], Literal['*']], window_size: Union[None, int], is_quiet: bool) -> None:
+	"""Write a MEME file from an h5 file output from TF-MoDISco. Based on the given datatype.
+
+	Parameters
+	----------
+	modisco_results_filepath: str
+		The name of the h5 file to read.
+	peaks_filepath: str
+		The name of the peaks file to read.
+	output_filepath: str
+		The name of the BED file to write.
+	valid_chroms: list
+		A list of valid chromosomes to filter the peaks file by.
+		Example: ['chr1', 'chr2', 'chrX'] || ['1', '2', 'X']
+	window_size: int or None
+		The window size to use for the BED file. If None, the window size will
+		be read from the h5 file.
+	"""
+
+	# Store the entire peaks file in memory.
+	peak_rows_filtered = None
+	with open(peaks_filepath, 'r') as peaks_file:
+		peak_rows = peaks_file.read().splitlines()
+		# Filter here because each seqlet's `example_idx` is based on a list of
+		# just the target chrom(s).
+		peak_rows_filtered = util.filter_bed_rows_by_chrom(peak_rows,
+						     valid_chroms) if valid_chroms != '*' else peak_rows
+
+	with h5py.File(modisco_results_filepath, 'r') as grp:
+
+		writer = bed_writer.BEDWriter()
+		if window_size is None:
+			if 'window_size' not in grp.attrs:
+				print(textwrap.dedent("""\
+					window_size must be specified either in the h5 file or as
+					an argument. Older versions of modisco does not store
+					`window_size` in the h5 file."""))
+				exit(1)
+			window_size = int(grp.attrs['window_size'])
+
+		for contribution_dir in ['pos', 'neg']:
+
+			patterns_category = f'{contribution_dir}_patterns'
+			if patterns_category not in grp:
+				continue
+
+			for (pattern_name, datasets) in grp[patterns_category].items():
+
+				track = bed_writer.BEDTrack(
+					track_line=bed_writer.BEDTrackLine(
+						arguments=OrderedDict([
+							('name', pattern_name),
+							('description', f"TF-MoDISco pattern '{pattern_name}' on the positive strand.")
+						])
+					)
+				)
+
+				assert datasets['seqlets']['start'].shape[0] == datasets['seqlets']['end'].shape[0]
+
+				# Process each seqlet within the pattern.
+				for idx in range(datasets['seqlets']['start'].shape[0]):
+					seqlet_name = f'{pattern_name}.{idx}'
+
+					row_num = datasets['seqlets']['example_idx'][idx]
+					peak_row = peak_rows_filtered[row_num].split('\t')
+					chrom = peak_row[0]
+					score = peak_row[4]
+					
+					# Seqlet starts and ends are offsets relative to the given
+					# window, and the window's centers aligned with the peak's
+					# center.
+
+					# Calculate the start and ends.
+					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
+
+					window_center_offset = window_size // 2
+
+					seqlet_start_offset = datasets['seqlets']['start'][idx] + 1
+					seqlet_end_offset = datasets['seqlets']['end'][idx]
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
+					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
+
+					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
+
+					track.add_row(
+						bed_writer.BEDRow(
+							chrom=chrom,
+							chrom_start=absolute_seqlet_start,
+							chrom_end=absolute_seqlet_end,
+							name=seqlet_name,
+							score=score,
+							strand=strand_char
+					))
+				
+				writer.add_track(track)
+		
+		if output_filepath is not None:
+			writer.write(output_filepath)
+		if not is_quiet:
+			print(writer.get_output())
+
+
+def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: os.PathLike, sequences_file: os.PathLike, output_filepath: Union[os.PathLike, None], valid_chroms: Union[List[str], Literal['*']], window_size: Union[None, int], is_quiet: bool) -> None:
+	"""Write a FASTA file from an h5 file output from TF-MoDISco. 
+
+	The results will look like:
+	><chrom>:<start>-<end> <strand> <pattern_name>.<seqlet_id>
+	FASTA sequence extracted from a fast file
+
+	Parameters
+	----------
+	modisco_results_filepath: str
+		The name of the h5 file to read.
+	peaks_filepath: str
+		The name of the peaks file to read.
+	sequences_file: str
+		The name of the sequences file to read.
+	output_filepath: str
+		The name of the FASTA file to write.
+	valid_chroms: List[str]
+		The list of valid chromosomes to consider.
+		Example: ['chr1', 'chr2', 'chrX'] || ['1', '2', 'X']
+	window_size: Union[None, int]
+		The window size to use when extracting sequences. If None, then the
+		window size will be read from the h5 file.
+	"""
+
+	# Note: Make sure this alphabet's order matches the order of the nucleotide tracks.
+	alphabet = ['A', 'C', 'G', 'T']
+
+	peak_rows_filtered = None
+	with open(peaks_filepath, 'r') as peaks_file:
+		peak_rows = peaks_file.read().splitlines()
+		# Filter here because each seqlet's `example_idx` is based on a list of
+		# just the target chrom(s).
+		peak_rows_filtered = util.filter_bed_rows_by_chrom(peak_rows,
+						     valid_chroms) if valid_chroms != '*' else peak_rows
+
+	sequences = np.load(sequences_file)
+
+	if 'arr_0' not in sequences:
+		print(textwrap.dedent("""\
+			The sequences file is incompatible as it does not
+			contain an 'arr_0' key. This is likely because the sequences file
+			was generated with an older version of modisco."""))
+		exit(1)
+
+	sequences = sequences['arr_0']
+
+	if sequences.shape[0] != len(peak_rows_filtered):
+		print(textwrap.dedent(f"""\
+			The number of rows in the sequences file ({sequences.shape[0]})
+			does not match the number of peaks in the peaks file ({len(peak_rows_filtered)}),
+			filtered by the set of user-provided chroms. Verify that the user-provided set
+			of chroms matches the set used in the interpretation step."""))
+		exit(1)
+
+
+	with h5py.File(modisco_results_filepath, 'r') as grp:
+
+		writer = fasta_writer.FASTAWriter()
+		if window_size is None:
+			if 'window_size' not in grp.attrs:
+				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
+			window_size = int(grp.attrs['window_size'])
+
+		for contribution_dir in ['pos', 'neg']:
+
+			patterns_category = f'{contribution_dir}_patterns'
+			if patterns_category not in grp:
+				continue
+
+			for (pattern_name, datasets) in grp[patterns_category].items():
+
+				assert datasets['seqlets']['start'].shape[0] == datasets['seqlets']['end'].shape[0]
+
+				# Process each seqlet within the pattern.
+				for idx in range(datasets['seqlets']['start'].shape[0]):
+
+					row_num = datasets['seqlets']['example_idx'][idx]
+					peak_row = peak_rows_filtered[row_num].split('\t')
+					chrom = peak_row[0]
+
+					seqlet_start_offset = datasets['seqlets']['start'][idx] + 1
+					seqlet_end_offset = datasets['seqlets']['end'][idx]
+
+					nucleotide_tracks = sequences[row_num]
+					assert nucleotide_tracks.shape[0] == 4
+					sequence = []
+					for pos in range(seqlet_start_offset, seqlet_end_offset):
+						bp_track = nucleotide_tracks[:, pos]
+						hit = np.argmax(bp_track)
+						sequence.append(alphabet[hit])
+					sequence_str = ''.join(sequence)
+
+					# Calculate the start and ends.
+					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
+					window_center_offset = window_size // 2
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
+					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
+
+					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
+
+					writer.add_pair(
+						fasta_writer.FASTAEntry(
+							header=f'{chrom}:{absolute_seqlet_start}-{absolute_seqlet_end} dir={strand_char} {pattern_name}.{idx}',
+							sequence=sequence_str
+						)
+					)
+		
+		if output_filepath is not None:
+			writer.write(output_filepath)
+		if not is_quiet:
+			print(writer.get_output())
 
 
 def convert_new_to_old(new_format_filename, old_format_filename):
