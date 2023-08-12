@@ -23,7 +23,7 @@ desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 parser = argparse.ArgumentParser(description=desc)
 subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', 'meme', 'seqlet-bed', or 'seqlet-fasta'.", required=True, dest='cmd')
 
-motifs_parser = subparsers.add_parser("motifs", help="Run TF-MoDISco and extract the motifs.")
+motifs_parser = subparsers.add_parser("motifs", help="Run TF-MoDISco and extract the motifs.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 motifs_parser.add_argument("-s", "--sequences", type=str,
 	help="A .npy or .npz file containing the one-hot encoded sequences.")
 motifs_parser.add_argument("-a", "--attributions", type=str,
@@ -41,7 +41,7 @@ motifs_parser.add_argument("-o", "--output", type=str, default="modisco_results.
 motifs_parser.add_argument("-v", "--verbose", action="store_true", default=False,
 	help="Controls the amount of output from the code.")
 
-report_parser = subparsers.add_parser("report", help="Create a HTML report of the results.")
+report_parser = subparsers.add_parser("report", help="Create a HTML report of the results.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 report_parser.add_argument("-i", "--h5py", type=str, required=True,
 	help="An HDF5 file containing the output from modiscolite.")
 report_parser.add_argument("-o", "--output", type=str, required=True,
