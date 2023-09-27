@@ -107,7 +107,7 @@ def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 	write_meme_file(trimmed, background, fname)
 
 	if not os.path.isfile(tomtom_exec_path):
-		raise ValueError(f'`tomtom` executable not found at expected path: "{tomtom_exec_path}". Please install it and try again.')
+		raise ValueError(f'`tomtom` executable not found at expected path: "{tomtom_exec_path}". Please install it and try again. You may install it using conda with `conda install -c bioconda meme`')
 
 	# run tomtom
 	cmd = '%s -no-ssc -oc . --verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s > %s' % (tomtom_exec_path, fname, motifs_db, tomtom_fname)
