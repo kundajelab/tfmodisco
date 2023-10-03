@@ -6,6 +6,7 @@ from typing import List, Union
 import h5py
 import pandas
 import tempfile
+import shutil
 
 import matplotlib
 matplotlib.use('pdf')
@@ -105,6 +106,9 @@ def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 
 	# trim and prepare meme file
 	write_meme_file(trimmed, background, fname)
+
+	if not shutil.which(tomtom_exec_path):
+		raise ValueError(f'`tomtom` executable could not be called globally or locally. Please install it and try again. You may install it using conda with `conda install -c bioconda meme`')
 
 	# run tomtom
 	cmd = '%s -no-ssc -oc . --verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s > %s' % (tomtom_exec_path, fname, motifs_db, tomtom_fname)
