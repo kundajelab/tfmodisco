@@ -43,8 +43,31 @@ def convert(old_filename, filename):
 				pattern_grp.create_dataset("hypothetical_contribs", data=hypothetical_contribs)
 				
 				seqlet_grp = pattern_grp.create_group("seqlets")
-				seqlet_grp.create_dataset("n_seqlets", 
-					data=np.array([len(old_pattern['seqlets_and_alnmts']['seqlets'])]))
+
+				n_seqlets = len(old_pattern['seqlets_and_alnmts']['seqlets'])
+				seqlet_grp.create_dataset("n_seqlets", data=np.array([n_seqlets]))
+
+				starts = np.zeros(n_seqlets, dtype=int)
+				ends = np.zeros(n_seqlets, dtype=int)
+				example_idxs = np.zeros(n_seqlets, dtype=int)
+				is_revcomps = np.zeros(n_seqlets, dtype=bool)
+				for i in range(n_seqlets):
+					x = pattern['seqlets_and_alnmts']['seqlets'][i]
+					
+					idx = int(x.decode('utf8').split(',')[0].split(':')[1])
+				        start = int(x.decode('utf8').split(',')[1].split(':')[1])
+					end = int(x.decode('utf8').split(',')[2].split(':')[1])
+				        rc = x.decode('utf8').split(',')[3].split(':')[1] == 'True'
+
+					starts[i] = start
+					ends[i] = end
+					example_idxs[i] = idx
+					is_revcomps[i] = rc
+
+				seqlet_grp.create_dataset("start", data=starts)
+				seqlet_grp.create_dataset("end", data=ends)
+				seqlet_grp.create_dataset("example_idx", data=example_idxs)
+				seqlet_grp.create_dataset("is_revcomp", data=is_revcomps)
 
 				if 'subcluster_to_subpattern' in old_pattern.keys():
 					old_subpatterns_grp = old_pattern['subcluster_to_subpattern']
@@ -84,9 +107,32 @@ def convert(old_filename, filename):
 				pattern_grp.create_dataset("hypothetical_contribs", data=hypothetical_contribs)
 
 				seqlet_grp = pattern_grp.create_group("seqlets")
-				seqlet_grp.create_dataset("n_seqlets", 
-					data=np.array([len(old_pattern['seqlets_and_alnmts']['seqlets'])]))
 
+				n_seqlets = len(old_pattern['seqlets_and_alnmts']['seqlets'])
+				seqlet_grp.create_dataset("n_seqlets", data=np.array([n_seqlets]))
+
+				starts = np.zeros(n_seqlets, dtype=int)
+				ends = np.zeros(n_seqlets, dtype=int)
+				example_idxs = np.zeros(n_seqlets, dtype=int)
+				is_revcomps = np.zeros(n_seqlets, dtype=bool)
+				for i in range(n_seqlets):
+					x = pattern['seqlets_and_alnmts']['seqlets'][i]
+					
+					idx = int(x.decode('utf8').split(',')[0].split(':')[1])
+				        start = int(x.decode('utf8').split(',')[1].split(':')[1])
+					end = int(x.decode('utf8').split(',')[2].split(':')[1])
+				        rc = x.decode('utf8').split(',')[3].split(':')[1] == 'True'
+
+					starts[i] = start
+					ends[i] = end
+					example_idxs[i] = idx
+					is_revcomps[i] = rc
+
+				seqlet_grp.create_dataset("start", data=starts)
+				seqlet_grp.create_dataset("end", data=ends)
+				seqlet_grp.create_dataset("example_idx", data=example_idxs)
+				seqlet_grp.create_dataset("is_revcomp", data=is_revcomps)
+				
 				if 'subcluster_to_subpattern' in old_pattern.keys():
 					old_subpatterns_grp = old_pattern['subcluster_to_subpattern']
 					for subpattern in old_subpatterns_grp['subcluster_names'][:]:
