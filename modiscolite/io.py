@@ -52,7 +52,7 @@ def convert(old_filename, filename):
 				example_idxs = np.zeros(n_seqlets, dtype=int)
 				is_revcomps = np.zeros(n_seqlets, dtype=bool)
 				for i in range(n_seqlets):
-					x = pattern['seqlets_and_alnmts']['seqlets'][i]
+					x = old_pattern['seqlets_and_alnmts']['seqlets'][i]
 					
 					idx = int(x.decode('utf8').split(',')[0].split(':')[1])
 					start = int(x.decode('utf8').split(',')[1].split(':')[1])
@@ -116,7 +116,7 @@ def convert(old_filename, filename):
 				example_idxs = np.zeros(n_seqlets, dtype=int)
 				is_revcomps = np.zeros(n_seqlets, dtype=bool)
 				for i in range(n_seqlets):
-					x = pattern['seqlets_and_alnmts']['seqlets'][i]
+					x = old_pattern['seqlets_and_alnmts']['seqlets'][i]
 					
 					idx = int(x.decode('utf8').split(',')[0].split(':')[1])
 					start = int(x.decode('utf8').split(',')[1].split(':')[1])
