@@ -774,7 +774,7 @@ class AggregatedSeqlet(Pattern):
         distmat_sp.sort_indices()
         if (compute_embedding):
             twod_embedding = sklearn.manifold.TSNE(
-                perplexity=min(perplexity, distmat_sp.shape[0]),
+                perplexity=min(perplexity, distmat_sp.shape[0]-1),
                 metric='precomputed',
                 init="random",
                 verbose=3, random_state=1234).fit_transform(distmat_sp) 
