@@ -12,4 +12,4 @@ from . import meme_writer
 from . import bed_writer
 from . import fasta_writer
 
-__version__ = '2.2.0'
+__version__ = '2.2.1'
