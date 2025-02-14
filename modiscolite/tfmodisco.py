@@ -252,7 +252,7 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 
 	#apply subclustering procedure on the final patterns
 	for patternidx, pattern in enumerate(patterns):
-		aggregator._expand_seqlets_to_fill_pattern(pattern, track_set, 
+		pattern = aggregator._expand_seqlets_to_fill_pattern(pattern, track_set, 
 			left_flank_to_add=final_flank_to_add,
 			right_flank_to_add=final_flank_to_add)
 

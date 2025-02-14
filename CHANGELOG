@@ -2,6 +2,16 @@
 Release History
 ===============
 
+
+Version 2.3.1
+==============
+
+modisco
+-------
+	
+	- Fixed minor bug with final flank to add not being applied correctly.
+
+
 Version 2.3.0
 ==============
 
