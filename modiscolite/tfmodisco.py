@@ -258,6 +258,8 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 
 		pattern.compute_subpatterns(subcluster_perplexity, 
 			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations)
+		
+		patterns[patternidx] = pattern
 
 	return patterns
 
