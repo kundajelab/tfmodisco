@@ -254,7 +254,7 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 	for patternidx, pattern in enumerate(patterns):
 		aggregator._expand_seqlets_to_fill_pattern(pattern, track_set, 
 			left_flank_to_add=final_flank_to_add,
-			right_flank_to_add=final_flank_to_add):
+			right_flank_to_add=final_flank_to_add)
 
 		pattern.compute_subpatterns(subcluster_perplexity, 
 			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations)
