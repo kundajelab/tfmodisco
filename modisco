@@ -36,6 +36,14 @@ motifs_parser.add_argument("-l", "--n_leiden", type=int, default=2,
 	help="The number of Leiden clusterings to perform with different random seeds.")
 motifs_parser.add_argument("-w", "--window", type=int, default=400,
 	help="The window surrounding the peak center that will be considered for motif discovery.")
+motifs_parser.add_argument("-z", "--size", type=int, default=20,
+	help="The size of the seqlet cores, corresponding to `sliding_window_size`.")
+motifs_parser.add_argument("-t", "--trim_size", type=int, default=30,
+	help="The size to trim to, corresponding to `trim_to_window_size`.")
+motifs_parser.add_argument("-f", "--flank_size", type=int, default=5,
+	help="The size of the flanks to add to each seqlet, corresponding to `flank_size`.")
+motifs_parser.add_argument("-g", "--flank_to_add", type=int, default=10,
+	help="The size of the flanks to add to each pattern, corresponding to `initial_flank_to_add`.")
 motifs_parser.add_argument("-o", "--output", type=str, default="modisco_results.h5",
 	help="The path to the output file.")
 motifs_parser.add_argument("-v", "--verbose", action="store_true", default=False,
@@ -190,12 +198,15 @@ if args.cmd == "motifs":
 	sequences = sequences.astype('float32')
 	attributions = attributions.astype('float32')
 
+
 	pos_patterns, neg_patterns = modiscolite.tfmodisco.TFMoDISco(
 		hypothetical_contribs=attributions, 
 		one_hot=sequences,
 		max_seqlets_per_metacluster=args.max_seqlets,
-		sliding_window_size=20,
-		flank_size=5,
+		sliding_window_size=args.size,
+		flank_size=args.flank_size,
+		trim_to_window_size=args.trim_size,
+		initial_flank_to_add=args.initial_flank_to_add,
 		target_seqlet_fdr=0.05,
 		n_leiden_runs=args.n_leiden,
 		verbose=args.verbose)
