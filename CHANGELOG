@@ -2,6 +2,19 @@
 Release History
 ===============
 
+Version 2.3.0
+==============
+
+modisco
+-------
+	
+	- Add final_flank_to_add with default 0 to add padding to patterns at the
+	end of the procedure.
+	- Set default parameters for initial_flank_to_add to 10 and trim_window_size
+	to 30. This sets the window size for patterns to be 50 instead of 30.
+	- Add more command line arguments to expose seqlet lengths and flanks,
+	initial pattern lengths and flanks, and final flank additions.
+
 
 Version 2.1.0
 ==============
