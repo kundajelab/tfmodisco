@@ -91,10 +91,12 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 			keys_[i] = key
 			scores_[i] = gkmer_attrs[key]
 
-		idxs = np.argsort(-np.abs(scores_), kind='mergesort')[:max_entries]
+		num_entries = min(ny, max_entries)
 
-		keys[xi] = keys_[idxs]
-		scores[xi] = scores_[idxs]
+		idxs = np.argsort(-np.abs(scores_), kind='mergesort')[:num_entries]
+
+		keys[xi,:num_entries] = keys_[idxs]
+		scores[xi,:num_entries] = scores_[idxs]
 
 	return keys, scores
 
@@ -128,5 +130,7 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 	row_idxs = np.repeat(range(keys.shape[0]), keys.shape[1])
 	csr_mat = scipy.sparse.csr_matrix((scores.flatten(), 
 		(row_idxs, keys.flatten())), shape=(len(keys), 5**max_len))
+	
+	scipy.sparse.csr_matrix.eliminate_zeros(csr_mat)
 
 	return csr_mat
