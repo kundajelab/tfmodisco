@@ -2,6 +2,15 @@
 Release History
 ===============
 
+Version 2.3.2
+==============
+
+gapped_kmer
+-----------
+	
+	- Fixed minor bug that would cause a crash when there are not enough
+	gkmers. Thanks @austintwang! 
+
 
 Version 2.3.1
 ==============
