@@ -33,6 +33,9 @@ tfmodisco-lite is a lightweight version of the original [TF-MoDISco](https://git
 
 #### Running tfmodisco-lite
 
+> ** Note**
+> To match the original implementation of TF-MoDISco, the default window size is 400. This means that when you pass in examples only the middle 400 are used in the procedure. It was originally implemented this way to speed up the procedure. If your window sizes are larger, or you otherwise want to consider alternate window sizes, make sure to explicitly set it with `-w`.
+
 `modisco motifs -s ohe.npz -a shap.npz -n 2000 -o modisco_results.h5`
 
 This command will run modisco on the one-hot encoded sequences in `ohe.npz`, use the attributions from `shap.npz`, use a maximum of 2000 seqlets per metacluster (this is low, but a good starting point for testing the algorithm on your own data), and will output the results to `modisco_results.h5`. The one-hot encoded sequences and attributions are assumed to be in length-last format, i.e., have the shape (# examples, 4, sequence length). Note that you can also use `npy` files if you don't want to use compressed data for some reason. 
