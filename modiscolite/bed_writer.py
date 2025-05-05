@@ -191,10 +191,10 @@ class BEDTrack:
 	def __init__(
 		self,
 		track_line: Optional[BEDTrackLine] = None,
-		rows: List[BEDRow] = []
+		rows: Optional[List[BEDRow]] = None
 	) -> None:
 		self.track_line = track_line
-		self.rows = rows
+		self.rows = rows if rows is not None else []
 
 
 	def add_row(self, row: BEDRow) -> None:
