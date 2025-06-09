@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
 	name='modisco-lite',
-	version='2.3.2',
+	version='2.4.0',
 	author='Jacob Schreiber',
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
@@ -22,6 +22,7 @@ setup(
 		'pandas >= 1.4.3',
 		'logomaker >= 0.8',
 		'h5py >= 3.7.0',
-		'hdf5plugin'
+		'hdf5plugin',
+		'memelite'
 	]
 )

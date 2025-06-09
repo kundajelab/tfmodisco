@@ -1,52 +1,27 @@
 import os
-from pathlib import Path
-import pickle
-import types
-from typing import List, Union
 import h5py
+import types
+import pickle
 import pandas
-import tempfile
 import shutil
+import tempfile
+import logomaker
 
 import matplotlib
 matplotlib.use('pdf')
 from matplotlib import pyplot as plt
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-import logomaker
+from pathlib import Path
+from typing import List, Union
+
+from memelite import tomtom
+from memelite.io import read_meme
+
 
 pd.options.display.max_colwidth = 500
-
-def read_meme(filename):
-	motifs = {}
-
-	with open(filename, "r") as infile:
-		motif, width, i = None, None, 0
-
-		for line in infile:
-			if motif is None:
-				if line[:5] == 'MOTIF':
-					motif = line.split()[1]
-				else:
-					continue
-
-			elif width is None:
-				if line[:6] == 'letter':
-					width = int(line.split()[5])
-					pwm = np.zeros((width, 4))
-
-			elif i < width:
-				pwm[i] = list(map(float, line.split()))
-				i += 1
-
-			else:
-				motifs[motif] = pwm
-				motif, width, i = None, None, 0
-
-	return motifs
-
 
 def compute_per_position_ic(ppm, background, pseudocount):
     alphabet_len = len(background)
@@ -62,10 +37,11 @@ def write_meme_file(ppm, bg, fname):
 	f.write('strands: + -\n\n')
 	f.write('Background letter frequencies (from unknown source):\n')
 	f.write('A %.3f C %.3f G %.3f T %.3f\n\n' % tuple(list(bg)))
-	f.write('MOTIF 1 TEMP\n\n')
+	f.write('MOTIF 1 TEMP\n')
 	f.write('letter-probability matrix: alength= 4 w= %d nsites= 1 E= 0e+0\n' % ppm.shape[0])
 	for s in ppm:
 		f.write('%.5f %.5f %.5f %.5f\n' % tuple(s))
+	f.write("URL\n\n")
 	f.close()
 
 
@@ -113,8 +89,9 @@ def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 	# run tomtom
 	cmd = '%s -no-ssc -oc . --verbosity 1 -text -min-overlap 5 -mi 1 -dist pearson -evalue -thresh 10.0 %s %s > %s' % (tomtom_exec_path, fname, motifs_db, tomtom_fname)
 	os.system(cmd)
-	tomtom_results = pandas.read_csv(tomtom_fname, sep="\t", usecols=(1, 5))
-
+	
+	tomtom_results = pandas.read_csv(tomtom_fname, sep="\t", usecols=(1, 5), comment='#')
+	
 	os.system('rm ' + fname)
 	if is_writing_tomtom_matrix:
 		output_subdir = os.path.join(output_dir, "tomtom")
@@ -163,18 +140,75 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 
 				i = -1
 				for i, (target, qval) in r.iloc[:top_n_matches].iterrows():
+					target = target.strip()
+					
 					tomtom_results[f'match{i}'].append(target)
 					tomtom_results[f'qval{i}'].append(qval)
 
 				for j in range(i+1, top_n_matches):
 					tomtom_results[f'match{j}'].append(None)
-					tomtom_results[f'qval{j}'].append(None)			
+					tomtom_results[f'qval{j}'].append(None)	
+
+	return pandas.DataFrame(tomtom_results)
+
+
+def tomtomlite_dataframe(
+	modisco_h5py: os.PathLike,
+	output_dir: os.PathLike, 
+	meme_motif_db: Union[os.PathLike, None],
+	pattern_groups: List[str], 
+	top_n_matches=3, 
+	trim_threshold=0.3,
+	trim_min_length=3):
+	"""Use tomtom-lite to match patterns to a motif database."""
+
+	tomtom_results = {}
+
+	for i in range(top_n_matches):
+		tomtom_results[f'match{i}'] = []
+		tomtom_results[f'pval{i}'] = []
+
+	ppms = []
+	with h5py.File(modisco_h5py, 'r') as modisco_results:
+		for contribution_dir_name in pattern_groups:
+			if contribution_dir_name not in modisco_results.keys():
+				continue
+
+			metacluster = modisco_results[contribution_dir_name]
+			key = lambda x: int(x[0].split("_")[-1])
+
+			for idx, (_, pattern) in enumerate(sorted(metacluster.items(), key=key)):
+				ppm = np.array(pattern['sequence'][:])
+				cwm = np.array(pattern["contrib_scores"][:])
+
+				score = np.sum(np.abs(cwm), axis=1)
+				trim_thresh = np.max(score) * trim_threshold  # Cut off anything less than 30% of max score
+				pass_inds = np.where(score >= trim_thresh)[0]
+				
+				ppm = ppm[np.min(pass_inds): np.max(pass_inds) + 1]
+				ppms.append(ppm.T)
+
+	target_db = read_meme(meme_motif_db)
+	target_names = list(target_db.keys())
+	target_pwms = list(target_db.values())
+
+	p, scores, offsets, overlaps, strands, idxs = tomtom(ppms, target_pwms, 
+		n_nearest=top_n_matches)
+
+	for i in range(idxs.shape[0]):
+		for j in range(top_n_matches):
+			target_name = target_names[int(idxs[i, j])].strip()
+			pval = p[i, j]
+
+			tomtom_results[f'match{j}'].append(target_name)
+			tomtom_results[f'pval{j}'].append(pval)
 
 	return pandas.DataFrame(tomtom_results)
 
 
 def path_to_image_html(path):
 	return '<img src="'+ path + '" width="240" >'
+
 
 def _plot_weights(array, path, figsize=(10,3)):
 	"""Plot weights as a sequence logo and save to file."""
@@ -190,7 +224,8 @@ def _plot_weights(array, path, figsize=(10,3)):
 
 	plt.savefig(path)
 	plt.close()
-	
+
+
 def make_logo(match, logo_dir, motifs):
 	if match == 'NA':
 		return
@@ -200,7 +235,7 @@ def make_logo(match, logo_dir, motifs):
 	ic = compute_per_position_ic(ppm, background, 0.001)
 
 	_plot_weights(ppm*ic[:, None], path='{}/{}.png'.format(logo_dir, match))
-		
+
 
 def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_threshold, pattern_groups: List[str]):
 	"""Open a modisco results file and create and write logos to file for each pattern."""
@@ -244,7 +279,7 @@ def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_thres
 
 def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: os.PathLike, 
 	meme_motif_db: Union[os.PathLike, None], is_writing_tomtom_matrix: bool, top_n_matches=3,
-	trim_threshold=0.3, trim_min_length=3):
+	trim_threshold=0.3, trim_min_length=3, ttl=False):
 
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
@@ -281,12 +316,21 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 	# If the optional meme_motif_db is not provided, then we won't generate TOMTOM comparison.
 	if meme_motif_db is not None:
 		motifs = read_meme(meme_motif_db)
+		motifs = {name: pwm.T for name, pwm in motifs.items()}
 
-		tomtom_df = generate_tomtom_dataframe(modisco_h5py, output_dir, meme_motif_db,
-			is_writing_tomtom_matrix,
-			top_n_matches=top_n_matches, tomtom_exec='tomtom', 
-			pattern_groups=pattern_groups, trim_threshold=trim_threshold,
-			trim_min_length=trim_min_length)
+		if ttl:
+			tomtom_df = tomtomlite_dataframe(modisco_h5py, output_dir, meme_motif_db,
+				top_n_matches=top_n_matches, pattern_groups=pattern_groups, 
+				trim_threshold=trim_threshold, trim_min_length=trim_min_length)
+		else:
+			motifs = {key.split()[0]: value for key, value in motifs.items()}
+			
+			tomtom_df = generate_tomtom_dataframe(modisco_h5py, output_dir, meme_motif_db,
+				is_writing_tomtom_matrix,
+				top_n_matches=top_n_matches, tomtom_exec='tomtom', 
+				pattern_groups=pattern_groups, trim_threshold=trim_threshold,
+				trim_min_length=trim_min_length)
+
 		patterns_df = pandas.concat([patterns_df, tomtom_df], axis=1)
 
 		for i in range(top_n_matches):
@@ -304,7 +348,8 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 					break
 
 			patterns_df[f"{name}_logo"] = logos
-			reordered_columns.extend([name, f'qval{i}', f'{name}_logo'])
+			val = f'pval{i}' if ttl else f'qval{i}'
+			reordered_columns.extend([name, val, f'{name}_logo'])
 
 	patterns_df = patterns_df[reordered_columns]
 	patterns_df.to_html(open(os.path.join(output_dir, 'motifs.html'), 'w'),

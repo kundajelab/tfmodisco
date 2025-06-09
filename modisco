@@ -65,6 +65,8 @@ report_parser.add_argument("-m", "--meme_db", type=str, default=None,
 	help="A MEME file containing motifs.")
 report_parser.add_argument("-n", "--n_matches", type=int, default=3,
 	help="The number of top TOMTOM matches to include in the report.")
+report_parser.add_argument("-l", "--lite", default=False, action='store_true',
+	help="Whether to use tomtom-lite when mapping patterns to motifs. Note that this also changes the distance function from correlation to Euclidean distance, and so the best motif may differ when there are many similar versions.")
 
 convert_parser = subparsers.add_parser("convert", help="Convert an old h5py to the new format.")
 convert_parser.add_argument("-i", "--h5py", type=str, required=True,
@@ -173,6 +175,8 @@ if args.cmd == "motifs":
 			
 			attributions = scores['shap']['seq'][:, :, start:end].transpose(0, 2, 1)
 			sequences = scores['raw']['seq'][:, :, start:end].transpose(0, 2, 1)
+			
+			print(start, end, attributions.shape, sequences.shape)
 
 		scores.close()
 
@@ -229,7 +233,7 @@ elif args.cmd == 'report':
 	modiscolite.report.report_motifs(args.h5py, args.output,
 		img_path_suffix=args.suffix, meme_motif_db=args.meme_db,
 		is_writing_tomtom_matrix=args.write_tomtom,
-		top_n_matches=args.n_matches)
+		top_n_matches=args.n_matches, ttl=args.lite)
 
 elif args.cmd == 'convert':
 	modiscolite.io.convert(args.h5py, args.output)

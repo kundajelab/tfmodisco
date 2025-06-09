@@ -2,6 +2,21 @@
 Release History
 ===============
 
+
+Version 2.4.0
+==============
+
+report
+------
+	
+	- Added tomtom-lite support for generating the report. This can significantly
+	reduce the time spent running Tomtom to map patterns to motifs, 8m -> 1m in
+	an ATAC-seq example. However, there are differences in the exact parameters
+	being run that will lead to differences. The default is the same as in 2.3.2
+	using the command-line tool, but you can use `-l` to get the tomtom-lite
+	report.
+
+
 Version 2.3.2
 ==============
 
