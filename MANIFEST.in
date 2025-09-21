@@ -1,5 +1,0 @@
-include LICENSE
-include README.md
-include modisco/cluster/phenograph/louvain/*convert*
-include modisco/cluster/phenograph/louvain/*community*
-include modisco/cluster/phenograph/louvain/*hierarchy*
