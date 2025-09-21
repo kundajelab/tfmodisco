@@ -1,0 +1,213 @@
+===============
+Release History
+===============
+
+
+Version 2.4.0
+==============
+
+report
+------
+	
+	- Added tomtom-lite support for generating the report. This can significantly
+	reduce the time spent running Tomtom to map patterns to motifs, 8m -> 1m in
+	an ATAC-seq example. However, there are differences in the exact parameters
+	being run that will lead to differences. The default is the same as in 2.3.2
+	using the command-line tool, but you can use `-l` to get the tomtom-lite
+	report.
+
+
+Version 2.3.2
+==============
+
+gapped_kmer
+-----------
+	
+	- Fixed minor bug that would cause a crash when there are not enough
+	gkmers. Thanks @austintwang! 
+
+
+Version 2.3.1
+==============
+
+modisco
+-------
+	
+	- Fixed minor bug with final flank to add not being applied correctly.
+
+
+Version 2.3.0
+==============
+
+modisco
+-------
+	
+	- Add final_flank_to_add with default 0 to add padding to patterns at the
+	end of the procedure.
+	- Set default parameters for initial_flank_to_add to 10 and trim_window_size
+	to 30. This sets the window size for patterns to be 50 instead of 30.
+	- Add more command line arguments to expose seqlet lengths and flanks,
+	initial pattern lengths and flanks, and final flank additions.
+
+
+Version 2.1.0
+==============
+
+modisco
+-------
+	
+	- Make motif database-based reporting optional.
+	- Require Python 3.7.x to 3.10.x.
+
+Version 2.0.7
+==============
+
+modisco
+-------
+	
+	- Adds an error if the window is larger than the sequences.
+
+
+Version 2.0.6
+==============
+
+modisco
+-------
+	
+	- Adds an explicit casting of the one-hot encoded sequence and the
+	attributions to 32-bit floats. This allows files to be compressed to
+	16-bit floats to save space.
+
+
+Version 2.0.5
+==============
+
+report.py
+---------
+	
+	- Removes the use of the Arial Rounded font, hopefully reducing the number
+	of warnings produced.
+
+
+Version 2.0.4
+==============
+
+report.py
+---------
+	
+	- Removed the need to supply both a MEME file with motifs and a directory
+	with extracted PFMs. The PFMs will be read directly from the MEME file now.
+
+
+modisco
+-------
+
+	- Removed the need to supply both a MEME file with motifs and a directory
+	with extracted PFMs. The PFMs will be read directly from the MEME file now.
+
+
+Version 2.0.3
+==============
+
+report.py
+---------
+	
+	- Fixed a minor error where results would not display properly if fewer
+	than the specified number of TOMTOM hits were found for a motif.
+
+
+Version 2.0.2
+==============
+
+report.py
+---------
+	
+	- Fixed a display issue where the patterns were being displayed in the
+	wrong order.
+
+
+Version 2.0.1
+==============
+
+Highlights
+----------
+
+	- A minor bug and a minor convenience issue have been resolved.
+
+
+aggregator.py
+-------------
+
+	- A minor bug was fixed where, when collapsing patterns in the final step,
+	some patterns would have no seqlets after the filtering step and the code
+	would crash. Now, if a pattern has no seqlets after the filtering, it is
+	ignored.
+
+
+report.py
+---------
+
+	- The patterns are now displayed in numeric order 1-10, followed by 11-20,
+	etc., as opposed to by alphabetical order 1, 10-19, 2, 20-29, etc.
+
+
+Version 2.0.0
+==============
+
+Highlights
+----------
+
+	- This is the first complete release that includes breaking changes compared
+	with the original code. They are detailed below.
+
+
+affinitymat.py
+--------------
+
+	- When calculating the coarse-grained resolution, an argsort is done to find
+	the nearest neighbors of each seqlet. This is done in numpy using a sorting
+	algorithm that is not stable. This new version uses "mergesort" instead of
+	the default "quicksort", as it is a stable algorithm. This change allows
+	us to use numpy within numba, assigning more work to each thread, and
+	ultimately speeding the code up ~2-3x. 
+
+
+core.py
+-------
+
+	- AggregatedSeqlet was renamed SeqletSet.
+
+
+gapped_kmer.py
+--------------
+
+	- A bug in the original codebase where the nucleotide identity was done
+	on the argmax of the contribution score, rather than the one-hot encoded
+	sequence, caused incorrect nucleotide calls for positions that had a
+	negative contribution. This effects only the gapped k-mer representation
+	used to calculate coarse-grained representations, not the found patterns.
+
+
+io.py
+-----
+
+	- This code was added to handle saving the outputs of the TFMoDISco function
+	to disk and the conversion of the old outputs into the new format.
+
+
+tfmodisco.py
+------------
+
+	- The output of TFMoDISco is now a tuple of two lists, where the first
+	list contains the positive patterns and the second list contains the
+	negative patterns. Each pattern is represented as a `SeqletSet` object.
+
+
+Version 1.0.0
+==============
+
+Highlights
+----------
+
+	- This is the first complete release that perfectly reproduces the outputs
+	of the original TF-MoDISco code. 
