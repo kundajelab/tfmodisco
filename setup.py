@@ -8,9 +8,9 @@ setup(
 	packages=['modiscolite'],
 	python_requires='>=3.7',
 	scripts=['modisco'],
-	url='https://github.com/jmschrei/tfmodisco-lite',
+	url='https://github.com/kundajelab/tfmodisco',
 	license='LICENSE.txt',
-	description='Transcription Factor MOtif Discovery from Importance SCOres - lite',
+	description='Transcription Factor MOtif Discovery from Importance SCOres',
 	install_requires=[
 		'numpy >= 1.21.5', 
 		'scipy >= 1.6.2',
