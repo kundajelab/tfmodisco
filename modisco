@@ -21,7 +21,7 @@ desc = """TF-MoDISco is a motif detection algorithm that takes in nucleotide
 
 # Read in the arguments
 parser = argparse.ArgumentParser(description=desc)
-subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'convert', 'convert-backward', 'meme', 'seqlet-bed', or 'seqlet-fasta'.", required=True, dest='cmd')
+subparsers = parser.add_subparsers(help="Must be either 'motifs', 'report', 'descriptive-report', 'convert', 'convert-backward', 'meme', 'seqlet-bed', or 'seqlet-fasta'.", required=True, dest='cmd')
 
 motifs_parser = subparsers.add_parser("motifs", help="Run TF-MoDISco and extract the motifs.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 motifs_parser.add_argument("-s", "--sequences", type=str,
@@ -67,6 +67,24 @@ report_parser.add_argument("-n", "--n_matches", type=int, default=3,
 	help="The number of top TOMTOM matches to include in the report.")
 report_parser.add_argument("-l", "--lite", default=False, action='store_true',
 	help="Whether to use tomtom-lite when mapping patterns to motifs. Note that this also changes the distance function from correlation to Euclidean distance, and so the best motif may differ when there are many similar versions.")
+
+descriptive_report_parser = subparsers.add_parser("descriptive-report", help="Create a comprehensive descriptive HTML report of the results.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+descriptive_report_parser.add_argument("-i", "--h5py", type=str, required=True,
+	help="An HDF5 file containing the output from modiscolite.")
+descriptive_report_parser.add_argument("-o", "--output", type=str, required=True,
+	help="A directory to put the output results including the html report.")
+descriptive_report_parser.add_argument("-s", "--suffix", type=str, default="./",
+	help="The suffix to add to the beginning of images. Should be equal to the output if using a Jupyter notebook.")
+descriptive_report_parser.add_argument("-m", "--meme_db", type=str, default=None,
+	help="A MEME file containing motifs.")
+descriptive_report_parser.add_argument("-n", "--n_matches", type=int, default=3,
+	help="The number of top TOMTOM matches to include in the report.")
+descriptive_report_parser.add_argument("-l", "--lite", default=False, action='store_true',
+	help="Whether to use tomtom-lite when mapping patterns to motifs.")
+descriptive_report_parser.add_argument("--n_examples", type=int, default=10,
+	help="Number of seqlet quantiles to show for each pattern (default: 10).")
+descriptive_report_parser.add_argument("--trim_threshold", type=float, default=0.3,
+	help="Threshold for trimming logos.")
 
 convert_parser = subparsers.add_parser("convert", help="Convert an old h5py to the new format.")
 convert_parser.add_argument("-i", "--h5py", type=str, required=True,
@@ -234,6 +252,13 @@ elif args.cmd == 'report':
 		img_path_suffix=args.suffix, meme_motif_db=args.meme_db,
 		is_writing_tomtom_matrix=args.write_tomtom,
 		top_n_matches=args.n_matches, ttl=args.lite)
+
+elif args.cmd == 'descriptive-report':
+	modiscolite.descriptive_report.generate_descriptive_report(
+		args.h5py, args.output, img_path_suffix=args.suffix,
+		meme_motif_db=args.meme_db, top_n_matches=args.n_matches,
+		ttl=args.lite, n_examples=args.n_examples,
+		trim_threshold=args.trim_threshold)
 
 elif args.cmd == 'convert':
 	modiscolite.io.convert(args.h5py, args.output)

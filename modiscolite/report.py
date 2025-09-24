@@ -206,7 +206,7 @@ def path_to_image_html(path):
 	return '<img src="'+ path + '" width="240" >'
 
 
-def _plot_weights(array, path, figsize=(10,3)):
+def _plot_weights(array, path, figsize=(10,3), clamp=True):
 	"""Plot weights as a sequence logo and save to file."""
 	fig = plt.figure(figsize=figsize)
 	ax = fig.add_subplot(111) 
@@ -216,7 +216,8 @@ def _plot_weights(array, path, figsize=(10,3)):
 
 	crp_logo = logomaker.Logo(df, ax=ax)
 	crp_logo.style_spines(visible=False)
-	plt.ylim(min(df.sum(axis=1).min(), 0), df.sum(axis=1).max())
+	if clamp:
+		plt.ylim(min(df.sum(axis=1).min(), 0), df.sum(axis=1).max())
 
 	plt.savefig(path)
 	plt.close()

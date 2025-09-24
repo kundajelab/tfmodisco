@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TF-MoDISco Analysis Report</title>
+    <style>
+        /* Adapted from https://github.com/oxalorg/sakura/ */
+        html {
+            font-size: 62.5%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+        }
+
+        body {
+            font-size: 1.8rem;
+            line-height: 1.618;
+            max-width: 120em;
+            margin: auto;
+            color: #222222;
+            background-color: #ffffff;
+            padding: 13px;
+        }
+
+        @media (max-width: 684px) {
+            body {
+                font-size: 1.53rem;
+            }
+        }
+        @media (max-width: 382px) {
+            body {
+                font-size: 1.35rem;
+            }
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            line-height: 1.1;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+            font-weight: 700;
+            margin-top: 3rem;
+            margin-bottom: 1.5rem;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
+            -ms-word-break: break-all;
+            word-break: break-word;
+        }
+
+        h1 {
+            font-size: 2.35em;
+            border-bottom: 3px solid #007559;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 1.75em;
+            border-bottom: 2px solid #007559;
+            padding-bottom: 5px;
+            margin-top: 30px;
+        }
+
+        h3 {
+            font-size: 1.25em;
+        }
+
+        p {
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+        }
+
+        small, sub, sup {
+            font-size: 75%;
+        }
+
+        hr {
+            border-color: #007559;
+        }
+
+        a {
+            text-decoration: none;
+            color: #007559;
+        }
+        a:visited {
+            color: #004232;
+        }
+        a:hover {
+            color: #006994;
+            border-bottom: 2px solid #222222;
+        }
+
+        ul {
+            padding-left: 1.4em;
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+        }
+
+        li {
+            margin-bottom: 0.4em;
+        }
+
+        blockquote {
+            margin-left: 0px;
+            margin-right: 0px;
+            padding-left: 1em;
+            padding-top: 0.8em;
+            padding-bottom: 0.8em;
+            padding-right: 0.8em;
+            border-left: 5px solid #007559;
+            margin-bottom: 2.5rem;
+            background-color: #f7f7f7;
+        }
+
+        blockquote p {
+            margin-bottom: 0;
+        }
+
+        img, video {
+            height: auto;
+            max-width: 100%;
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+        }
+
+        /* Pre and Code */
+        pre {
+            background-color: #f7f7f7;
+            display: block;
+            padding: 1em;
+            overflow-x: auto;
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+            font-size: 0.9em;
+        }
+
+        code, kbd, samp {
+            font-size: 0.9em;
+            padding: 0 0.5em;
+            background-color: #f7f7f7;
+            white-space: pre-wrap;
+        }
+
+        pre > code {
+            padding: 0;
+            background-color: transparent;
+            white-space: pre;
+            font-size: 1em;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+            font-variant-numeric: tabular-nums;
+            text-align: justify;
+        }
+
+        td, th {
+            padding: 0.5em;
+            border-bottom: 1px solid #f1f1f1;
+        }
+
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+
+        .num_col {
+            text-align: right;
+        }
+
+        td.num_col {
+            padding-left: 2em;
+        }
+
+        /* Pattern sections */
+        .pattern-section {
+            border: 1px solid #ddd;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+
+        .pattern-title {
+            background-color: #007559;
+            color: white;
+            padding: 15px;
+            margin: -20px -20px 20px -20px;
+            border-radius: 5px 5px 0 0;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        /* Logo grids */
+        .logo-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .logo-item {
+            text-align: center;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: white;
+        }
+
+        .logo-item h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #007559;
+        }
+
+        .logo-item img {
+            max-width: 100%;
+            height: auto;
+            margin-bottom: 0;
+        }
+
+        /* Distribution plots */
+        .distribution-plots {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .distribution-item {
+            text-align: center;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: white;
+        }
+
+        .distribution-item h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #007559;
+        }
+
+        .distribution-item img {
+            max-width: 100%;
+            height: auto;
+            margin-bottom: 0;
+        }
+
+        /* Statistics tables */
+        .stats-table, .examples-table, .tomtom-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.9em;
+        }
+
+        .stats-table th, .stats-table td,
+        .examples-table th, .examples-table td,
+        .tomtom-table th, .tomtom-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .stats-table th, .examples-table th, .tomtom-table th {
+            background-color: #007559;
+            color: white;
+            font-weight: bold;
+        }
+
+        .stats-table .num_col, .examples-table .num_col, .tomtom-table .num_col {
+            text-align: right;
+        }
+
+        /* Introduction box */
+        .intro-box {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-left: 4px solid #007559;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+
+        .intro-box h2, .intro-box h3, .intro-box h4 {
+            color: #007559;
+            margin-top: 1.5rem;
+        }
+
+        .intro-box h2:first-child {
+            margin-top: 0;
+        }
+
+        /* Seqlet examples */
+        .seqlet-examples {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .seqlet-example-item {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: white;
+            text-align: center;
+        }
+
+        .seqlet-example-item h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #007559;
+        }
+
+        .seqlet-example-item img {
+            max-width: 100%;
+            height: auto;
+            margin-bottom: 0;
+        }
+
+    </style>
+</head>
+
+<body>
+    <h1>TF-MoDISco Descriptive Analysis Report</h1>
+
+    <div class="intro-box">
+        <h2>Introduction to TF-MoDISco</h2>
+
+        <h3>What is TF-MoDISco?</h3>
+        <p><strong>TF-MoDISco</strong> (<strong>T</strong>ranscription <strong>F</strong>actor <strong>Mo</strong>tif <strong>D</strong>iscovery from <strong>I</strong>mportance <strong>Sco</strong>res) is a method for discovering sequence motifs from neural network-derived importance scores. Unlike traditional motif discovery methods that rely solely on sequence enrichment, TF-MoDISco leverages context-aware importance scores to identify patterns.</p>
+
+        <h3>Preliminary Concepts</h3>
+
+        <h4>Importance Scores</h4>
+        <ul>
+            <li><strong>Projected Importance</strong>: The contribution of each nucleotide actually present in the sequence to the model's prediction</li>
+            <li><strong>Hypothetical Importance</strong>: The counterfactual contribution each possible nucleotide would have at each position. This representation can reveal functional similarities between sequences with different nucleotides.</li>
+        </ul>
+
+        <h4>Seqlets</h4>
+        <p>Short subsequences identified as having high importance scores. These are the building blocks that TF-MoDISco clusters into motifs.</p>
+
+        <h4>Contribution Weight Matrices (CWMs)</h4>
+        <p>CWMs represent the average importance scores across aligned seqlets. Unlike Position Weight Matrices (PWMs) that simply show sequence composition frequencies, CWMs quantify each position's contribution to binding predictions.</p>
+    </div>
+
+    <h2>Discovered Motifs</h2>
+
+    {% for pattern_tag, data in patterns_data.items() %}
+    <div class="pattern-section">
+        <div class="pattern-title">
+            {{ pattern_tag }}
+        </div>
+
+        <h4>Motif Visualization</h4>
+        {% if pattern_tag in logo_paths %}
+        <div class="logo-grid">
+            <div class="logo-item">
+                <h5>CWM Logo</h5>
+                <p><em>Contribution Weight Matrix: shows actual contribution scores</em></p>
+                <img src="{{ img_path_suffix }}comprehensive_logos/{{ pattern_tag }}/cwm_logo.png" alt="CWM Logo">
+            </div>
+            <div class="logo-item">
+                <h5>hCWM Logo</h5>
+                <p><em>Hypothetical Contribution Weight Matrix: shows counterfactual contributions</em></p>
+                <img src="{{ img_path_suffix }}comprehensive_logos/{{ pattern_tag }}/hcwm_logo.png" alt="hCWM Logo">
+            </div>
+            <div class="logo-item">
+                <h5>PWM Logo</h5>
+                <p><em>Position Weight Matrix weighted by information content</em></p>
+                <img src="{{ img_path_suffix }}comprehensive_logos/{{ pattern_tag }}/pwm_logo.png" alt="PWM Logo">
+            </div>
+            <div class="logo-item">
+                <h5>Trimmed CWM Logo</h5>
+                <p><em>CWM trimmed to core region</em></p>
+                <img src="{{ img_path_suffix }}comprehensive_logos/{{ pattern_tag }}/trimmed_cwm_logo.png" alt="Trimmed CWM Logo">
+            </div>
+        </div>
+        {% endif %}
+
+        <h4>Motif Statistics</h4>
+        <table class="stats-table">
+            <thead>
+                <tr><th>Metric</th><th class="num_col">Value</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Number of seqlets</td><td class="num_col">{{ data.n_seqlets }}</td></tr>
+                <tr><td>Average importance</td><td class="num_col">{{ "%.3f"|format(data.avg_importance) }}</td></tr>
+                <tr><td>GC content</td><td class="num_col">{{ "%.3f"|format(data.gc_content) }}</td></tr>
+            </tbody>
+        </table>
+
+        {% if meme_motif_db and pattern_tag in tomtom_data %}
+        <h4>TOMTOM Matches</h4>
+        <p>Top matches from motif database comparison:</p>
+        <table class="tomtom-table">
+            <thead>
+                <tr>
+                    <th class="num_col">Rank</th>
+                    <th>Match</th>
+                    <th class="num_col">{% if ttl %}P-value{% else %}Q-value{% endif %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for i in range(top_n_matches) %}
+                {% if 'match_' + i|string in tomtom_data[pattern_tag] %}
+                <tr>
+                    <td class="num_col">{{ i + 1 }}</td>
+                    <td><code>{{ tomtom_data[pattern_tag]['match_' + i|string] }}</code></td>
+                    <td class="num_col">{{ "%.2e"|format(tomtom_data[pattern_tag]['pval_' + i|string]) }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if pattern_tag in distribution_paths %}
+        <h4>Seqlet Distributions</h4>
+        <div class="distribution-plots">
+            {% if 'importance' in distribution_paths[pattern_tag] %}
+            <div class="distribution-item">
+                <h5>Seqlet Importance Distribution</h5>
+                <p><em>Distribution of total importance scores across seqlets</em></p>
+                <img src="{{ img_path_suffix }}distributions/{{ pattern_tag }}/importance_distribution.png" alt="Importance Distribution">
+            </div>
+            {% endif %}
+            {% if 'spatial' in distribution_paths[pattern_tag] %}
+            <div class="distribution-item">
+                <h5>Seqlet Spatial Distribution</h5>
+                <p><em>Distribution of seqlet positions within input sequences</em></p>
+                <img src="{{ img_path_suffix }}distributions/{{ pattern_tag }}/spatial_distribution.png" alt="Spatial Distribution">
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if pattern_tag in examples_data and examples_data[pattern_tag] %}
+        <h4>Seqlet Examples</h4>
+        <p>Representative seqlets from importance score quantiles:</p>
+        <div class="seqlet-examples">
+            {% for example in examples_data[pattern_tag] %}
+            <div class="seqlet-example-item">
+                <h5>{{ example.quantile }}th Percentile (Importance: {{ "%.3f"|format(example.importance) }})</h5>
+                <img src="{{ img_path_suffix }}seqlet_examples/{{ pattern_tag }}/quantile_{{ example.quantile }}.png" alt="Seqlet {{ example.quantile }}th Percentile">
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if not patterns_data %}
+    <blockquote>
+        <p><strong>Note:</strong> No patterns were found in the provided TF-MoDISco results file. This could indicate that no significant motifs were discovered during the analysis, or there may be an issue with the input file format.</p>
+    </blockquote>
+    {% endif %}
+
+</body>
+</html>

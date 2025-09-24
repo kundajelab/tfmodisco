@@ -23,6 +23,7 @@ setup(
 		'logomaker >= 0.8',
 		'h5py >= 3.7.0',
 		'hdf5plugin',
-		'memelite'
+		'memelite',
+		'jinja2'
 	]
 )
