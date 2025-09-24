@@ -33,7 +33,7 @@ Related tools:
 
 ## Installation
 
-You can install TF-MoDISco using `pip install modisco-lite`
+You can install TF-MoDISco using `pip install modisco`
 
 ## Running TF-MoDISco
 
