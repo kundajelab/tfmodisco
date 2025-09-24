@@ -5,7 +5,7 @@ TF-MoDISco (**T**ranscription **F**actor **Mo**tif **D**iscovery from **I**mport
 These importance scores can be generated using various attribution methods, such as DeepLIFT or SHAP, applied to models like BPNet. The algorithm identifies high-importance regions (seqlets), clusters them into motifs, and provides a report comparing discovered motifs to known databases.
 
 > [!IMPORTANT]  
-> TF-MoDISco now utilizes the [tfmodisco-lite](https://github.com/jmschrei/tfmodisco-lite/) implementation. This implementation is significantly more memory efficient, and in many cases faster, than the original implementation. The original implementation is still available [here](https://github.com/kundajelab/tfmodisco/tree/v0-final).
+> Starting from version v2, TF-MoDISco utilizes the [tfmodisco-lite](https://github.com/jmschrei/tfmodisco-lite/) implementation and interface. This implementation is significantly more memory efficient, and in many cases faster, than the original implementation. The original implementation (v0) is still available [here](https://github.com/kundajelab/tfmodisco/tree/v0-final).
 
 ## Algorithm Description
 
