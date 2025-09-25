@@ -80,20 +80,16 @@ where `[...]` denotes that data is stored at that attribute. Importantly, the se
 
 ## Generating reports
 
-Basic reporting can be executed with the following command:  
-```sh
-modisco report -i modisco_results.h5 -o report/ -s report/
-```
-
-You can also show matches against a given database of motifs with the following command:  
+The TF-MoDISco report can be generated with the following command:
 ```sh
 modisco report -i modisco_results.h5 -o report/ -s report/ -m motifs.txt
 ```
 
 Each pattern produced by TF-MoDISco is compared against the database of motifs using [TOMTOM](https://meme-suite.org/meme/tools/tomtom). A good default choice is [this collection of human motifs](https://raw.githubusercontent.com/kundajelab/MotifCompendium/refs/heads/main/pipeline/data/MotifCompendium-Database-Human.meme.txt) produced by the [MotifCompendium](https://github.com/kundajelab/MotifCompendium) package.
 
-A more detailed report can be generated with the following command:  
+The report details each pattern, including seqlet importance and spatial distributions, example seqlets at different importance levels, and motif visualizations.
+
+For users who need the legacy report format use:
 ```sh
-modisco descriptive-report -i modisco_results.h5 -o descriptive_report/ -s descriptive_report/ -m motifs.txt
+modisco report-simple -i modisco_results.h5 -o simple_report/ -s simple_report/ -m motifs.txt
 ```
-This report includes additional information about each pattern, including seqlet importance and spatial distributions, as well as example seqlets at different importance levels.
