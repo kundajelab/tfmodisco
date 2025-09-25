@@ -419,8 +419,7 @@
             height: auto;
         }
 
-        /* Improved TOMTOM table with logos */
-        .tomtom-match-logo {
+å        .tomtom-match-logo {
             max-width: 200px;
             height: auto;
             margin: 5px 0;
@@ -448,8 +447,8 @@
         </ul>
 
         <h4>Seqlets</h4>
-        <p>Short subsequences identified as having high contribution scores. These are the building blocks that TF-MoDISco clusters into motifs. The number of seqlets reported represents high-confidence instances used for motif construction and is a subset of the total number of binding sites. Additional sites likely exist in the data but were filtered during the clustering process.</p>
-        <p>Seqlet positions are displayed relative to its input region's midpoint (set at position 0), with negative values indicating upstream positions and positive values downstream. The "median distance from center" statistic is the median absolute seqlet distance from the corresponding regions' midpoints.</p>
+        <p><strong>About Seqlets:</strong> Seqlets are short subsequences identified as having high contribution scores. These are the building blocks that TF-MoDISco clusters into motifs. The number of seqlets reported represents high-confidence instances used for motif construction and is a subset of the total number of binding sites. Additional sites likely exist in the data but were filtered during the clustering process.</p>
+        <p><strong>Position Statistics:</strong> Seqlet positions are displayed relative to its input region's midpoint (set at position 0), with negative values indicating upstream positions and positive values downstream. The "median distance from center" statistic is the median absolute seqlet distance from the corresponding regions' midpoints.</p>
         <p><strong>Contribution Score Statistics:</strong> The "total contribution" of a seqlet is computed as the the total absolute contribution scores across all positions. This provides a measure of the overall strength of the seqlets's influence on model predictions.</p>
         <p><strong>Seqlet Selection for Visualization:</strong> Representative seqlets are selected from different total contribution quantiles (10th, 20th, 30th, etc. percentiles) to show the range of pattern strength.</p>
 
@@ -458,7 +457,7 @@
         <p><strong>Position Probability Matrices (PPMs)</strong> show sequence composition frequencies. When scaled by information content (IC), they become information-weighted PPMs that emphasize positions with higher sequence consistency.</p>
 
         <h4>Understanding Motif Matches & Pattern Names</h4>
-        <p><strong>TOMTOM Database Matches:</strong> Each discovered motif is compared against the user-provided database of known motifs using TOMTOM. Only the top 3 matches by statistical significance are displayed, but there may be other significant matches not shown. The factor responsible for binding may not necessarily correspond to the top-ranked match (Match 0) - biological context and additional evidence should be considered when interpreting results.</p>
+        <p><strong>Tomtom Database Matches:</strong> Each discovered motif is compared against the user-provided database of known motifs using TOMTOM. Only the top 3 matches by statistical significance are displayed, but there may be other significant matches not shown. The factor responsible for binding may not necessarily correspond to the top-ranked match (Match 0) - biological context and additional evidence should be considered when interpreting results.</p>
         <p><strong>Pattern Naming:</strong> When database matches are available, patterns are given descriptive names constructed from the first 10 characters of the top matches, separated by semicolons (e.g., "CTCF_HUMAN;SP1_MOUSE;ZNF143"). The original pattern ID in the H5 (e.g., "pos_patterns.pattern_0") is also shown and remains the canonical identifier.</p>
     </div>
 
@@ -503,10 +502,20 @@
                         {% endif %}
                     </td>
                     <td class="num-col">{{ data.n_seqlets }}</td>
-                    <td class="num-col">{{ "%.3f"|format(data.avg_importance) }}</td>
+                    <td class="num-col">
+                        {% if data.std_importance and data.std_importance == data.std_importance %}
+                            {{ "%.3f"|format(data.avg_importance) }} ± {{ "%.3f"|format(data.std_importance) }}
+                        {% else %}
+                            {{ "%.3f"|format(data.avg_importance) }}
+                        {% endif %}
+                    </td>
                     <td class="num-col">
                         {% if data.median_abs_distance_from_center and data.median_abs_distance_from_center == data.median_abs_distance_from_center %}
-                            {{ "%.1f"|format(data.median_abs_distance_from_center) }}
+                            {% if data.std_distance_from_center and data.std_distance_from_center == data.std_distance_from_center %}
+                                {{ "%.1f"|format(data.median_abs_distance_from_center) }} ± {{ "%.1f"|format(data.std_distance_from_center) }}
+                            {% else %}
+                                {{ "%.1f"|format(data.median_abs_distance_from_center) }}
+                            {% endif %}
                         {% else %}
                             -
                         {% endif %}
@@ -586,20 +595,40 @@
         <h4>Motif Statistics</h4>
         <table class="stats-table">
             <thead>
-                <tr><th>Metric</th><th class="num_col">Value</th></tr>
+                <tr><th>Metric</th><th class="num_col">Value</th><th class="num_col">Std Dev</th></tr>
             </thead>
             <tbody>
-                <tr><td>Number of seqlets</td><td class="num_col">{{ data.n_seqlets }}</td></tr>
-                <tr><td>Average contribution score</td><td class="num_col">{{ "%.3f"|format(data.avg_importance) }}</td></tr>
-                <tr><td>GC content</td><td class="num_col">{{ "%.3f"|format(data.gc_content) }}</td></tr>
+                <tr><td>Number of seqlets</td><td class="num_col">{{ data.n_seqlets }}</td><td class="num_col">-</td></tr>
+                <tr>
+                    <td>Average contribution score</td>
+                    <td class="num_col">{{ "%.3f"|format(data.avg_importance) }}</td>
+                    <td class="num_col">
+                        {% if data.std_importance and data.std_importance == data.std_importance %}
+                            {{ "%.3f"|format(data.std_importance) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr><td>GC content</td><td class="num_col">{{ "%.3f"|format(data.gc_content) }}</td><td class="num_col">-</td></tr>
                 {% if data.median_abs_distance_from_center and data.median_abs_distance_from_center == data.median_abs_distance_from_center %}
-                <tr><td>Median distance from center</td><td class="num_col">{{ "%.1f"|format(data.median_abs_distance_from_center) }}</td></tr>
+                <tr>
+                    <td>Median distance from center</td>
+                    <td class="num_col">{{ "%.1f"|format(data.median_abs_distance_from_center) }}</td>
+                    <td class="num_col">
+                        {% if data.std_distance_from_center and data.std_distance_from_center == data.std_distance_from_center %}
+                            {{ "%.1f"|format(data.std_distance_from_center) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
                 {% endif %}
             </tbody>
         </table>
 
         {% if meme_motif_db and pattern_tag in tomtom_data %}
-        <h4>TOMTOM Matches</h4>
+        <h4>Tomtom Matches</h4>
         <p>Top matches from motif database comparison:</p>
         <table class="tomtom-table">
             <thead>

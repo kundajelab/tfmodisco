@@ -104,6 +104,11 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
                 gc_content = np.mean(ppm[:, [1, 2]])  # C and G positions
                 avg_importance = np.mean(np.sum(np.abs(cwm), axis=1))
 
+                # Calculate standard deviations for seqlet statistics
+                std_importance = np.nan
+                if len(seqlet_importance) > 0:
+                    std_importance = np.std(seqlet_importance)
+
                 # Store seqlet positions for global region size calculation
                 seqlet_starts_list = np.array(seqlet_starts) if len(seqlet_starts) > 0 else np.array([])
                 seqlet_ends_list = np.array(seqlet_ends) if len(seqlet_ends) > 0 else np.array([])
@@ -118,7 +123,9 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
                     'n_seqlets': n_seqlets,
                     'gc_content': gc_content,
                     'avg_importance': avg_importance,
+                    'std_importance': std_importance,
                     'median_abs_distance_from_center': median_abs_distance_from_center,
+                    'std_distance_from_center': np.nan,  # Will be computed globally
                     'seqlet_starts': seqlet_starts_list,
                     'seqlet_ends': seqlet_ends_list,
                     'seqlet_example_idx': np.array(seqlet_example_idx) if len(seqlet_example_idx) > 0 else np.array([]),
@@ -157,15 +164,17 @@ def compute_global_region_size_and_distances(patterns_data: Dict) -> Dict:
         data['global_region_size'] = global_region_size
         data['global_center'] = global_center
 
-        # Compute median absolute distance from global center
+        # Compute median absolute distance from global center and standard deviation
         if len(data['seqlet_starts']) > 0 and len(data['seqlet_ends']) > 0:
             # Calculate seqlet center positions
             seqlet_centers = (data['seqlet_starts'] + data['seqlet_ends']) / 2
             # Calculate distances from global center
             distances_from_center = np.abs(seqlet_centers - global_center)
             data['median_abs_distance_from_center'] = np.median(distances_from_center)
+            data['std_distance_from_center'] = np.std(distances_from_center)
         else:
             data['median_abs_distance_from_center'] = np.nan
+            data['std_distance_from_center'] = np.nan
 
     return updated_patterns_data
 
@@ -383,7 +392,7 @@ def create_seqlet_example_logos(patterns_data: Dict, output_dir: str, n_examples
 
 
 def create_tomtom_match_logos(tomtom_data: Dict, output_dir: str, meme_motif_db: str, top_n_matches: int) -> Dict:
-    """Create logo plots for TOMTOM matches."""
+    """Create logo plots for Tomtom matches."""
     tomtom_logos_dir = os.path.join(output_dir, 'tomtom_logos')
     os.makedirs(tomtom_logos_dir, exist_ok=True)
 
@@ -418,7 +427,7 @@ def create_tomtom_match_logos(tomtom_data: Dict, output_dir: str, meme_motif_db:
 
 
 def create_descriptive_names(tomtom_data: Dict, top_n_matches: int = 3) -> Dict:
-    """Create descriptive names for motifs based on TOMTOM matches."""
+    """Create descriptive names for motifs based on Tomtom matches."""
     descriptive_names = {}
 
     for pattern_tag, matches in tomtom_data.items():
@@ -463,7 +472,7 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
     distribution_paths = create_distribution_plots(patterns_data, output_dir)
     examples_data = create_seqlet_example_logos(patterns_data, output_dir, n_examples)
 
-    # Get TOMTOM matches if database provided
+    # Get Tomtom matches if database provided
     tomtom_data = {}
     tomtom_logos = {}
     descriptive_names = {}
