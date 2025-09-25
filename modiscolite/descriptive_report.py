@@ -130,9 +130,9 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
     return patterns_data
 
 
-def create_comprehensive_logos(patterns_data: Dict, output_dir: str, trim_threshold: float = 0.3) -> Dict:
+def create_logos(patterns_data: Dict, output_dir: str, trim_threshold: float = 0.3) -> Dict:
     """Create logo visualizations for each pattern as both files and base64 data."""
-    logo_dir = os.path.join(output_dir, 'comprehensive_logos')
+    logo_dir = os.path.join(output_dir, 'logos')
     os.makedirs(logo_dir, exist_ok=True)
 
     logo_data = {}
@@ -376,16 +376,14 @@ def create_descriptive_names(tomtom_data: Dict, top_n_matches: int = 3) -> Dict:
             match_key = f'match_{i}'
             if match_key in matches and matches[match_key]:
                 match_name = matches[match_key].strip()
-                # Take first 10 characters, remove special characters
-                clean_name = ''.join(c for c in match_name[:10] if c.isalnum())
-                if clean_name:
-                    name_parts.append(clean_name)
+                # Take first 10 characters
+                name_parts.append(match_name[:10])
 
         if name_parts:
-            descriptive_names[pattern_tag] = '_'.join(name_parts)
+            descriptive_names[pattern_tag] = ';'.join(name_parts)
         else:
             # Fallback to pattern tag if no matches
-            descriptive_names[pattern_tag] = pattern_tag.replace('.', '_')
+            descriptive_names[pattern_tag] = pattern_tag
 
     return descriptive_names
 
@@ -406,7 +404,7 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
     patterns_data = extract_seqlet_data(modisco_h5py, pattern_groups)
 
     # Create visualizations
-    logo_paths = create_comprehensive_logos(patterns_data, output_dir, trim_threshold)
+    logo_paths = create_logos(patterns_data, output_dir, trim_threshold)
     distribution_paths = create_distribution_plots(patterns_data, output_dir)
     examples_data = create_seqlet_example_logos(patterns_data, output_dir, n_examples)
 
@@ -460,9 +458,9 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
     )
 
     # Write HTML report
-    report_path = os.path.join(output_dir, 'descriptive_report.html')
+    report_path = os.path.join(output_dir, 'report.html')
     with open(report_path, 'w') as f:
         f.write(html_content)
 
-    print(f"Descriptive report generated: {report_path}")
+    print(f"Report generated: {report_path}")
     return report_path
