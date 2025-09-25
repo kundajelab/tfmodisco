@@ -3,6 +3,18 @@ Release History
 ===============
 
 
+Version 2.5.0
+==============
+
+descriptive-report
+------------------
+	
+	- Added a new command to generate a more detailed report that includes
+	additional information about each pattern, including seqlet importance
+	and spatial distributions, as well as example seqlets at different
+	importance levels.
+
+
 Version 2.4.0
 ==============
 
