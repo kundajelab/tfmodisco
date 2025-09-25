@@ -270,9 +270,9 @@ def create_distribution_plots(patterns_data: Dict, output_dir: str) -> Dict:
                 data['seqlet_importance'],
                 bins=30,
                 color='skyblue',
-                xlabel='Seqlet Total Importance Score',
+                xlabel='Seqlet Total Contribution Score',
                 ylabel='Density',
-                title=f'Seqlet Importance Distribution - {pattern_tag}',
+                title=f'Seqlet Contribution Score Distribution - {pattern_tag}',
                 figsize=(8, 4)
             )
 
