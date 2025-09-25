@@ -5,9 +5,55 @@ import matplotlib.pyplot as plt
 from jinja2 import Template
 from typing import List, Dict, Optional
 import importlib.resources
+import base64
+import io
 
 from .report import compute_per_position_ic, _plot_weights, tomtomlite_dataframe, generate_tomtom_dataframe
 from . import templates
+from memelite.io import read_meme
+
+
+def plot_to_base64(array, figsize=(10, 3), clamp=True):
+    """Plot weights as a sequence logo and return as base64 string."""
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+
+    import pandas
+    df = pandas.DataFrame(array, columns=['A', 'C', 'G', 'T'])
+    df.index.name = 'pos'
+
+    import logomaker
+    crp_logo = logomaker.Logo(df, ax=ax)
+    crp_logo.style_spines(visible=False)
+    if clamp:
+        plt.ylim(min(df.sum(axis=1).min(), 0), df.sum(axis=1).max())
+
+    # Save to base64
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+    buffer.seek(0)
+    image_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+    plt.close()
+
+    return f"data:image/png;base64,{image_base64}"
+
+
+def plot_histogram_to_base64(data, bins=30, color='skyblue', xlabel='', ylabel='Density', title='', figsize=(8, 4)):
+    """Create histogram plot and return as base64 string."""
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.hist(data, bins=bins, alpha=0.7, color=color, edgecolor='black', density=True)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+
+    # Save to base64
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+    buffer.seek(0)
+    image_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+    plt.close()
+
+    return f"data:image/png;base64,{image_base64}"
 
 
 def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
@@ -55,6 +101,17 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
                 gc_content = np.mean(ppm[:, [1, 2]])  # C and G positions
                 avg_importance = np.mean(np.sum(np.abs(cwm), axis=1))
 
+                # Calculate median absolute distance from summit
+                median_abs_distance_from_summit = np.nan
+                if len(seqlet_starts) > 0 and len(seqlet_ends) > 0:
+                    # Calculate center positions
+                    centers = (np.array(seqlet_starts) + np.array(seqlet_ends)) / 2
+                    # Find the motif center (assuming input sequences have a standard length)
+                    # We'll calculate this as the median of the seqlet centers as a proxy for summit
+                    motif_summit = np.median(centers) if len(centers) > 0 else 0
+                    distances_from_summit = np.abs(centers - motif_summit)
+                    median_abs_distance_from_summit = np.median(distances_from_summit)
+
                 patterns_data[pattern_tag] = {
                     'ppm': ppm,
                     'cwm': cwm,
@@ -62,6 +119,7 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
                     'n_seqlets': n_seqlets,
                     'gc_content': gc_content,
                     'avg_importance': avg_importance,
+                    'median_abs_distance_from_summit': median_abs_distance_from_summit,
                     'seqlet_starts': np.array(seqlet_starts) if len(seqlet_starts) > 0 else np.array([]),
                     'seqlet_ends': np.array(seqlet_ends) if len(seqlet_ends) > 0 else np.array([]),
                     'seqlet_example_idx': np.array(seqlet_example_idx) if len(seqlet_example_idx) > 0 else np.array([]),
@@ -73,11 +131,11 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
 
 
 def create_comprehensive_logos(patterns_data: Dict, output_dir: str, trim_threshold: float = 0.3) -> Dict:
-    """Create logo visualizations for each pattern."""
+    """Create logo visualizations for each pattern as both files and base64 data."""
     logo_dir = os.path.join(output_dir, 'comprehensive_logos')
     os.makedirs(logo_dir, exist_ok=True)
 
-    logo_paths = {}
+    logo_data = {}
 
     for pattern_tag, data in patterns_data.items():
         pattern_dir = os.path.join(logo_dir, pattern_tag)
@@ -99,80 +157,76 @@ def create_comprehensive_logos(patterns_data: Dict, output_dir: str, trim_thresh
         else:
             trimmed_cwm = cwm
 
-        # Generate logos
+        # Generate logos as both files and base64
         logos = {}
 
         # CWM Logo
         cwm_path = os.path.join(pattern_dir, 'cwm_logo.png')
         _plot_weights(cwm, cwm_path, figsize=(12, 3))
-        logos['cwm'] = cwm_path
+        logos['cwm'] = plot_to_base64(cwm, figsize=(12, 3))
+        logos['cwm_path'] = cwm_path
 
         # hCWM Logo
         hcwm_path = os.path.join(pattern_dir, 'hcwm_logo.png')
         _plot_weights(hcwm, hcwm_path, figsize=(12, 3), clamp=False)
-        logos['hcwm'] = hcwm_path
+        logos['hcwm'] = plot_to_base64(hcwm, figsize=(12, 3), clamp=False)
+        logos['hcwm_path'] = hcwm_path
 
         # PWM Logo (using information content)
         background = np.array([0.25, 0.25, 0.25, 0.25])
         ic = compute_per_position_ic(ppm, background, 0.001)
         pwm_path = os.path.join(pattern_dir, 'pwm_logo.png')
         _plot_weights(ppm * ic[:, None], pwm_path, figsize=(12, 3))
-        logos['pwm'] = pwm_path
+        logos['pwm'] = plot_to_base64(ppm * ic[:, None], figsize=(12, 3))
+        logos['pwm_path'] = pwm_path
 
         # Trimmed CWM Logo
         trimmed_path = os.path.join(pattern_dir, 'trimmed_cwm_logo.png')
         _plot_weights(trimmed_cwm, trimmed_path, figsize=(10, 3))
-        logos['trimmed_cwm'] = trimmed_path
+        logos['trimmed_cwm'] = plot_to_base64(trimmed_cwm, figsize=(10, 3))
+        logos['trimmed_cwm_path'] = trimmed_path
 
-        logo_paths[pattern_tag] = logos
+        logo_data[pattern_tag] = logos
 
-    return logo_paths
+    return logo_data
 
 
 def create_distribution_plots(patterns_data: Dict, output_dir: str) -> Dict:
-    """Create seqlet importance and spatial distribution plots."""
-    dist_dir = os.path.join(output_dir, 'distributions')
-    os.makedirs(dist_dir, exist_ok=True)
-
-    distribution_paths = {}
+    """Create seqlet importance and spatial distribution plots as base64 data."""
+    distribution_data = {}
 
     for pattern_tag, data in patterns_data.items():
-        pattern_dir = os.path.join(dist_dir, pattern_tag)
-        os.makedirs(pattern_dir, exist_ok=True)
-
         plots = {}
 
         # Seqlet importance distribution
         if len(data['seqlet_importance']) > 0:
-            fig, ax = plt.subplots(figsize=(8, 4))
-            ax.hist(data['seqlet_importance'], bins=30, alpha=0.7, color='skyblue', edgecolor='black')
-            ax.set_xlabel('Seqlet Total Importance Score')
-            ax.set_ylabel('Frequency')
-            ax.set_title(f'Seqlet Importance Distribution - {pattern_tag}')
-
-            importance_path = os.path.join(pattern_dir, 'importance_distribution.png')
-            plt.savefig(importance_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            plots['importance'] = importance_path
+            plots['importance'] = plot_histogram_to_base64(
+                data['seqlet_importance'],
+                bins=30,
+                color='skyblue',
+                xlabel='Seqlet Total Importance Score',
+                ylabel='Density',
+                title=f'Seqlet Importance Distribution - {pattern_tag}',
+                figsize=(8, 4)
+            )
 
         # Seqlet spatial distribution
         if len(data['seqlet_starts']) > 0:
-            fig, ax = plt.subplots(figsize=(8, 4))
             # Calculate center positions
             centers = (data['seqlet_starts'] + data['seqlet_ends']) / 2
-            ax.hist(centers, bins=30, alpha=0.7, color='lightcoral', edgecolor='black')
-            ax.set_xlabel('Position within Input Sequence')
-            ax.set_ylabel('Frequency')
-            ax.set_title(f'Seqlet Spatial Distribution - {pattern_tag}')
+            plots['spatial'] = plot_histogram_to_base64(
+                centers,
+                bins=30,
+                color='lightcoral',
+                xlabel='Position within Input Sequence',
+                ylabel='Density',
+                title=f'Seqlet Spatial Distribution - {pattern_tag}',
+                figsize=(8, 4)
+            )
 
-            spatial_path = os.path.join(pattern_dir, 'spatial_distribution.png')
-            plt.savefig(spatial_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            plots['spatial'] = spatial_path
+        distribution_data[pattern_tag] = plots
 
-        distribution_paths[pattern_tag] = plots
-
-    return distribution_paths
+    return distribution_data
 
 
 def create_seqlet_example_logos(patterns_data: Dict, output_dir: str, n_examples: int = 10) -> Dict:
@@ -180,7 +234,7 @@ def create_seqlet_example_logos(patterns_data: Dict, output_dir: str, n_examples
     examples_dir = os.path.join(output_dir, 'seqlet_examples')
     os.makedirs(examples_dir, exist_ok=True)
 
-    examples_paths = {}
+    examples_data = {}
 
     for pattern_tag, data in patterns_data.items():
         if len(data['seqlet_importance']) == 0 or len(data['seqlet_contribs']) == 0:
@@ -218,9 +272,6 @@ def create_seqlet_example_logos(patterns_data: Dict, output_dir: str, n_examples
                 quantile_indices.append(closest_idx)
                 used_indices.add(closest_idx)
 
-        # Debug: print how many quantiles we found
-        print(f"Pattern {pattern_tag}: Found {len(quantile_indices)} quantile examples out of {actual_n_examples} requested, from {len(importance_scores)} total seqlets")
-
         example_logos = []
 
         # Ensure we have the right number of quantile_indices
@@ -233,21 +284,84 @@ def create_seqlet_example_logos(patterns_data: Dict, output_dir: str, n_examples
                     importance = importance_scores[idx]
                     quantile_pct = quantiles[i]
 
-                    # Create logo for this seqlet (smaller height for more compact display)
+                    # Create logo file for backwards compatibility
                     logo_path = os.path.join(pattern_dir, f'quantile_{int(quantile_pct)}.png')
-
                     _plot_weights(seqlet_cwm, logo_path, figsize=(8, 1.2))
+
+                    # Also create base64 data
+                    base64_data = plot_to_base64(seqlet_cwm, figsize=(8, 1.2))
 
                     example_logos.append({
                         'rank': i + 1,
                         'quantile': int(quantile_pct),
                         'path': logo_path,
+                        'base64': base64_data,
                         'importance': float(importance)
                     })
 
-        examples_paths[pattern_tag] = list(reversed(example_logos))
-    
-    return examples_paths
+        examples_data[pattern_tag] = list(reversed(example_logos))
+
+    return examples_data
+
+
+def create_tomtom_match_logos(tomtom_data: Dict, output_dir: str, meme_motif_db: str, top_n_matches: int) -> Dict:
+    """Create logo plots for TOMTOM matches."""
+    tomtom_logos_dir = os.path.join(output_dir, 'tomtom_logos')
+    os.makedirs(tomtom_logos_dir, exist_ok=True)
+
+    # Read the motif database
+    motifs = read_meme(meme_motif_db)
+    motifs = {name.split()[0]: pwm.T for name, pwm in motifs.items()}
+
+    tomtom_logos = {}
+    background = np.array([0.25, 0.25, 0.25, 0.25])
+
+    for pattern_tag, matches in tomtom_data.items():
+        tomtom_logos[pattern_tag] = {}
+        for i in range(top_n_matches):
+            match_key = f'match_{i}'
+            if match_key in matches and matches[match_key]:
+                match_name = matches[match_key].strip()
+                if match_name in motifs:
+                    # Create logo for this match
+                    ppm = motifs[match_name]
+                    ic = compute_per_position_ic(ppm, background, 0.001)
+
+                    # Create file for backwards compatibility
+                    logo_path = os.path.join(tomtom_logos_dir, f'{pattern_tag}_match_{i}.png')
+                    _plot_weights(ppm * ic[:, None], logo_path, figsize=(8, 2))
+                    tomtom_logos[pattern_tag][f'match_{i}_logo'] = logo_path
+
+                    # Also create base64 data
+                    base64_data = plot_to_base64(ppm * ic[:, None], figsize=(8, 2))
+                    tomtom_logos[pattern_tag][f'match_{i}_base64'] = base64_data
+
+    return tomtom_logos
+
+
+def create_descriptive_names(tomtom_data: Dict, top_n_matches: int = 3) -> Dict:
+    """Create descriptive names for motifs based on TOMTOM matches."""
+    descriptive_names = {}
+
+    for pattern_tag, matches in tomtom_data.items():
+        # Collect first 10 characters of each match
+        name_parts = []
+        for i in range(min(top_n_matches, 3)):  # Use max 3 matches for name
+            match_key = f'match_{i}'
+            if match_key in matches and matches[match_key]:
+                match_name = matches[match_key].strip()
+                # Take first 10 characters, remove special characters
+                clean_name = ''.join(c for c in match_name[:10] if c.isalnum())
+                if clean_name:
+                    name_parts.append(clean_name)
+
+        if name_parts:
+            descriptive_names[pattern_tag] = '_'.join(name_parts)
+        else:
+            # Fallback to pattern tag if no matches
+            descriptive_names[pattern_tag] = pattern_tag.replace('.', '_')
+
+    return descriptive_names
 
 
 def generate_descriptive_report(modisco_h5py: str, output_dir: str,
@@ -272,6 +386,8 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
 
     # Get TOMTOM matches if database provided
     tomtom_data = {}
+    tomtom_logos = {}
+    descriptive_names = {}
     if meme_motif_db is not None:
         from pathlib import Path
         if ttl:
@@ -294,6 +410,10 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
                         tomtom_data[pattern_tag][f'match_{j}'] = tomtom_df.iloc[i][match_col]
                         tomtom_data[pattern_tag][f'pval_{j}'] = tomtom_df.iloc[i][pval_col]
 
+        # Create TOMTOM match logos and descriptive names
+        tomtom_logos = create_tomtom_match_logos(tomtom_data, output_dir, meme_motif_db, top_n_matches)
+        descriptive_names = create_descriptive_names(tomtom_data, top_n_matches)
+
     # Generate HTML report
     template_str = (
         importlib.resources.files(templates).joinpath("descriptive_report.html").read_text()
@@ -305,6 +425,8 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
         distribution_paths=distribution_paths,
         examples_data=examples_data,
         tomtom_data=tomtom_data,
+        tomtom_logos=tomtom_logos,
+        descriptive_names=descriptive_names,
         img_path_suffix=img_path_suffix,
         meme_motif_db=meme_motif_db,
         top_n_matches=top_n_matches,
