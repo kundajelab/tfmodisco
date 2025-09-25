@@ -38,13 +38,16 @@ def plot_to_base64(array, figsize=(10, 3), clamp=True):
     return f"data:image/png;base64,{image_base64}"
 
 
-def plot_histogram_to_base64(data, bins=30, color='skyblue', xlabel='', ylabel='Density', title='', figsize=(8, 4)):
+def plot_histogram_to_base64(data, bins=30, color='skyblue', xlabel='', ylabel='Density', title='', figsize=(8, 4), xlim=None):
     """Create histogram plot and return as base64 string."""
     fig, ax = plt.subplots(figsize=figsize)
     ax.hist(data, bins=bins, alpha=0.7, color=color, edgecolor='black', density=True)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
+
+    if xlim is not None:
+        ax.set_xlim(xlim)
 
     # Save to base64
     buffer = io.BytesIO()
@@ -101,16 +104,12 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
                 gc_content = np.mean(ppm[:, [1, 2]])  # C and G positions
                 avg_importance = np.mean(np.sum(np.abs(cwm), axis=1))
 
-                # Calculate median absolute distance from summit
-                median_abs_distance_from_summit = np.nan
-                if len(seqlet_starts) > 0 and len(seqlet_ends) > 0:
-                    # Calculate center positions
-                    centers = (np.array(seqlet_starts) + np.array(seqlet_ends)) / 2
-                    # Find the motif center (assuming input sequences have a standard length)
-                    # We'll calculate this as the median of the seqlet centers as a proxy for summit
-                    motif_summit = np.median(centers) if len(centers) > 0 else 0
-                    distances_from_summit = np.abs(centers - motif_summit)
-                    median_abs_distance_from_summit = np.median(distances_from_summit)
+                # Store seqlet positions for global region size calculation
+                seqlet_starts_list = np.array(seqlet_starts) if len(seqlet_starts) > 0 else np.array([])
+                seqlet_ends_list = np.array(seqlet_ends) if len(seqlet_ends) > 0 else np.array([])
+
+                # Calculate median absolute distance from center (will be computed globally later)
+                median_abs_distance_from_center = np.nan
 
                 patterns_data[pattern_tag] = {
                     'ppm': ppm,
@@ -119,15 +118,56 @@ def extract_seqlet_data(modisco_h5py: str, pattern_groups: List[str]) -> Dict:
                     'n_seqlets': n_seqlets,
                     'gc_content': gc_content,
                     'avg_importance': avg_importance,
-                    'median_abs_distance_from_summit': median_abs_distance_from_summit,
-                    'seqlet_starts': np.array(seqlet_starts) if len(seqlet_starts) > 0 else np.array([]),
-                    'seqlet_ends': np.array(seqlet_ends) if len(seqlet_ends) > 0 else np.array([]),
+                    'median_abs_distance_from_center': median_abs_distance_from_center,
+                    'seqlet_starts': seqlet_starts_list,
+                    'seqlet_ends': seqlet_ends_list,
                     'seqlet_example_idx': np.array(seqlet_example_idx) if len(seqlet_example_idx) > 0 else np.array([]),
                     'seqlet_importance': np.array(seqlet_importance) if len(seqlet_importance) > 0 else np.array([]),
                     'seqlet_contribs': seqlet_contribs
                 }
 
     return patterns_data
+
+
+def compute_global_region_size_and_distances(patterns_data: Dict) -> Dict:
+    """Compute global region size and update median distances from center."""
+    # Find global region size from maximum extent of any seqlet
+    global_min = float('inf')
+    global_max = float('-inf')
+
+    for pattern_tag, data in patterns_data.items():
+        if len(data['seqlet_starts']) > 0 and len(data['seqlet_ends']) > 0:
+            pattern_min = np.min(data['seqlet_starts'])
+            pattern_max = np.max(data['seqlet_ends'])
+            global_min = min(global_min, pattern_min)
+            global_max = max(global_max, pattern_max)
+
+    # If no seqlets found, use a default
+    if global_min == float('inf'):
+        global_region_size = 400  # Default fallback
+        global_center = 200
+    else:
+        global_region_size = global_max - global_min
+        global_center = (global_max + global_min) / 2
+
+    # Update patterns data with global information and compute distances from center
+    updated_patterns_data = patterns_data.copy()
+    for pattern_tag, data in updated_patterns_data.items():
+        # Add global region information
+        data['global_region_size'] = global_region_size
+        data['global_center'] = global_center
+
+        # Compute median absolute distance from global center
+        if len(data['seqlet_starts']) > 0 and len(data['seqlet_ends']) > 0:
+            # Calculate seqlet center positions
+            seqlet_centers = (data['seqlet_starts'] + data['seqlet_ends']) / 2
+            # Calculate distances from global center
+            distances_from_center = np.abs(seqlet_centers - global_center)
+            data['median_abs_distance_from_center'] = np.median(distances_from_center)
+        else:
+            data['median_abs_distance_from_center'] = np.nan
+
+    return updated_patterns_data
 
 
 def create_logos(patterns_data: Dict, output_dir: str, trim_threshold: float = 0.3) -> Dict:
@@ -240,14 +280,26 @@ def create_distribution_plots(patterns_data: Dict, output_dir: str) -> Dict:
         if len(data['seqlet_starts']) > 0:
             # Calculate center positions
             centers = (data['seqlet_starts'] + data['seqlet_ends']) / 2
+
+            # Set bounds based on global region size with center at 0
+            if 'global_region_size' in data:
+                half_size = data['global_region_size'] / 2
+                xlim = (-half_size, half_size)
+                # Adjust centers to be relative to global center (center at 0)
+                centers_adjusted = centers - data['global_center']
+            else:
+                xlim = None
+                centers_adjusted = centers
+
             plots['spatial'] = plot_histogram_to_base64(
-                centers,
+                centers_adjusted,
                 bins=30,
                 color='lightcoral',
-                xlabel='Position within Input Sequence',
+                xlabel='Position Relative to Center (bp)',
                 ylabel='Density',
                 title=f'Seqlet Spatial Distribution - {pattern_tag}',
-                figsize=(8, 4)
+                figsize=(8, 4),
+                xlim=xlim
             )
 
         distribution_data[pattern_tag] = plots
@@ -402,6 +454,9 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
 
     # Extract seqlets
     patterns_data = extract_seqlet_data(modisco_h5py, pattern_groups)
+
+    # Compute global region size and update distances
+    patterns_data = compute_global_region_size_and_distances(patterns_data)
 
     # Create visualizations
     logo_paths = create_logos(patterns_data, output_dir, trim_threshold)
