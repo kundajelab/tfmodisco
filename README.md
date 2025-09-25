@@ -13,7 +13,8 @@ The TF-MoDISco algorithm starts with a set of importance scores on genomic seque
 
 1. Identify high-importance windows of the sequences, termed "seqlets"
 2. Divide the seqlets into positive and negative sets (metaclusters) based on the overall importance score of each seqlet
-3. Cluster recurring similar seqlets into motifs
+3. Cluster recurring similar seqlets
+4. Generate motifs by aligning the clustered seqlets
 
 During clustering, a coarse-grained similarity is calculated as the cosine similarity between gapped k-mer representations between all pairs of seqlets. This information is used to calculate the top nearest neighbors, for which a fine-grained similarity is calculated as the maximum Jaccard index as two seqlets are aligned with all possible offsets. This sparse similarity matrix is then density adapted, similarly to t-SNE, and Leiden clustering is used to extract patterns. Finally, some heuristics are used to merge similar patterns and split apart the seqlets comprising dissimilar ones.
 
