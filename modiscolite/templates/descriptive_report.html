@@ -36,8 +36,8 @@
 
         @media (min-width: 768px) {
             .content-container {
-                max-width: 900px;
-                padding: 0 40px;
+                max-width: 1200px;
+                padding: 0 60px;
             }
         }
 
@@ -235,7 +235,7 @@
         }
 
         .logo-item img {
-            max-width: 100%;
+            max-width: 90%;
             height: auto;
             margin-bottom: 0;
         }
@@ -264,7 +264,7 @@
         }
 
         .distribution-item img {
-            max-width: 100%;
+            max-width: 90%;
             height: auto;
             margin-bottom: 0;
         }
@@ -338,21 +338,18 @@
         }
 
         .seqlet-example-item img {
-            max-width: 100%;
+            max-width: 90%;
             height: auto;
             margin-bottom: 0;
         }
 
-        /* Table of Contents */
-        .toc-container {
-            background-color: #f9f9f9;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            padding: 20px;
-            margin: 20px 0;
+        /* Summary Table - matching basic report style */
+        .summary-container {
+            margin: 30px 0;
+            overflow-x: auto;
         }
 
-        .toc-title {
+        .summary-title {
             color: #007559;
             font-size: 1.5em;
             margin-top: 0;
@@ -360,33 +357,66 @@
             font-weight: bold;
         }
 
-        .toc-list {
-            list-style: none;
-            padding-left: 0;
-            margin: 0;
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+            min-width: 1000px;
+            border: 1px solid #ddd;
         }
 
-        .toc-item {
-            margin-bottom: 8px;
-            padding: 4px 0;
+        .summary-table th {
+            background-color: #f5f5f5;
+            color: #007559;
+            font-weight: bold;
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            white-space: nowrap;
         }
 
-        .toc-link {
-            text-decoration: none;
+        .summary-table td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            vertical-align: middle;
+        }
+
+        .summary-table .pattern-name {
             color: #007559;
             font-weight: 500;
+            text-decoration: none;
+            display: block;
         }
 
-        .toc-link:hover {
+        .summary-table .pattern-name:hover {
             color: #006994;
-            border-bottom: 1px solid #006994;
+            text-decoration: none;
         }
 
-        .toc-pattern-id {
-            font-size: 0.9em;
+        .summary-table .pattern-id {
+            font-size: 0.8em;
             color: #666;
             display: block;
             margin-top: 2px;
+        }
+
+        .summary-table .num-col {
+            text-align: right;
+        }
+
+        .summary-table .logo-cell {
+            text-align: center;
+            width: 240px;
+        }
+
+        .summary-table .logo-cell img {
+            max-width: 240px;
+            height: auto;
+        }
+
+        .summary-table .match-logo {
+            max-width: 200px;
+            height: auto;
         }
 
         /* Improved TOMTOM table with logos */
@@ -420,29 +450,81 @@
         <h4>Seqlets</h4>
         <p>Short subsequences identified as having high importance scores. These are the building blocks that TF-MoDISco clusters into motifs.</p>
 
-        <h4>Contribution Weight Matrices (CWMs)</h4>
-        <p>CWMs represent the average importance scores across aligned seqlets. Unlike Position Weight Matrices (PWMs) that simply show sequence composition frequencies, CWMs quantify each position's contribution to binding predictions.</p>
+        <h4>Matrix Types</h4>
+        <p><strong>Contribution Weight Matrices (CWMs)</strong> represent the average importance scores across aligned seqlets, quantifying each position's contribution to binding predictions.</p>
+        <p><strong>Position Probability Matrices (PPMs)</strong> show sequence composition frequencies. When scaled by information content (IC), they become information-weighted PPMs that emphasize positions with higher sequence consistency.</p>
     </div>
 
     {% if patterns_data %}
-    <div class="toc-container">
-        <h3 class="toc-title">Table of Contents</h3>
-        <ul class="toc-list">
-            {% for pattern_tag, data in patterns_data.items() %}
-            <li class="toc-item">
-                <a href="#pattern-{{ pattern_tag | replace('.', '-') }}" class="toc-link">
-                    {% if descriptive_names and pattern_tag in descriptive_names %}
-                        {{ descriptive_names[pattern_tag] }}
-                    {% else %}
-                        {{ pattern_tag }}
+    <div class="summary-container">
+        <h3 class="summary-title">Pattern Summary</h3>
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th>Pattern</th>
+                    <th>Seqlets</th>
+                    <th>CWM Fwd</th>
+                    <th>CWM Rev</th>
+                    {% if meme_motif_db %}
+                    <th>Match 0</th>
+                    <th>Q-value</th>
+                    <th>Logo</th>
+                    <th>Match 1</th>
+                    <th>Q-value</th>
+                    <th>Logo</th>
+                    <th>Match 2</th>
+                    <th>Q-value</th>
+                    <th>Logo</th>
                     {% endif %}
-                </a>
-                {% if descriptive_names and pattern_tag in descriptive_names %}
-                <span class="toc-pattern-id">({{ pattern_tag }})</span>
-                {% endif %}
-            </li>
-            {% endfor %}
-        </ul>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pattern_tag, data in patterns_data.items() %}
+                <tr>
+                    <td>
+                        <a href="#pattern-{{ pattern_tag | replace('.', '-') }}" class="pattern-name">
+                            {% if descriptive_names and pattern_tag in descriptive_names %}
+                                {{ descriptive_names[pattern_tag] }}
+                            {% else %}
+                                {{ pattern_tag }}
+                            {% endif %}
+                        </a>
+                        {% if descriptive_names and pattern_tag in descriptive_names %}
+                        <span class="pattern-id">{{ pattern_tag }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="num-col">{{ data.n_seqlets }}</td>
+                    <td class="logo-cell">
+                        {% if pattern_tag in logo_paths %}
+                        <img src="{{ logo_paths[pattern_tag]['trimmed_cwm_fwd'] }}" alt="CWM Fwd">
+                        {% endif %}
+                    </td>
+                    <td class="logo-cell">
+                        {% if pattern_tag in logo_paths %}
+                        <img src="{{ logo_paths[pattern_tag]['trimmed_cwm_rev'] }}" alt="CWM Rev">
+                        {% endif %}
+                    </td>
+                    {% if meme_motif_db %}
+                        {% for i in range(3) %}
+                        {% if pattern_tag in tomtom_data and 'match_' + i|string in tomtom_data[pattern_tag] and tomtom_data[pattern_tag]['match_' + i|string] %}
+                        <td><code>{{ tomtom_data[pattern_tag]['match_' + i|string] }}</code></td>
+                        <td class="num-col">{{ "%.2e"|format(tomtom_data[pattern_tag]['pval_' + i|string]) }}</td>
+                        <td class="logo-cell">
+                            {% if tomtom_logos and pattern_tag in tomtom_logos and 'match_' + i|string + '_base64' in tomtom_logos[pattern_tag] %}
+                            <img src="{{ tomtom_logos[pattern_tag]['match_' + i|string + '_base64'] }}" alt="Match {{ i }} Logo" class="match-logo">
+                            {% endif %}
+                        </td>
+                        {% else %}
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        {% endif %}
+                        {% endfor %}
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     {% endif %}
 
@@ -472,9 +554,9 @@
                 <img src="{{ logo_paths[pattern_tag]['hcwm'] }}" alt="hCWM Logo">
             </div>
             <div class="logo-item">
-                <h5>PWM Logo</h5>
-                <p><em>Position Weight Matrix weighted by information content</em></p>
-                <img src="{{ logo_paths[pattern_tag]['pwm'] }}" alt="PWM Logo">
+                <h5>IC-scaled PPM Logo</h5>
+                <p><em>Information-weighted Position Probability Matrix (PPM scaled by information content)</em></p>
+                <img src="{{ logo_paths[pattern_tag]['ic_ppm'] }}" alt="IC-scaled PPM Logo">
             </div>
             <div class="logo-item">
                 <h5>Trimmed CWM Logo</h5>
