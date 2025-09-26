@@ -9,7 +9,6 @@ import base64
 import io
 
 from .report import compute_per_position_ic, _plot_weights, tomtomlite_dataframe, generate_tomtom_dataframe
-from . import templates
 from memelite.io import read_meme
 
 
@@ -502,6 +501,7 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
         tomtom_logos = create_tomtom_match_logos(tomtom_data, output_dir, meme_motif_db, top_n_matches)
         descriptive_names = create_descriptive_names(tomtom_data, top_n_matches)
 
+    from . import templates
     # Generate HTML report
     template_str = (
         importlib.resources.files(templates).joinpath("descriptive_report.html").read_text()
