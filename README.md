@@ -13,13 +13,12 @@ The TF-MoDISco algorithm starts with a set of importance scores on genomic seque
 
 1. Identify high-importance windows of the sequences, termed "seqlets"
 2. Divide the seqlets into positive and negative sets (metaclusters) based on the overall importance score of each seqlet
-3. Cluster recurring similar seqlets into motifs
+3. Cluster recurring similar seqlets
+4. Generate motifs by aligning the clustered seqlets
 
 During clustering, a coarse-grained similarity is calculated as the cosine similarity between gapped k-mer representations between all pairs of seqlets. This information is used to calculate the top nearest neighbors, for which a fine-grained similarity is calculated as the maximum Jaccard index as two seqlets are aligned with all possible offsets. This sparse similarity matrix is then density adapted, similarly to t-SNE, and Leiden clustering is used to extract patterns. Finally, some heuristics are used to merge similar patterns and split apart the seqlets comprising dissimilar ones.
 
-The outputs of TF-MoDISco are motifs that summarize repeated patterns with high attribution, represented as CWMs (contribution weight matrices). These patterns can be visualized using the `reports.report_motifs` function to generate an HTML file (which can be loaded into a Jupyter notebook) that, after training a BPNet model on a SPI1 data set, looks like the following:  
-
-![image](https://user-images.githubusercontent.com/3916816/189726765-47e043c5-c942-4547-9b69-bfc8b5ba3131.png)
+![image](assets/overview.svg)
 
 ## References
 
@@ -80,14 +79,16 @@ where `[...]` denotes that data is stored at that attribute. Importantly, the se
 
 ## Generating reports
 
-Basic reporting can be executed with the following command:  
-```sh
-modisco report -i modisco_results.h5 -o report/ -s report/
-```
-
-You may also generate reports compared to a given database of motifs with the following command:  
+The TF-MoDISco report can be generated with the following command:
 ```sh
 modisco report -i modisco_results.h5 -o report/ -s report/ -m motifs.txt
 ```
 
-This command will take the results from the TF-MoDISco run, as well as a reference database of motifs to compare the extracted patterns to, and generate a HTML report like the one seen above. Each pattern that is extracted by TF-MoDISco is compared against the database of motifs using [TOMTOM](https://meme-suite.org/meme/tools/tomtom) to match them with prior knowledge.
+Each pattern produced by TF-MoDISco is compared against the database of motifs using [TOMTOM](https://meme-suite.org/meme/tools/tomtom). A good default choice is [this collection of human motifs](https://raw.githubusercontent.com/kundajelab/MotifCompendium/refs/heads/main/pipeline/data/MotifCompendium-Database-Human.meme.txt) produced by the [MotifCompendium](https://github.com/kundajelab/MotifCompendium) package.
+
+The report details each pattern, including seqlet importance and spatial distributions, example seqlets at different importance levels, and motif visualizations.
+
+For users who need the legacy report format use:
+```sh
+modisco report-simple -i modisco_results.h5 -o simple_report/ -s simple_report/ -m motifs.txt
+```

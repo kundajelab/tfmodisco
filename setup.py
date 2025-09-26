@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
 	name='modisco',
-	version='2.4.0',
+	version='2.5.0',
 	author='Jacob Schreiber',
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
@@ -23,6 +23,7 @@ setup(
 		'logomaker >= 0.8',
 		'h5py >= 3.7.0',
 		'hdf5plugin',
-		'memelite'
+		'memelite',
+		'jinja2'
 	]
 )

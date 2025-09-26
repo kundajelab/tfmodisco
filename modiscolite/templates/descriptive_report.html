@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TF-MoDISco Analysis Report</title>
+    <style>
+        /* Adapted from https://github.com/oxalorg/sakura/ */
+        html {
+            font-size: 62.5%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+        }
+
+        body {
+            font-size: 1.8rem;
+            line-height: 1.618;
+            width: 100%;
+            margin: 0;
+            color: #222222;
+            background-color: #ffffff;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+
+        /* Ensure no horizontal overflow on small screens */
+        * {
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Container for content with responsive width and centering */
+        .content-container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        @media (min-width: 768px) {
+            .content-container {
+                max-width: 1200px;
+                padding: 0 60px;
+            }
+        }
+
+        @media (max-width: 684px) {
+            body {
+                font-size: 1.53rem;
+            }
+        }
+        @media (max-width: 382px) {
+            body {
+                font-size: 1.35rem;
+            }
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            line-height: 1.1;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+            font-weight: 700;
+            margin-top: 3rem;
+            margin-bottom: 1.5rem;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
+            -ms-word-break: break-all;
+            word-break: break-word;
+        }
+
+        h1 {
+            font-size: 2.35em;
+            border-bottom: 3px solid #007559;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 1.75em;
+            border-bottom: 2px solid #007559;
+            padding-bottom: 5px;
+            margin-top: 30px;
+        }
+
+        h3 {
+            font-size: 1.25em;
+        }
+
+        p {
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+        }
+
+        small, sub, sup {
+            font-size: 75%;
+        }
+
+        hr {
+            border-color: #007559;
+        }
+
+        a {
+            text-decoration: none;
+            color: #007559;
+        }
+        a:visited {
+            color: #004232;
+        }
+        a:hover {
+            color: #006994;
+            border-bottom: 2px solid #222222;
+        }
+
+        ul {
+            padding-left: 1.4em;
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+        }
+
+        li {
+            margin-bottom: 0.4em;
+        }
+
+        blockquote {
+            margin-left: 0px;
+            margin-right: 0px;
+            padding-left: 1em;
+            padding-top: 0.8em;
+            padding-bottom: 0.8em;
+            padding-right: 0.8em;
+            border-left: 5px solid #007559;
+            margin-bottom: 2.5rem;
+            background-color: #f7f7f7;
+        }
+
+        blockquote p {
+            margin-bottom: 0;
+        }
+
+        img, video {
+            height: auto;
+            max-width: 100%;
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+        }
+
+        /* Pre and Code */
+        pre {
+            background-color: #f7f7f7;
+            display: block;
+            padding: 1em;
+            overflow-x: auto;
+            margin-top: 0px;
+            margin-bottom: 2.5rem;
+            font-size: 0.9em;
+        }
+
+        code, kbd, samp {
+            font-size: 0.9em;
+            padding: 0 0.5em;
+            background-color: #f7f7f7;
+            white-space: pre-wrap;
+        }
+
+        pre > code {
+            padding: 0;
+            background-color: transparent;
+            white-space: pre;
+            font-size: 1em;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+            font-variant-numeric: tabular-nums;
+            text-align: justify;
+        }
+
+        td, th {
+            padding: 0.5em;
+            border-bottom: 1px solid #f1f1f1;
+        }
+
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+
+        .num_col {
+            text-align: right;
+        }
+
+        td.num_col {
+            padding-left: 2em;
+        }
+
+        /* Pattern sections */
+        .pattern-section {
+            border: 2px solid #e0e0e0;
+            border-left: 4px solid #007559;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 0 5px 5px 0;
+            background-color: #ffffff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .pattern-title {
+            color: #007559;
+            padding: 15px 0;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #007559;
+            font-size: 1.4em;
+            font-weight: bold;
+        }
+
+        /* Logo grids - single column layout */
+        .logo-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .logo-item {
+            text-align: center;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: white;
+        }
+
+        .logo-item h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #007559;
+        }
+
+        .logo-item img {
+            max-width: 90%;
+            height: auto;
+            margin-bottom: 0;
+        }
+
+        /* Distribution plots - single column layout */
+        .distribution-plots {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .distribution-item {
+            text-align: center;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: white;
+        }
+
+        .distribution-item h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #007559;
+        }
+
+        .distribution-item img {
+            max-width: 90%;
+            height: auto;
+            margin-bottom: 0;
+        }
+
+        /* Statistics tables */
+        .stats-table, .examples-table, .tomtom-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.9em;
+        }
+
+        .stats-table th, .stats-table td,
+        .examples-table th, .examples-table td,
+        .tomtom-table th, .tomtom-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .stats-table th, .examples-table th, .tomtom-table th {
+            background-color: #f5f5f5;
+            color: #007559;
+            font-weight: bold;
+            border-bottom: 2px solid #007559;
+        }
+
+        .stats-table .num_col, .examples-table .num_col, .tomtom-table .num_col {
+            text-align: right;
+        }
+
+        /* Introduction box */
+        .intro-box {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-left: 4px solid #007559;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+
+        .intro-box h2, .intro-box h3, .intro-box h4 {
+            color: #007559;
+            margin-top: 1.5rem;
+        }
+
+        .intro-box h2:first-child {
+            margin-top: 0;
+        }
+
+        /* Seqlet examples - single column layout */
+        .seqlet-examples {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .seqlet-example-item {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 3px;
+            background-color: white;
+            text-align: center;
+        }
+
+        .seqlet-example-item h5 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #007559;
+        }
+
+        .seqlet-example-item img {
+            max-width: 90%;
+            height: auto;
+            margin-bottom: 0;
+        }
+
+        /* Summary Table - matching basic report style */
+        .summary-container {
+            margin: 30px 0;
+            overflow-x: auto;
+        }
+
+        .summary-title {
+            color: #007559;
+            font-size: 1.5em;
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+            min-width: 1000px;
+            border: 1px solid #ddd;
+        }
+
+        .summary-table th {
+            background-color: #f5f5f5;
+            color: #007559;
+            font-weight: bold;
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .summary-table td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            vertical-align: middle;
+        }
+
+        .summary-table .pattern-name {
+            color: #007559;
+            font-weight: 500;
+            text-decoration: none;
+            display: block;
+        }
+
+        .summary-table .pattern-name:hover {
+            color: #006994;
+            text-decoration: none;
+        }
+
+        .summary-table .pattern-id {
+            font-size: 0.8em;
+            color: #666;
+            display: block;
+            margin-top: 2px;
+        }
+
+        .summary-table .num-col {
+            text-align: right;
+        }
+
+        .summary-table .logo-cell {
+            text-align: center;
+            width: 240px;
+        }
+
+        .summary-table .logo-cell img {
+            max-width: 240px;
+            height: auto;
+        }
+
+        .summary-table .match-logo {
+            max-width: 200px;
+            height: auto;
+        }
+
+å        .tomtom-match-logo {
+            max-width: 200px;
+            height: auto;
+            margin: 5px 0;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div class="content-container">
+        <h1>TF-MoDISco Report</h1>
+
+    <div class="intro-box">
+        <h2>Introduction to TF-MoDISco</h2>
+
+        <h3>What is TF-MoDISco?</h3>
+        <p><strong>TF-MoDISco</strong> (<strong>T</strong>ranscription <strong>F</strong>actor <strong>Mo</strong>tif <strong>D</strong>iscovery from <strong>I</strong>mportance <strong>Sco</strong>res) is a method for discovering sequence motifs from neural network-derived importance scores. Unlike traditional motif discovery methods that rely solely on sequence enrichment, TF-MoDISco leverages context-aware importance scores to identify patterns.</p>
+
+        <h3>Preliminary Concepts</h3>
+
+        <h4>Contribution Scores</h4>
+        <ul>
+            <li><strong>Projected Contributions</strong>: The contribution of each nucleotide actually present in the sequence to the model's prediction</li>
+            <li><strong>Hypothetical Contributions</strong>: The counterfactual contribution each possible nucleotide would have at each position. This representation can reveal functional similarities between sequences with different nucleotides.</li>
+        </ul>
+
+        <h4>Seqlets</h4>
+        <p><strong>About Seqlets:</strong> Seqlets are short subsequences identified as having high contribution scores. These are the building blocks that TF-MoDISco clusters into motifs. The number of seqlets reported represents high-confidence instances used for motif construction and is a subset of the total number of binding sites. Additional sites likely exist in the data but were filtered during the clustering process.</p>
+        <p><strong>Position Statistics:</strong> Seqlet positions are displayed relative to its input region's midpoint (set at position 0), with negative values indicating upstream positions and positive values downstream. The "median distance from center" statistic is the median absolute seqlet distance from the corresponding regions' midpoints.</p>
+        <p><strong>Contribution Score Statistics:</strong> The "total contribution" of a seqlet is computed as the the total absolute contribution scores across all positions. This provides a measure of the overall strength of the seqlets's influence on model predictions.</p>
+        <p><strong>Seqlet Selection for Visualization:</strong> Representative seqlets are selected from different total contribution quantiles (10th, 20th, 30th, etc. percentiles) to show the range of pattern strength.</p>
+
+        <h4>Matrix Types</h4>
+        <p><strong>Contribution Weight Matrices (CWMs)</strong> represent the average contribution scores across aligned seqlets, quantifying each position's contribution to binding predictions.</p>
+        <p><strong>Position Probability Matrices (PPMs)</strong> show sequence composition frequencies. When scaled by information content (IC), they become information-weighted PPMs that emphasize positions with higher sequence consistency.</p>
+
+        <h4>Understanding Motif Matches & Pattern Names</h4>
+        <p><strong>Tomtom Database Matches:</strong> Each discovered motif is compared against the user-provided database of known motifs using TOMTOM. Only the top 3 matches by statistical significance are displayed, but there may be other significant matches not shown. The factor responsible for binding may not necessarily correspond to the top-ranked match (Match 0) - biological context and additional evidence should be considered when interpreting results.</p>
+        <p><strong>Pattern Naming:</strong> When database matches are available, patterns are given descriptive names constructed from the first 10 characters of the top matches, separated by semicolons (e.g., "CTCF_HUMAN;SP1_MOUSE;ZNF143"). The original pattern ID in the H5 (e.g., "pos_patterns.pattern_0") is also shown and remains the canonical identifier.</p>
+    </div>
+
+    {% if patterns_data %}
+    <div class="summary-container">
+        <h3 class="summary-title">Pattern Summary</h3>
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th>Pattern</th>
+                    <th>Seqlets</th>
+                    <th>Avg. Contribution</th>
+                    <th>Med. Center Dist.</th>
+                    <th>CWM Fwd</th>
+                    <th>CWM Rev</th>
+                    {% if meme_motif_db %}
+                    <th>Match 0</th>
+                    <th>Q-value</th>
+                    <th>Logo</th>
+                    <th>Match 1</th>
+                    <th>Q-value</th>
+                    <th>Logo</th>
+                    <th>Match 2</th>
+                    <th>Q-value</th>
+                    <th>Logo</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for pattern_tag, data in patterns_data.items() %}
+                <tr>
+                    <td>
+                        <a href="#pattern-{{ pattern_tag | replace('.', '-') }}" class="pattern-name">
+                            {% if descriptive_names and pattern_tag in descriptive_names %}
+                                {{ descriptive_names[pattern_tag] }}
+                            {% else %}
+                                {{ pattern_tag }}
+                            {% endif %}
+                        </a>
+                        {% if descriptive_names and pattern_tag in descriptive_names %}
+                        <span class="pattern-id">{{ pattern_tag }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="num-col">{{ data.n_seqlets }}</td>
+                    <td class="num-col">
+                        {% if data.std_importance and data.std_importance == data.std_importance %}
+                            {{ "%.3f"|format(data.avg_importance) }} ± {{ "%.3f"|format(data.std_importance) }}
+                        {% else %}
+                            {{ "%.3f"|format(data.avg_importance) }}
+                        {% endif %}
+                    </td>
+                    <td class="num-col">
+                        {% if data.median_abs_distance_from_center and data.median_abs_distance_from_center == data.median_abs_distance_from_center %}
+                            {% if data.std_distance_from_center and data.std_distance_from_center == data.std_distance_from_center %}
+                                {{ "%.1f"|format(data.median_abs_distance_from_center) }} ± {{ "%.1f"|format(data.std_distance_from_center) }}
+                            {% else %}
+                                {{ "%.1f"|format(data.median_abs_distance_from_center) }}
+                            {% endif %}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="logo-cell">
+                        {% if pattern_tag in logo_paths %}
+                        <img src="{{ logo_paths[pattern_tag]['trimmed_cwm_fwd'] }}" alt="CWM Fwd">
+                        {% endif %}
+                    </td>
+                    <td class="logo-cell">
+                        {% if pattern_tag in logo_paths %}
+                        <img src="{{ logo_paths[pattern_tag]['trimmed_cwm_rev'] }}" alt="CWM Rev">
+                        {% endif %}
+                    </td>
+                    {% if meme_motif_db %}
+                        {% for i in range(3) %}
+                        {% if pattern_tag in tomtom_data and 'match_' + i|string in tomtom_data[pattern_tag] and tomtom_data[pattern_tag]['match_' + i|string] %}
+                        <td><code>{{ tomtom_data[pattern_tag]['match_' + i|string] }}</code></td>
+                        <td class="num-col">{{ "%.2e"|format(tomtom_data[pattern_tag]['pval_' + i|string]) }}</td>
+                        <td class="logo-cell">
+                            {% if tomtom_logos and pattern_tag in tomtom_logos and 'match_' + i|string + '_base64' in tomtom_logos[pattern_tag] %}
+                            <img src="{{ tomtom_logos[pattern_tag]['match_' + i|string + '_base64'] }}" alt="Match {{ i }} Logo" class="match-logo">
+                            {% endif %}
+                        </td>
+                        {% else %}
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        {% endif %}
+                        {% endfor %}
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <h2>Discovered Motifs</h2>
+
+    {% for pattern_tag, data in patterns_data.items() %}
+    <div class="pattern-section" id="pattern-{{ pattern_tag | replace('.', '-') }}">
+        <div class="pattern-title">
+            {% if descriptive_names and pattern_tag in descriptive_names %}
+                {{ descriptive_names[pattern_tag] }} <small>({{ pattern_tag }})</small>
+            {% else %}
+                {{ pattern_tag }}
+            {% endif %}
+        </div>
+
+        <h4>Motif Visualization</h4>
+        {% if pattern_tag in logo_paths %}
+        <div class="logo-grid">
+            <div class="logo-item">
+                <h5>CWM Logo</h5>
+                <p><em>Contribution Weight Matrix: shows actual contribution scores</em></p>
+                <img src="{{ logo_paths[pattern_tag]['cwm'] }}" alt="CWM Logo">
+            </div>
+            <div class="logo-item">
+                <h5>hCWM Logo</h5>
+                <p><em>Hypothetical Contribution Weight Matrix: shows counterfactual contributions</em></p>
+                <img src="{{ logo_paths[pattern_tag]['hcwm'] }}" alt="hCWM Logo">
+            </div>
+            <div class="logo-item">
+                <h5>IC-scaled PPM Logo</h5>
+                <p><em>Information-weighted Position Probability Matrix (PPM scaled by information content)</em></p>
+                <img src="{{ logo_paths[pattern_tag]['ic_ppm'] }}" alt="IC-scaled PPM Logo">
+            </div>
+            <div class="logo-item">
+                <h5>Trimmed CWM Logo</h5>
+                <p><em>CWM trimmed to core region</em></p>
+                <img src="{{ logo_paths[pattern_tag]['trimmed_cwm'] }}" alt="Trimmed CWM Logo">
+            </div>
+        </div>
+        {% endif %}
+
+        <h4>Motif Statistics</h4>
+        <table class="stats-table">
+            <thead>
+                <tr><th>Metric</th><th class="num_col">Value</th><th class="num_col">Std Dev</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Number of seqlets</td><td class="num_col">{{ data.n_seqlets }}</td><td class="num_col">-</td></tr>
+                <tr>
+                    <td>Average contribution score</td>
+                    <td class="num_col">{{ "%.3f"|format(data.avg_importance) }}</td>
+                    <td class="num_col">
+                        {% if data.std_importance and data.std_importance == data.std_importance %}
+                            {{ "%.3f"|format(data.std_importance) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr><td>GC content</td><td class="num_col">{{ "%.3f"|format(data.gc_content) }}</td><td class="num_col">-</td></tr>
+                {% if data.median_abs_distance_from_center and data.median_abs_distance_from_center == data.median_abs_distance_from_center %}
+                <tr>
+                    <td>Median distance from center</td>
+                    <td class="num_col">{{ "%.1f"|format(data.median_abs_distance_from_center) }}</td>
+                    <td class="num_col">
+                        {% if data.std_distance_from_center and data.std_distance_from_center == data.std_distance_from_center %}
+                            {{ "%.1f"|format(data.std_distance_from_center) }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        {% if meme_motif_db and pattern_tag in tomtom_data %}
+        <h4>Tomtom Matches</h4>
+        <p>Top matches from motif database comparison:</p>
+        <table class="tomtom-table">
+            <thead>
+                <tr>
+                    <th class="num_col">Rank</th>
+                    <th>Match</th>
+                    <th>Logo</th>
+                    <th class="num_col">{% if ttl %}P-value{% else %}Q-value{% endif %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for i in range(top_n_matches) %}
+                {% if 'match_' + i|string in tomtom_data[pattern_tag] and tomtom_data[pattern_tag]['match_' + i|string] %}
+                <tr>
+                    <td class="num_col">{{ i + 1 }}</td>
+                    <td><code>{{ tomtom_data[pattern_tag]['match_' + i|string] }}</code></td>
+                    <td>
+                        {% if tomtom_logos and pattern_tag in tomtom_logos and 'match_' + i|string + '_base64' in tomtom_logos[pattern_tag] %}
+                            <img src="{{ tomtom_logos[pattern_tag]['match_' + i|string + '_base64'] }}"
+                                 alt="Match {{ i }} Logo" class="tomtom-match-logo">
+                        {% else %}
+                            <em>Logo not available</em>
+                        {% endif %}
+                    </td>
+                    <td class="num_col">{{ "%.2e"|format(tomtom_data[pattern_tag]['pval_' + i|string]) }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if pattern_tag in distribution_paths %}
+        <h4>Seqlet Distributions</h4>
+        <div class="distribution-plots">
+            {% if 'importance' in distribution_paths[pattern_tag] %}
+            <div class="distribution-item">
+                <h5>Seqlet Contribution Score Distribution</h5>
+                <p><em>Distribution of total contribution scores across seqlets</em></p>
+                <img src="{{ distribution_paths[pattern_tag]['importance'] }}" alt="Contribution Score Distribution">
+            </div>
+            {% endif %}
+            {% if 'spatial' in distribution_paths[pattern_tag] %}
+            <div class="distribution-item">
+                <h5>Seqlet Spatial Distribution</h5>
+                <p><em>Distribution of seqlet positions within input sequences</em></p>
+                <img src="{{ distribution_paths[pattern_tag]['spatial'] }}" alt="Spatial Distribution">
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if pattern_tag in examples_data and examples_data[pattern_tag] %}
+        <h4>Seqlet Examples</h4>
+        <p>Representative seqlets from contribution score quantiles:</p>
+        <div class="seqlet-examples">
+            {% for example in examples_data[pattern_tag] %}
+            <div class="seqlet-example-item">
+                <h5>{{ example.quantile }}th Percentile (Contribution: {{ "%.3f"|format(example.importance) }})</h5>
+                <img src="{{ example.base64 }}" alt="Seqlet {{ example.quantile }}th Percentile">
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if not patterns_data %}
+    <blockquote>
+        <p><strong>Note:</strong> No patterns were found in the provided TF-MoDISco results file. This could indicate that no significant motifs were discovered during the analysis, or there may be an issue with the input file format.</p>
+    </blockquote>
+    {% endif %}
+
+    </div> <!-- Close content-container -->
+</body>
+</html>

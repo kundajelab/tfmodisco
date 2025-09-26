@@ -3,6 +3,21 @@ Release History
 ===============
 
 
+Version 2.5.0
+==============
+
+
+report
+------
+
+	- The `report` command now generates a more descriptive report
+	by default, which includes detailed pattern analysis, seqlet distributions,
+	importance quantiles, and additional visualizations.
+	- The previous basic report functionality is now available via `report-simple`.
+	- All images are now embedded directly in HTML as base64 data for improved
+	portability and self-contained reports.
+
+
 Version 2.4.0
 ==============
 
