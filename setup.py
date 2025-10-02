@@ -25,5 +25,8 @@ setup(
 		'hdf5plugin',
 		'memelite',
 		'jinja2'
-	]
+	],
+    package_data={
+        "modiscolite": ["templates/*"]
+    }
 )
