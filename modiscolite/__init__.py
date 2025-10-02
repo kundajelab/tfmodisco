@@ -13,4 +13,4 @@ from . import bed_writer
 from . import fasta_writer
 from . import descriptive_report
 
-__version__ = '2.5.0'
+__version__ = '2.5.1'

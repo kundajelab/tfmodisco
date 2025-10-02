@@ -2,6 +2,16 @@
 Release History
 ===============
 
+Version 2.5.1
+==============
+
+
+report
+------
+
+	- Fixed an issue where the report template was not properly included in the PyPI package,
+	causing the report generation to fail. Thanks @pauldrinn!
+
 
 Version 2.5.0
 ==============
