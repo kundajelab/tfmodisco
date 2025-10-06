@@ -43,7 +43,7 @@ def write_meme_file(ppm, bg, fname):
 
 def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 	pattern_name, motifs_db, background=[0.25, 0.25, 0.25, 0.25],
-	tomtom_exec_path='tomtom', trim_threshold=0.3, trim_min_length=3):
+	tomtom_exec_path='tomtom', trim_threshold=0.3):
 
 	"""Fetches top matches from a motifs database using TomTom.
 	Args:
@@ -103,7 +103,7 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 		output_dir: os.PathLike, meme_motif_db: Union[os.PathLike, None],
 		is_writing_tomtom_matrix: bool, pattern_groups: List[str], 
 		top_n_matches=3, tomtom_exec: str="tomtom", trim_threshold=0.3,
-		trim_min_length=3):
+	):
 
 	tomtom_results = {}
 
@@ -131,8 +131,7 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 			     	is_writing_tomtom_matrix=is_writing_tomtom_matrix,
 					output_dir=output_dir, pattern_name=pattern_name,
 					motifs_db=meme_motif_db, tomtom_exec_path=tomtom_exec,
-					trim_threshold=trim_threshold,
-					trim_min_length=trim_min_length)
+					trim_threshold=trim_threshold)
 
 				i = -1
 				for i, (target, qval) in r.iloc[:top_n_matches].iterrows():
@@ -150,12 +149,10 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 
 def tomtomlite_dataframe(
 	modisco_h5py: os.PathLike,
-	output_dir: os.PathLike, 
 	meme_motif_db: Union[os.PathLike, None],
 	pattern_groups: List[str], 
 	top_n_matches=3, 
-	trim_threshold=0.3,
-	trim_min_length=3):
+	trim_threshold=0.3):
 	"""Use tomtom-lite to match patterns to a motif database."""
 
 	tomtom_results = {}
@@ -276,7 +273,7 @@ def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_thres
 
 def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: os.PathLike, 
 	meme_motif_db: Union[os.PathLike, None], is_writing_tomtom_matrix: bool, top_n_matches=3,
-	trim_threshold=0.3, trim_min_length=3, ttl=False):
+	trim_threshold=0.3, ttl=False):
 
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
@@ -316,17 +313,16 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 		motifs = {name: pwm.T for name, pwm in motifs.items()}
 
 		if ttl:
-			tomtom_df = tomtomlite_dataframe(modisco_h5py, output_dir, meme_motif_db,
+			tomtom_df = tomtomlite_dataframe(modisco_h5py, meme_motif_db,
 				top_n_matches=top_n_matches, pattern_groups=pattern_groups, 
-				trim_threshold=trim_threshold, trim_min_length=trim_min_length)
+				trim_threshold=trim_threshold)
 		else:
 			motifs = {key.split()[0]: value for key, value in motifs.items()}
 			
 			tomtom_df = generate_tomtom_dataframe(modisco_h5py, output_dir, meme_motif_db,
 				is_writing_tomtom_matrix,
 				top_n_matches=top_n_matches, tomtom_exec='tomtom', 
-				pattern_groups=pattern_groups, trim_threshold=trim_threshold,
-				trim_min_length=trim_min_length)
+				pattern_groups=pattern_groups, trim_threshold=trim_threshold)
 
 		patterns_df = pandas.concat([patterns_df, tomtom_df], axis=1)
 
