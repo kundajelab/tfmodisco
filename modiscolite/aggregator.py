@@ -186,7 +186,7 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
 				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, max_seqlets_subsample=1000)
+				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
 
 			to_return.extend(refined_subpatterns[0]) 
 		else:
@@ -197,7 +197,7 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
 				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, max_seqlets_subsample=1000)
+				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
 
 def SimilarPatternsCollapser(patterns, track_set,
 	min_overlap, prob_and_pertrack_sim_merge_thresholds,
