@@ -9,6 +9,7 @@ from . import core
 from . import util
 
 from collections import OrderedDict
+from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 
 
@@ -68,9 +69,9 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 
 
 def _align_patterns(parent_pattern, child_pattern, metric, min_overlap, 
-	transformer, include_hypothetical):
+	transformer, include_hypothetical, stranded=False):
 
-	fwd_data_parent, rev_data_parent = util.get_2d_data_from_patterns(
+	fwd_data_parent, _ = util.get_2d_data_from_patterns(
 		[parent_pattern], transformer=transformer,
 		include_hypothetical=include_hypothetical)
 
@@ -84,7 +85,7 @@ def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
 	best_crossmetric_rev, best_crossmetric_argmax_rev = metric(rev_data_child, 
 		fwd_data_parent, min_overlap).squeeze()
 
-	if best_crossmetric_rev > best_crossmetric:
+	if (best_crossmetric_rev > best_crossmetric) and (not stranded):
 		return int(best_crossmetric_argmax_rev), True, best_crossmetric_rev
 	else:
 		return int(best_crossmetric_argmax), False, best_crossmetric
@@ -92,13 +93,13 @@ def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
 
 def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 	track_set, metric, min_overlap, transformer='l1', 
-	include_hypothetical=True):
+	include_hypothetical=True, stranded=False):
 
 	parent_pattern = parent_pattern.copy()
 
 	for seqlet in seqlets_to_merge:
 		alnmt, revcomp_match, alnmt_score = _align_patterns(parent_pattern, 
-			seqlet, metric, min_overlap, transformer, include_hypothetical)
+			seqlet, metric, min_overlap, transformer, include_hypothetical, stranded)
 		
 		if revcomp_match:
 			seqlet = seqlet.revcomp()
@@ -173,10 +174,10 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 	min_in_subcluster, min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
-	n_seeds, max_seqlets_subsample=1000):
+	n_seeds, max_seqlets_subsample=1000, stranded=False, verbose=False):
 
 	to_return = []
-	for i, pattern in enumerate(patterns):
+	for i, pattern in enumerate(tqdm(patterns, desc="Detecting spurious merging of patterns:", disable=not verbose)):
 		if len(pattern.seqlets) > min_in_subcluster:
 			pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds)
 
@@ -186,7 +187,7 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
 				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, max_seqlets_subsample=1000)
+				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample, stranded=stranded)
 
 			to_return.extend(refined_subpatterns[0]) 
 		else:
@@ -197,13 +198,13 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
 				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, max_seqlets_subsample=1000)
+				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample, stranded=stranded)
 
 def SimilarPatternsCollapser(patterns, track_set,
 	min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
-	max_seqlets_subsample=1000):
+	max_seqlets_subsample=1000, stranded=False):
 	patterns = [x.copy() for x in patterns]
 
 	merge_hierarchy_levels = []        
@@ -256,7 +257,8 @@ def SimilarPatternsCollapser(patterns, track_set,
 						metric=affinitymat.pearson_correlation, 
 						min_overlap=min_overlap, 
 						include_hypothetical=False,
-						transformer='magnitude') 
+						transformer='magnitude',
+						stranded=stranded) 
 
 				pairwise_sims[i, j] = aligner_sim
 
@@ -384,7 +386,8 @@ def SimilarPatternsCollapser(patterns, track_set,
 					metric=affinitymat.pearson_correlation,
 					min_overlap=min_overlap,
 					transformer='magnitude',
-					track_set=track_set)
+					track_set=track_set, 
+					stranded=stranded)
 
 				new_pattern = polish_pattern(new_pattern, min_frac=min_frac, 
 					min_num=min_num, track_set=track_set, flank=flank_to_add, 

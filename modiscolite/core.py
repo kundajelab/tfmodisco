@@ -150,8 +150,8 @@ class SeqletSet():
 		sp_density_adapted_affmat /= np.sum(sp_density_adapted_affmat.data)
 
 		#Do Leiden clustering
-		self.subclusters = cluster.LeidenCluster(sp_density_adapted_affmat,
-			n_seeds=n_seeds, n_leiden_iterations=n_iterations) 
+		self.subclusters = cluster.LeidenClusterParallel(sp_density_adapted_affmat,
+			n_seeds=n_seeds, n_leiden_iterations=n_iterations, verbose=False) 
 
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0

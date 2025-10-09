@@ -10,8 +10,11 @@ import numpy as np
 import scipy
 from scipy.sparse import coo_matrix
 
+import numba as nb
 from numba import njit
 from numba import prange
+from numba_progress import ProgressBar, ProgressBarType
+
 
 from . import util
 from . import gapped_kmer
@@ -44,7 +47,7 @@ def _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, 
 	return dot
 
 @njit(parallel=True)
-def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
+def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k, stranded, progress_proxy):
 	n_rows = len(Y_indptr) - 1
 
 	neighbors = np.empty((n_rows, k), dtype='int32')
@@ -55,18 +58,23 @@ def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
 
 		for j in range(n_rows):
 			xdot = _sparse_vv_dot(X_data, X_indices, X_indptr, X_data, X_indices, X_indptr, i, j)
-			ydot = _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, j)
-			dot[j] = max(xdot, ydot)
+			if stranded:
+				dot[j] = xdot
+			else:
+				ydot = _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, j)
+				dot[j] = max(xdot, ydot)
 
 		dot_argsort = np.argsort(-dot, kind='mergesort')[:k]
 		neighbors[i] = dot_argsort
 		sims[i] = dot[dot_argsort]
 
+		progress_proxy.update(1)
+
 	return sims, neighbors
 
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
-	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
-	alphabet_size=4):
+    min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
+    alphabet_size=4, stranded=False, verbose=False):
 
 	X_fwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, 
 		min_k, max_k, max_gap, max_len, max_entries, True, sign)
@@ -79,11 +87,14 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 
 	n, d = X.shape
 	k = min(n_neighbors+1, n)
-	return _sparse_mm_dot(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr, k)
+
+	total = (len(Y.indptr) - 1)
+	with ProgressBar(total=total, disable=not verbose) as progress:
+		return _sparse_mm_dot(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr, k, stranded, progress)
 
 
-def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, 
-	seqlet_neighbors=None):
+def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, seqlet_neighbors=None, 
+                         stranded=False, verbose=False):
 
 	all_fwd_data, all_rev_data = util.get_2d_data_from_patterns(seqlets)
 
@@ -102,19 +113,23 @@ def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None,
 	affmat_fwd = jaccard(seqlet_neighbors=seqlet_neighbors, 
 		X=filters_all_fwd_data,
 		Y=all_fwd_data, min_overlap=min_overlap, func=int, 
-		return_sparse=True)
+		return_sparse=True, verbose=verbose)
 
-	affmat_rev = jaccard(seqlet_neighbors=seqlet_neighbors,
-		X=filters_all_rev_data, Y=all_fwd_data,
-		min_overlap=min_overlap, func=int,
-		return_sparse=True) 
+	if stranded:
+		affmat = affmat_fwd
+	else:
+		affmat_rev = jaccard(seqlet_neighbors=seqlet_neighbors,
+			X=filters_all_rev_data, Y=all_fwd_data,
+			min_overlap=min_overlap, func=int,
+			return_sparse=True, verbose=verbose) 
 
-	affmat = np.maximum(affmat_fwd, affmat_rev)
+		affmat = np.maximum(affmat_fwd, affmat_rev)
+
 	return affmat
 
 
 def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil, 
-	return_sparse=False):
+	return_sparse=False, verbose=False):
 
 	if seqlet_neighbors is None:
 		seqlet_neighbors = np.tile(np.arange(X.shape[0]), (Y.shape[0], 1))
@@ -133,7 +148,10 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	seqlet_neighbors = seqlet_neighbors.astype('int32')
 	scores = np.zeros((Y.shape[0], seqlet_neighbors.shape[1], len_output), dtype='float32')
-	_jaccard(X, Y, seqlet_neighbors, scores)
+	total = Y.shape[0]
+
+	with ProgressBar(total=total, disable=not verbose) as progress:
+		_jaccard(X, Y, seqlet_neighbors, scores, progress)
 
 	if return_sparse == True:
 		return scores.max(axis=-1)
@@ -183,8 +201,8 @@ def pairwise_jaccard(X, k):
 	return jaccards, neighbors
 
 
-@njit('void(float32[:, :, :], float32[:, :, :], int32[:, :], float32[:, :, :])', parallel=True)
-def _jaccard(X, Y, neighbors, scores):
+@njit(nb.void(nb.float32[:, :, :], nb.float32[:, :, :], nb.int32[:, :], nb.float32[:, :, :], ProgressBarType), parallel=True)
+def _jaccard(X, Y, neighbors, scores, progress_proxy):
 	nx, d, m = X.shape
 	ny = Y.shape[0]
 	len_output = scores.shape[-1]
@@ -214,6 +232,7 @@ def _jaccard(X, Y, neighbors, scores):
 
 				scores[l, i, idx] = min_sum / max_sum
 
+		progress_proxy.update(1)
 
 
 def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):

@@ -6,7 +6,6 @@ import os
 import textwrap
 
 import h5py
-import hdf5plugin
 
 from typing import List, Literal, Union
 

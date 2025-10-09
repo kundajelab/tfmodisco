@@ -2,6 +2,7 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+import logging
 import numpy as np
 
 from . import core
@@ -152,17 +153,24 @@ def extract_seqlets(attribution_scores, window_size, flank, suppress,
 	target_fdr, min_passing_windows_frac, max_passing_windows_frac, 
 	weak_threshold_for_counting_sign):
 
+	logger = logging.getLogger('modisco-lite')
+	logger.info(f"Extracting seqlets for {attribution_scores.shape[0]} tasks:")
+
+	logger.info("- Smoothing and splitting tracks")
 	pos_values, neg_values, smoothed_tracks = _smooth_and_split(
 		attribution_scores, window_size)
 
+	logger.info("- Computing null values with Laplacian null model")
 	pos_null_values, neg_null_values = _laplacian_null(track=smoothed_tracks, 
 		window_size=window_size, num_to_samp=10000)
 
+	logger.info("- Computing isotonic thresholds")
 	pos_threshold = _isotonic_thresholds(pos_values, pos_null_values, 
 		increasing=True, target_fdr=target_fdr)
 	neg_threshold = _isotonic_thresholds(neg_values, neg_null_values,
 		increasing=False, target_fdr=target_fdr)
 
+	logger.info("- Refining thresholds")
 	pos_threshold, neg_threshold = _refine_thresholds(
 		  vals=np.concatenate([pos_values, neg_values], axis=0),
 		  pos_threshold=pos_threshold,
@@ -188,6 +196,7 @@ def extract_seqlets(attribution_scores, window_size, flank, suppress,
 	smoothed_tracks[:, :flank] = -np.inf
 	smoothed_tracks[:, -flank:] = -np.inf
 
+	logger.info("- Extracting seqlets")
 	seqlets = _iterative_extract_seqlets(score_track=smoothed_tracks,
 		window_size=window_size,
 		flank=flank,
