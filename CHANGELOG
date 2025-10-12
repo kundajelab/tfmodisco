@@ -2,6 +2,19 @@
 Release History
 ===============
 
+Version 2.5.2
+==============
+
+
+modisco
+------
+
+	- Properly expose the `max_seqlets_subsample` parameter. Sets the default value to 1000, 
+	which is what was hardcoded before. 
+	- Cleaned up some unused parameters in the reporting code.
+	Thanks @caenrigen!
+
+
 Version 2.5.1
 ==============
 

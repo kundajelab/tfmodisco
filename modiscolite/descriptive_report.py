@@ -478,7 +478,7 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
     if meme_motif_db is not None:
         from pathlib import Path
         if ttl:
-            tomtom_df = tomtomlite_dataframe(Path(modisco_h5py), Path(output_dir), Path(meme_motif_db) if meme_motif_db else None,
+            tomtom_df = tomtomlite_dataframe(Path(modisco_h5py), Path(meme_motif_db) if meme_motif_db else None,
                 pattern_groups=pattern_groups, top_n_matches=top_n_matches,
                 trim_threshold=trim_threshold)
         else:

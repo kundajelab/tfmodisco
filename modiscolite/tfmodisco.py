@@ -7,7 +7,6 @@ import numpy as np
 import scipy
 import scipy.sparse
 
-from collections import OrderedDict
 from collections import defaultdict
 
 from . import affinitymat
@@ -161,7 +160,7 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 	final_flank_to_add=0,
 	prob_and_pertrack_sim_merge_thresholds=[(0.8,0.8), (0.5, 0.85), (0.2, 0.9)],
 	prob_and_pertrack_sim_dealbreaker_thresholds=[(0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
-	subcluster_perplexity=50, merging_max_seqlets_subsample=300,
+	subcluster_perplexity=50, merging_max_seqlets_subsample=1000,
 	final_min_cluster_size=20,min_ic_in_window=0.6, min_ic_windowsize=6,
 	ppm_pseudocount=0.001):
 
@@ -275,7 +274,7 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 	initial_flank_to_add=10, final_flank_to_add=0,
 	prob_and_pertrack_sim_merge_thresholds=[(0.8,0.8), (0.5, 0.85), (0.2, 0.9)],
 	prob_and_pertrack_sim_dealbreaker_thresholds=[(0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
-	subcluster_perplexity=50, merging_max_seqlets_subsample=300,
+	subcluster_perplexity=50, merging_max_seqlets_subsample=1000,
 	final_min_cluster_size=20, min_ic_in_window=0.6, min_ic_windowsize=6,
 	ppm_pseudocount=0.001, verbose=False):
 
