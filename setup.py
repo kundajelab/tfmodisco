@@ -7,11 +7,16 @@ setup(
 	author_email='jmschreiber91@gmail.com',
 	packages=['modiscolite'],
 	python_requires='>=3.7',
-	scripts=['modisco'],
+	entry_points={
+		'console_scripts': [
+			'modisco = modiscolite.cli:cli',
+		],
+	},
 	url='https://github.com/kundajelab/tfmodisco',
 	license='LICENSE.txt',
 	description='Transcription Factor MOtif Discovery from Importance SCOres',
 	install_requires=[
+		'click',
 		'numpy >= 1.21.5', 
 		'scipy >= 1.6.2',
 		'numba >= 0.53.1',
@@ -28,5 +33,11 @@ setup(
 	],
     package_data={
         "modiscolite": ["templates/*"]
-    }
+    },
+	extras_require={
+		'test': [
+			'pytest',
+			'pytest-cov'
+		]
+	}
 )
