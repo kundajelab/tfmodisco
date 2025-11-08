@@ -474,15 +474,11 @@
                     <th>CWM Fwd</th>
                     <th>CWM Rev</th>
                     {% if meme_motif_db %}
-                    <th>Match 0</th>
+                        {% for i in range(top_n_matches) %}
+                    <th>Match {{ i }}</th>
                     <th>Q-value</th>
                     <th>Logo</th>
-                    <th>Match 1</th>
-                    <th>Q-value</th>
-                    <th>Logo</th>
-                    <th>Match 2</th>
-                    <th>Q-value</th>
-                    <th>Logo</th>
+                        {% endfor %}
                     {% endif %}
                 </tr>
             </thead>
@@ -531,7 +527,7 @@
                         {% endif %}
                     </td>
                     {% if meme_motif_db %}
-                        {% for i in range(3) %}
+                        {% for i in range(top_n_matches) %}
                         {% if pattern_tag in tomtom_data and 'match_' + i|string in tomtom_data[pattern_tag] and tomtom_data[pattern_tag]['match_' + i|string] %}
                         <td><code>{{ tomtom_data[pattern_tag]['match_' + i|string] }}</code></td>
                         <td class="num-col">{{ "%.2e"|format(tomtom_data[pattern_tag]['pval_' + i|string]) }}</td>
