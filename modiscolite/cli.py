@@ -243,7 +243,96 @@ def motifs(
     is_flag=True,
     help="Whether to use tomtom-lite when mapping patterns to motifs. Note that this also changes the distance function from correlation to Euclidean distance, and so the best motif may differ when there are many similar versions.",
 )
+@click.option(
+    "--n_examples",
+    type=int,
+    default=10,
+    help="Number of seqlet quantiles to show for each pattern (default: 10).",
+)
+@click.option(
+    "--trim_threshold",
+    type=float,
+    default=0.3,
+    show_default=True,
+    help="Threshold for trimming logos.",
+)
 def report(
+    h5_path,
+    output,
+    write_tomtom,
+    suffix,
+    meme_db,
+    n_matches,
+    lite,
+    n_examples,
+    trim_threshold,
+):
+    """Generate an interactive HTML motif report."""
+    modiscolite.descriptive_report.generate_descriptive_report(
+        h5_path,
+        output,
+        img_path_suffix=suffix,
+        meme_motif_db=meme_db,
+        top_n_matches=n_matches,
+        ttl=lite,
+        n_examples=n_examples,
+        trim_threshold=trim_threshold,
+    )
+
+
+@cli.command(
+    help="Create an HTML report (logos + optional TOMTOM tables) from an HDF5 results file."
+)
+@click.option(
+    "-i",
+    "--h5py",
+    "h5_path",
+    type=click.Path(exists=True),
+    required=True,
+    help="HDF5 file containing the output from modiscolite.",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(),
+    required=True,
+    help="Directory to write the HTML report and associated assets.",
+)
+@click.option(
+    "-t",
+    "--write-tomtom",
+    is_flag=True,
+    help="Write the TOMTOM results to the output directory if flag is given.",
+)
+@click.option(
+    "-s",
+    "--suffix",
+    default="./",
+    show_default=True,
+    help="The suffix to add to the beginning of images. Should be equal to the output if using a Jupyter notebook.",
+)
+@click.option(
+    "-m",
+    "--meme-db",
+    type=click.Path(exists=True),
+    default=None,
+    help="A MEME file containing motifs.",
+)
+@click.option(
+    "-n",
+    "--n-matches",
+    default=3,
+    type=int,
+    show_default=True,
+    help="The number of top TOMTOM matches to include in the report.",
+)
+@click.option(
+    "-l",
+    "--lite",
+    is_flag=True,
+    help="Whether to use tomtom-lite when mapping patterns to motifs. Note that this also changes the distance function from correlation to Euclidean distance, and so the best motif may differ when there are many similar versions.",
+)
+def report_simple(
     h5_path, output, write_tomtom, suffix, meme_db, n_matches, lite
 ):
     """Generate an interactive HTML motif report."""
