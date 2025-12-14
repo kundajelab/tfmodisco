@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modisco"
-version = "2.5.1"
+version = "2.6.0"
 description = "Transcription Factor MOtif Discovery from Importance SCOres"
 readme = "README.md"
 requires-python = ">=3.7"

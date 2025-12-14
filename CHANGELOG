@@ -2,6 +2,19 @@
 Release History
 ===============
 
+Version 2.6.0
+==============
+
+
+modisco
+------
+
+	- CLI rewritten in click
+	- Unit tests
+	Thanks @MuhammedHasan!
+
+
+
 Version 2.5.2
 ==============
 
