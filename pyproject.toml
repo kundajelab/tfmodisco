@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modisco"
+version = "2.6.0"
+description = "Transcription Factor MOtif Discovery from Importance SCOres"
+readme = "README.md"
+requires-python = ">=3.7"
+license = { file = "LICENSE" }
+authors = [{ name = "Jacob Schreiber", email = "jmschreiber91@gmail.com" }]
+dependencies = [
+  "click",
+  "numpy>=1.21.5",
+  "scipy>=1.6.2",
+  "numba>=0.53.1",
+  "scikit-learn>=1.0.2",
+  "leidenalg>=0.8.10",
+  "igraph>=0.9.11",
+  "tqdm>=4.38.0",
+  "pandas>=1.4.3",
+  "logomaker>=0.8",
+  "h5py>=3.7.0",
+  "hdf5plugin",
+  "memelite",
+  "jinja2",
+  "joblib",
+  "numba-progress",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/kundajelab/tfmodisco"
+Repository = "https://github.com/kundajelab/tfmodisco"
+
+[project.scripts]
+modisco = "modiscolite.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["modiscolite"]
+
+[tool.setuptools.package-data]
+modiscolite = ["templates/*"]
