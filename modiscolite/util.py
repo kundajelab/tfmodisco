@@ -137,8 +137,9 @@ def get_2d_data_from_patterns(patterns, transformer='l1', include_hypothetical=T
 
 
 def calculate_window_offsets(center: int, window_size: int) -> tuple:
-	return (center - window_size // 2, center + window_size // 2)
-
+    start = center - window_size // 2
+    end = start + window_size
+    return start, end
 
 def filter_bed_rows_by_chrom(peak_rows: List[str], valid_chroms: List[str]):
 	"""This function filters the rows of a bed file by chromosome.
