@@ -54,27 +54,32 @@ def write_meme_file(ppm, bg, fname, alphabet='ACGT'):
 
 
 def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
-	pattern_name, motifs_db, background=[0.25, 0.25, 0.25, 0.25],
-	tomtom_exec_path='tomtom', trim_threshold=0.3):
+	pattern_name, motifs_db, background=None,
+	tomtom_exec_path='tomtom', trim_threshold=0.3, alphabet='ACGT'):
 
 	"""Fetches top matches from a motifs database using TomTom.
 	Args:
-		ppm: position probability matrix- numpy matrix of dimension (N,4)
-		cwm: contribution weight matrix- numpy matrix of dimension (N,4)
+		ppm: position probability matrix- numpy matrix of dimension (N, alphabet_size)
+		cwm: contribution weight matrix- numpy matrix of dimension (N, alphabet_size)
 		is_writing_tomtom_matrix: if True, write the tomtom matrix to a file
 		output_dir: directory for writing the TOMTOM file
 		pattern_name: the name of the pattern, to be used for writing to file
-		background: list with ACGT background probabilities
+		background: list of background probabilities (length == len(alphabet)).
+			If None, defaults to uniform 1/len(alphabet).
 		tomtom_exec_path: path to TomTom executable
 		motifs_db: path to motifs database in meme format
 		n: number of top matches to return, ordered by p-value
 		temp_dir: directory for storing temp files
 		trim_threshold: the ppm is trimmed from left till first position for which
 			probability for any base pair >= trim_threshold. Similarly from right.
+		alphabet: per-channel letter identity. Defaults to 'ACGT' for back-compat.
 	Returns:
 		list: a list of up to n results returned by tomtom, each entry is a
 			dictionary with keys 'Target ID', 'p-value', 'E-value', 'q-value'
 	"""
+
+	if background is None:
+		background = [1.0 / len(alphabet)] * len(alphabet)
 
 	_, fname = tempfile.mkstemp()
 	_, tomtom_fname = tempfile.mkstemp()
@@ -89,7 +94,7 @@ def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 		return []
 
 	# trim and prepare meme file
-	write_meme_file(trimmed, background, fname)
+	write_meme_file(trimmed, background, fname, alphabet=alphabet)
 
 	if not shutil.which(tomtom_exec_path):
 		raise ValueError(f'`tomtom` executable could not be called globally or locally. Please install it and try again. You may install it using conda with `conda install -c bioconda meme`')
@@ -113,7 +118,7 @@ def fetch_tomtom_matches(ppm, cwm, is_writing_tomtom_matrix, output_dir,
 
 def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 		output_dir: os.PathLike, meme_motif_db: Union[os.PathLike, None],
-		is_writing_tomtom_matrix: bool, pattern_groups: List[str], 
+		is_writing_tomtom_matrix: bool, pattern_groups: List[str],
 		top_n_matches=3, tomtom_exec: str="tomtom", trim_threshold=0.3,
 	):
 
@@ -124,6 +129,9 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 		tomtom_results[f'qval{i}'] = []
 
 	with h5py.File(modisco_h5py, 'r') as modisco_results:
+		alphabet = modisco_results.attrs.get('alphabet', 'ACGT')
+		if isinstance(alphabet, bytes):
+			alphabet = alphabet.decode('ascii')
 		for contribution_dir_name in pattern_groups:
 			if contribution_dir_name not in modisco_results.keys():
 				continue
@@ -143,7 +151,7 @@ def generate_tomtom_dataframe(modisco_h5py: os.PathLike,
 			     	is_writing_tomtom_matrix=is_writing_tomtom_matrix,
 					output_dir=output_dir, pattern_name=pattern_name,
 					motifs_db=meme_motif_db, tomtom_exec_path=tomtom_exec,
-					trim_threshold=trim_threshold)
+					trim_threshold=trim_threshold, alphabet=alphabet)
 
 				i = -1
 				for i, (target, qval) in r.iloc[:top_n_matches].iterrows():
@@ -215,15 +223,30 @@ def path_to_image_html(path):
 	return '<img src="'+ path + '" width="240" >'
 
 
-def _plot_weights(array, path, figsize=(10,3), clamp=True):
-	"""Plot weights as a sequence logo and save to file."""
-	fig = plt.figure(figsize=figsize)
-	ax = fig.add_subplot(111) 
+def _plot_weights(array, path, figsize=(10,3), clamp=True, alphabet='ACGT'):
+	"""Plot weights as a sequence logo and save to file.
 
-	df = pandas.DataFrame(array, columns=['A', 'C', 'G', 'T'])
+	`array` must be shape (L, len(alphabet)). DataFrame columns are
+	derived from the alphabet so logos render correctly for protein
+	(20-letter) and other non-DNA alphabets. The logomaker color scheme
+	switches to 'weblogo_protein' when the alphabet looks protein-like
+	(>= 20 distinct letters); DNA-like alphabets use the default.
+	"""
+	if array.shape[1] != len(alphabet):
+		raise ValueError(
+			f"array has {array.shape[1]} cols but alphabet '{alphabet}' has {len(alphabet)} letters"
+		)
+	fig = plt.figure(figsize=figsize)
+	ax = fig.add_subplot(111)
+
+	df = pandas.DataFrame(array, columns=list(alphabet))
 	df.index.name = 'pos'
 
-	crp_logo = logomaker.Logo(df, ax=ax)
+	color_scheme = 'weblogo_protein' if len(alphabet) >= 20 else None
+	if color_scheme is not None:
+		crp_logo = logomaker.Logo(df, ax=ax, color_scheme=color_scheme)
+	else:
+		crp_logo = logomaker.Logo(df, ax=ax)
 	crp_logo.style_spines(visible=False)
 	if clamp:
 		plt.ylim(min(df.sum(axis=1).min(), 0), df.sum(axis=1).max())
@@ -232,20 +255,32 @@ def _plot_weights(array, path, figsize=(10,3), clamp=True):
 	plt.close()
 
 
-def make_logo(match, logo_dir, motifs):
+def make_logo(match, logo_dir, motifs, alphabet='ACGT'):
 	if match == 'NA':
 		return
 
-	background = np.array([0.25, 0.25, 0.25, 0.25])
+	background = np.full(len(alphabet), 1.0 / len(alphabet))
 	ppm = motifs[match]
 	ic = compute_per_position_ic(ppm, background, 0.001)
 
-	_plot_weights(ppm*ic[:, None], path='{}/{}.png'.format(logo_dir, match))
+	_plot_weights(ppm*ic[:, None], path='{}/{}.png'.format(logo_dir, match), alphabet=alphabet)
 
 
 def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_threshold, pattern_groups: List[str]):
-	"""Open a modisco results file and create and write logos to file for each pattern."""
+	"""Open a modisco results file and create and write logos to file for each pattern.
+
+	Both forward and (reverse-complement) views are rendered for DNA-like
+	alphabets. For non-DNA alphabets the [::-1, ::-1] revcomp view has no
+	biological meaning, so only the forward logo is written and the rev
+	path is symlinked / fallback-pointed at the fwd image so existing
+	report templates that reference cwm.rev.png still resolve.
+	"""
 	modisco_results = h5py.File(modisco_h5py, 'r')
+
+	alphabet = modisco_results.attrs.get('alphabet', 'ACGT')
+	if isinstance(alphabet, bytes):
+		alphabet = alphabet.decode('ascii')
+	render_rev = (alphabet == 'ACGT')
 
 	tags = []
 
@@ -260,25 +295,30 @@ def create_modisco_logos(modisco_h5py: os.PathLike, modisco_logo_dir, trim_thres
 			tags.append(tag)
 
 			cwm_fwd = np.array(pattern['contrib_scores'][:])
-			cwm_rev = cwm_fwd[::-1, ::-1]
-
 			score_fwd = np.sum(np.abs(cwm_fwd), axis=1)
-			score_rev = np.sum(np.abs(cwm_rev), axis=1)
-
 			trim_thresh_fwd = np.max(score_fwd) * trim_threshold
-			trim_thresh_rev = np.max(score_rev) * trim_threshold
-
 			pass_inds_fwd = np.where(score_fwd >= trim_thresh_fwd)[0]
-			pass_inds_rev = np.where(score_rev >= trim_thresh_rev)[0]
-
 			start_fwd, end_fwd = max(np.min(pass_inds_fwd) - 4, 0), min(np.max(pass_inds_fwd) + 4 + 1, len(score_fwd) + 1)
-			start_rev, end_rev = max(np.min(pass_inds_rev) - 4, 0), min(np.max(pass_inds_rev) + 4 + 1, len(score_rev) + 1)
-
 			trimmed_cwm_fwd = cwm_fwd[start_fwd:end_fwd]
-			trimmed_cwm_rev = cwm_rev[start_rev:end_rev]
+			fwd_path = '{}/{}.cwm.fwd.png'.format(modisco_logo_dir, tag)
+			_plot_weights(trimmed_cwm_fwd, path=fwd_path, alphabet=alphabet)
 
-			_plot_weights(trimmed_cwm_fwd, path='{}/{}.cwm.fwd.png'.format(modisco_logo_dir, tag))
-			_plot_weights(trimmed_cwm_rev, path='{}/{}.cwm.rev.png'.format(modisco_logo_dir, tag))
+			rev_path = '{}/{}.cwm.rev.png'.format(modisco_logo_dir, tag)
+			if render_rev:
+				cwm_rev = cwm_fwd[::-1, ::-1]
+				score_rev = np.sum(np.abs(cwm_rev), axis=1)
+				trim_thresh_rev = np.max(score_rev) * trim_threshold
+				pass_inds_rev = np.where(score_rev >= trim_thresh_rev)[0]
+				start_rev, end_rev = max(np.min(pass_inds_rev) - 4, 0), min(np.max(pass_inds_rev) + 4 + 1, len(score_rev) + 1)
+				trimmed_cwm_rev = cwm_rev[start_rev:end_rev]
+				_plot_weights(trimmed_cwm_rev, path=rev_path, alphabet=alphabet)
+			else:
+				# Non-DNA: reverse-complement is meaningless. Render the
+				# C-to-N read (length-reverse only, no alphabet flip) so
+				# the report's "rev" column still resolves to something
+				# the user can inspect.
+				trimmed_cwm_rev = trimmed_cwm_fwd[::-1]
+				_plot_weights(trimmed_cwm_rev, path=rev_path, alphabet=alphabet)
 
 	modisco_results.close()
 	return tags
@@ -301,6 +341,9 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 	results = {'pattern': [], 'num_seqlets': [], 'modisco_cwm_fwd': [], 'modisco_cwm_rev': []}
 
 	with h5py.File(modisco_h5py, 'r') as modisco_results:
+		alphabet = modisco_results.attrs.get('alphabet', 'ACGT')
+		if isinstance(alphabet, bytes):
+			alphabet = alphabet.decode('ascii')
 		for name in pattern_groups:
 			if name not in modisco_results.keys():
 				continue
@@ -347,7 +390,7 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 					if pandas.isnull(row[name]):
 						logos.append("NA")
 					else:
-						make_logo(row[name], output_dir, motifs)
+						make_logo(row[name], output_dir, motifs, alphabet=alphabet)
 						logos.append(f'{img_path_suffix}{row[name]}.png')
 				else:
 					break
