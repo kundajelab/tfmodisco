@@ -14,11 +14,21 @@ from . import util
 from collections import OrderedDict
 
 class TrackSet(object):
-	def __init__(self, one_hot, contrib_scores, hypothetical_contribs):
+	def __init__(self, one_hot, contrib_scores, hypothetical_contribs, alphabet='ACGT'):
+		# `alphabet` carries the per-channel letter identity of `one_hot`. Default
+		# 'ACGT' keeps existing DNA call sites unchanged; protein callers pass
+		# 'ACDEFGHIKLMNPQRSTVWY'. The string is the source of truth — its length
+		# must match the one_hot trailing dim.
+		if one_hot.shape[-1] != len(alphabet):
+			raise ValueError(
+				f"one_hot last dim ({one_hot.shape[-1]}) does not match "
+				f"alphabet length ({len(alphabet)}, '{alphabet}')"
+			)
 		self.one_hot = one_hot
 		self.contrib_scores = contrib_scores
 		self.hypothetical_contribs = hypothetical_contribs
 		self.length = len(one_hot[0])
+		self.alphabet = alphabet
 
 	def create_seqlets(self, seqlets):
 		for seqlet in seqlets:
@@ -32,7 +42,8 @@ class TrackSet(object):
 			else:
 				seqlet.sequence = self.one_hot[idx][s:e]
 				seqlet.contrib_scores = self.contrib_scores[idx][s:e]
-				seqlet.hypothetical_contribs = self.hypothetical_contribs[idx][s:e]				
+				seqlet.hypothetical_contribs = self.hypothetical_contribs[idx][s:e]
+			seqlet.alphabet = self.alphabet
 
 		return seqlets
 
@@ -46,6 +57,9 @@ class Seqlet(object):
 		self.sequence = None
 		self.contrib_scores = None
 		self.hypothetical_contribs = None
+		# `alphabet` is stamped by TrackSet.create_seqlets. Stays None until
+		# then; SeqletSet falls back to 'ACGT' for pickles/seqlets without it.
+		self.alphabet = None
 
 		super(Seqlet, self).__init__()
 
@@ -70,6 +84,7 @@ class Seqlet(object):
 		new_seqlet.sequence = self.sequence[::-1, ::-1]
 		new_seqlet.contrib_scores = self.contrib_scores[::-1, ::-1]
 		new_seqlet.hypothetical_contribs = self.hypothetical_contribs[::-1, ::-1]
+		new_seqlet.alphabet = self.alphabet
 		return new_seqlet
 
 	def shift(self, shift_amt):
@@ -93,6 +108,7 @@ class Seqlet(object):
 		new_seqlet.sequence = self.sequence[s:e]
 		new_seqlet.contrib_scores = self.contrib_scores[s:e]
 		new_seqlet.hypothetical_contribs = self.hypothetical_contribs[s:e]
+		new_seqlet.alphabet = self.alphabet
 		return new_seqlet
 
 
@@ -100,15 +116,22 @@ class SeqletSet():
 	def __init__(self, seqlets):
 		self.seqlets = []
 		self.unique_seqlets = {}
-		self.length = max([len(seqlet) for seqlet in seqlets])  
-		
-		self._sequence_sum = np.zeros((self.length, 4), dtype='float')
-		self._contrib_sum = np.zeros((self.length, 4), dtype='float')
-		self._hypothetical_sum = np.zeros((self.length, 4), dtype='float')
+		self.length = max([len(seqlet) for seqlet in seqlets])
 
-		self.sequence = np.zeros((self.length, 4), dtype='float')
-		self.contrib_scores = np.zeros((self.length, 4), dtype='float')
-		self.hypothetical_contribs = np.zeros((self.length, 4), dtype='float')
+		# Alphabet identity propagates from the first seqlet (stamped by
+		# TrackSet.create_seqlets). Falls back to 'ACGT' for pickled seqlets
+		# from pre-alphabet versions of the codebase. The string is the source
+		# of truth — its length sets every (L, alphabet_size) allocation below.
+		self.alphabet = getattr(seqlets[0], 'alphabet', None) or 'ACGT'
+		self.alphabet_size = len(self.alphabet)
+
+		self._sequence_sum = np.zeros((self.length, self.alphabet_size), dtype='float')
+		self._contrib_sum = np.zeros((self.length, self.alphabet_size), dtype='float')
+		self._hypothetical_sum = np.zeros((self.length, self.alphabet_size), dtype='float')
+
+		self.sequence = np.zeros((self.length, self.alphabet_size), dtype='float')
+		self.contrib_scores = np.zeros((self.length, self.alphabet_size), dtype='float')
+		self.hypothetical_contribs = np.zeros((self.length, self.alphabet_size), dtype='float')
 
 		self.per_position_counts = np.zeros((self.length,))
 
@@ -219,7 +242,7 @@ class SeqletSet():
 		return self.length
 
 	def save_seqlets(self, filename):
-		bases = np.array(['A', 'C', 'G', 'T'])
+		bases = np.array(list(self.alphabet))
 
 		with open(filename, "w") as outfile:
 			for seqlet in self.seqlets:

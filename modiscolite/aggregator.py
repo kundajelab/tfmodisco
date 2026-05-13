@@ -67,7 +67,7 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 		return None
 
 
-def _align_patterns(parent_pattern, child_pattern, metric, min_overlap, 
+def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
 	transformer, include_hypothetical):
 
 	fwd_data_parent, rev_data_parent = util.get_2d_data_from_patterns(
@@ -78,16 +78,22 @@ def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
 		[child_pattern], transformer=transformer,
 		include_hypothetical=include_hypothetical)
 
-	best_crossmetric, best_crossmetric_argmax = metric(fwd_data_child, 
+	best_crossmetric, best_crossmetric_argmax = metric(fwd_data_child,
 		fwd_data_parent, min_overlap).squeeze()
 
-	best_crossmetric_rev, best_crossmetric_argmax_rev = metric(rev_data_child, 
-		fwd_data_parent, min_overlap).squeeze()
-
-	if best_crossmetric_rev > best_crossmetric:
-		return int(best_crossmetric_argmax_rev), True, best_crossmetric_rev
-	else:
-		return int(best_crossmetric_argmax), False, best_crossmetric
+	# Compare against the reverse-complement only for DNA-like complementary
+	# alphabets. For any other alphabet (protein, RNA-only-sense, reduced AA,
+	# custom), the [::-1, ::-1] flip in get_2d_data_from_patterns has no
+	# biological meaning, so we skip it and force revcomp_match=False — this
+	# cascades into the two RC sites (merge_in_seqlets_filledges and
+	# _detect_spurious_merging) which both gate on the returned bool.
+	alphabet = getattr(parent_pattern, 'alphabet', None) or 'ACGT'
+	if alphabet == 'ACGT':
+		best_crossmetric_rev, best_crossmetric_argmax_rev = metric(rev_data_child,
+			fwd_data_parent, min_overlap).squeeze()
+		if best_crossmetric_rev > best_crossmetric:
+			return int(best_crossmetric_argmax_rev), True, best_crossmetric_rev
+	return int(best_crossmetric_argmax), False, best_crossmetric
 
 
 def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,

@@ -276,13 +276,24 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 	prob_and_pertrack_sim_dealbreaker_thresholds=[(0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
 	subcluster_perplexity=50, merging_max_seqlets_subsample=1000,
 	final_min_cluster_size=20, min_ic_in_window=0.6, min_ic_windowsize=6,
-	ppm_pseudocount=0.001, verbose=False):
+	ppm_pseudocount=0.001, verbose=False, alphabet='ACGT'):
+	"""
+	alphabet : str, default 'ACGT'
+		Per-channel letter identity of the one_hot input. The only constraint
+		is `len(alphabet) == one_hot.shape[-1]`. Common choices: 'ACGT' (DNA),
+		'ACGU' (RNA), 'ACDEFGHIKLMNPQRSTVWY' (protein, 20 AA), or any reduced
+		or custom alphabet whose length matches the encoding's trailing dim.
+		Reverse-complement augmentation in aggregator._align_patterns is only
+		meaningful for DNA-like complementary alphabets; for any other
+		alphabet it is auto-disabled.
+	"""
 
 	contrib_scores = np.multiply(one_hot, hypothetical_contribs)
 
-	track_set = core.TrackSet(one_hot=one_hot, 
+	track_set = core.TrackSet(one_hot=one_hot,
 		contrib_scores=contrib_scores,
-		hypothetical_contribs=hypothetical_contribs)
+		hypothetical_contribs=hypothetical_contribs,
+		alphabet=alphabet)
 
 	seqlet_coords, threshold = extract_seqlets.extract_seqlets(
 		attribution_scores=contrib_scores.sum(axis=2),
