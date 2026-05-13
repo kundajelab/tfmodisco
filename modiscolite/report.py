@@ -400,8 +400,31 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 			reordered_columns.extend([name, val, f'{name}_logo'])
 
 	patterns_df = patterns_df[reordered_columns]
-	patterns_df.to_html(open(os.path.join(output_dir, 'motifs.html'), 'w'),
+	# Render the patterns table to a string so we can prepend an alphabet
+	# warning banner above it when the data isn't DNA. For non-complementary
+	# alphabets the "modisco_cwm_rev" column shows a length-reversed view
+	# (no alphabet flip) — readers should know this is a C->N read, not a
+	# biological reverse-complement.
+	table_html = patterns_df.to_html(
 		escape=False, formatters=dict(modisco_cwm_fwd=path_to_image_html,
 			modisco_cwm_rev=path_to_image_html, match0_logo=path_to_image_html,
-			match1_logo=path_to_image_html, match2_logo=path_to_image_html), 
+			match1_logo=path_to_image_html, match2_logo=path_to_image_html),
 		index=False)
+
+	banner = ""
+	if alphabet != 'ACGT':
+		banner = (
+			'<div style="background:#fff3cd; border-left:6px solid #f0ad4e; '
+			'padding:0.8em 1em; margin:0 0 1em 0; font-family:sans-serif; '
+			'color:#5a4500; max-width:60em;">'
+			f'<strong>Alphabet:</strong> <code>{alphabet}</code> '
+			'(non-DNA). The <code>modisco_cwm_rev</code> column shows a '
+			'<strong>length-reversed</strong> view of the forward CWM '
+			'(C&rarr;N read), <strong>not</strong> a biological '
+			'reverse-complement &mdash; reverse-complement is undefined for '
+			'non-complementary alphabets. The forward (<code>modisco_cwm_fwd</code>) '
+			'column carries the actual motif.'
+			'</div>'
+		)
+	with open(os.path.join(output_dir, 'motifs.html'), 'w') as f:
+		f.write(banner + table_html)
