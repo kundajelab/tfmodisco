@@ -26,17 +26,29 @@ def compute_per_position_ic(ppm, background, pseudocount):
     return np.sum(ic,axis=1)
 
 
-def write_meme_file(ppm, bg, fname):
+def write_meme_file(ppm, bg, fname, alphabet='ACGT'):
+	alphabet_length = len(alphabet)
+	if ppm.shape[1] != alphabet_length:
+		raise ValueError(
+			f"ppm has {ppm.shape[1]} columns but alphabet '{alphabet}' has {alphabet_length} letters"
+		)
+	if len(bg) != alphabet_length:
+		raise ValueError(
+			f"bg has length {len(bg)} but alphabet '{alphabet}' has {alphabet_length} letters"
+		)
 	f = open(fname, 'w')
 	f.write('MEME version 4\n\n')
-	f.write('ALPHABET= ACGT\n\n')
-	f.write('strands: + -\n\n')
+	f.write('ALPHABET= %s\n\n' % alphabet)
+	# strands directive only makes sense for DNA-like complementary alphabets.
+	if alphabet == 'ACGT':
+		f.write('strands: + -\n\n')
 	f.write('Background letter frequencies (from unknown source):\n')
-	f.write('A %.3f C %.3f G %.3f T %.3f\n\n' % tuple(list(bg)))
+	f.write(' '.join('%s %.3f' % (letter, p) for letter, p in zip(alphabet, bg)) + '\n\n')
 	f.write('MOTIF 1 TEMP\n')
-	f.write('letter-probability matrix: alength= 4 w= %d nsites= 1 E= 0e+0\n' % ppm.shape[0])
+	f.write('letter-probability matrix: alength= %d w= %d nsites= 1 E= 0e+0\n' % (alphabet_length, ppm.shape[0]))
+	row_fmt = ' '.join(['%.5f'] * alphabet_length) + '\n'
 	for s in ppm:
-		f.write('%.5f %.5f %.5f %.5f\n' % tuple(s))
+		f.write(row_fmt % tuple(s))
 	f.write("URL\n\n")
 	f.close()
 

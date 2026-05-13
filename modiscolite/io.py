@@ -202,9 +202,20 @@ def save_hdf5(filename: os.PathLike, pos_patterns, neg_patterns, window_size: in
 	"""
 
 	grp = h5py.File(filename, 'w')
-	
+
 	grp.attrs['window_size'] = window_size
-	
+
+	# Persist the alphabet so downstream consumers (MEME / FASTA writers) can
+	# decode the one-hot back to letters without a separate hint. Derived from
+	# the patterns themselves; falls back to 'ACGT' for back-compat when the
+	# patterns were built before alphabet tracking existed.
+	example_pattern = None
+	for patterns in (pos_patterns, neg_patterns):
+		if patterns:
+			example_pattern = patterns[0]
+			break
+	grp.attrs['alphabet'] = getattr(example_pattern, 'alphabet', None) or 'ACGT'
+
 	if pos_patterns is not None:
 		pos_group = grp.create_group("pos_patterns")
 		for idx, pattern in enumerate(pos_patterns):
@@ -231,15 +242,22 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 		The name of the MEME file to write.
 	"""
 
-	alphabet = 'ACGT'
-	writer = meme_writer.MEMEWriter(
-		memesuite_version='5',
-		alphabet=alphabet,
-		background_frequencies='A 0.25 C 0.25 G 0.25 T 0.25'
-	)
-
-
 	with h5py.File(filename, 'r') as grp:
+		# Read the alphabet stamped by save_hdf5; older h5 files without the
+		# attr default to 'ACGT' for back-compat.
+		alphabet = grp.attrs.get('alphabet', 'ACGT')
+		if isinstance(alphabet, bytes):
+			alphabet = alphabet.decode('ascii')
+		alphabet_length = len(alphabet)
+		bg_each = 1.0 / alphabet_length
+		bg_str = ' '.join(f"{letter} {bg_each:.6g}" for letter in alphabet)
+
+		writer = meme_writer.MEMEWriter(
+			memesuite_version='5',
+			alphabet=alphabet,
+			background_frequencies=bg_str
+		)
+
 		for pattern_group in ['pos_patterns', 'neg_patterns']:
 			if pattern_group not in grp:
 				continue
@@ -269,7 +287,7 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 							probability_matrix=probability_matrix,
 							source_sites=1,
 							alphabet=alphabet,
-							alphabet_length=4)
+							alphabet_length=alphabet_length)
 
 				writer.add_motif(motif)
 
@@ -406,9 +424,8 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 		window size will be read from the h5 file.
 	"""
 
-	# Note: Make sure this alphabet's order matches the order of the nucleotide tracks.
-	alphabet = ['A', 'C', 'G', 'T']
-
+	# Alphabet is read from the h5 attrs below; the order must match the
+	# channel order of `sequences_file`'s one-hot encoding.
 	peak_rows_filtered = None
 	with open(peaks_filepath, 'r') as peaks_file:
 		peak_rows = peaks_file.read().splitlines()
@@ -445,6 +462,12 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
 			window_size = int(grp.attrs['window_size'])
 
+		# Read alphabet from h5 attrs; older files default to ACGT.
+		alphabet_str = grp.attrs.get('alphabet', 'ACGT')
+		if isinstance(alphabet_str, bytes):
+			alphabet_str = alphabet_str.decode('ascii')
+		alphabet = list(alphabet_str)
+
 		for contribution_dir in ['pos', 'neg']:
 
 			patterns_category = f'{contribution_dir}_patterns'
@@ -466,7 +489,10 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 					seqlet_end_offset = datasets['seqlets']['end'][idx]
 
 					nucleotide_tracks = sequences[row_num]
-					assert nucleotide_tracks.shape[0] == 4
+					assert nucleotide_tracks.shape[0] == len(alphabet), (
+						f"sequences_file has {nucleotide_tracks.shape[0]} channels "
+						f"but h5 alphabet has {len(alphabet)} letters '{alphabet_str}'"
+					)
 					sequence = []
 					for pos in range(seqlet_start_offset, seqlet_end_offset):
 						bp_track = nucleotide_tracks[:, pos]
