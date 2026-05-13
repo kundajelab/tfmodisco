@@ -64,15 +64,22 @@ def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
 
 	return sims, neighbors
 
-def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
-	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
-	alphabet_size=4):
+def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
+	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500,
+	alphabet_size=None):
+	# Derive alphabet_size from the seqlets' stamped alphabet when the caller
+	# doesn't pass one. Falls back to 4 (DNA) for pre-alphabet seqlets, which
+	# keeps existing DNA call sites bit-identical.
+	if alphabet_size is None:
+		alphabet_size = len(getattr(seqlets[0], 'alphabet', None) or 'ACGT')
 
-	X_fwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, 
-		min_k, max_k, max_gap, max_len, max_entries, True, sign)
+	X_fwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn,
+		min_k, max_k, max_gap, max_len, max_entries, True, sign,
+		alphabet_size=alphabet_size)
 
-	X_bwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, 
-			max_len, max_entries, False, sign)
+	X_bwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap,
+			max_len, max_entries, False, sign,
+			alphabet_size=alphabet_size)
 
 	X = sklearn.preprocessing.normalize(X_fwd, norm='l2', axis=1)
 	Y = sklearn.preprocessing.normalize(X_bwd, norm='l2', axis=1)

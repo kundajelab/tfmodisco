@@ -2,6 +2,8 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+import math
+
 import scipy
 import numpy as np
 
@@ -11,8 +13,29 @@ import numba
 key_type = numba.types.int64
 value_type = numba.types.float64
 
+# Cap (hash_base ** max_len) to fit in signed int64 (numba dict key type).
+# The accumulated hash can reach sum_{p=0}^{max_len-1} (A) * hash_base^p
+# ~= hash_base^max_len; keeping that under 2^62 leaves a safety bit for the
+# accumulation across positions.
+_HASH_BUDGET_BITS = 62
+
+
+def _safe_max_len(max_len, hash_base):
+	"""Clamp max_len so hash_base ** max_len stays under 2^_HASH_BUDGET_BITS.
+
+	For DNA (hash_base=5) and max_len=15 (the default), 5**15 = 30 GB which
+	fits with room to spare — clamp is a no-op. For protein (hash_base=21)
+	and default max_len=15, 21**15 ~ 6.8e19 overflows int64; the clamp drops
+	max_len to 13 (21**13 = 1.5e17, fits).
+	"""
+	if hash_base <= 1:
+		return max_len
+	cap = int(_HASH_BUDGET_BITS / math.log2(hash_base))
+	return min(max_len, cap)
+
+
 @njit(parallel=True)
-def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
+def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries, hash_base):
 	nx = X.shape[0]
 	keys = np.zeros((nx, max_entries), dtype='int64')
 	scores = np.zeros((nx, max_entries), dtype='float64')
@@ -64,7 +87,7 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 						diff = int(position - last_position - 1)
 						length = int(position - start_position)
 
-						new_gkmer_hash = gkmer_hash + (base+1) * (5 ** length)
+						new_gkmer_hash = gkmer_hash + (base+1) * (hash_base ** length)
 						new_gkmer_attr = gkmer_attr + attr
 						
 						gkmers_.append(i)
@@ -100,8 +123,20 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 
 	return keys, scores
 
-def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len, 
-	max_entries, take_fwd, sign):
+def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
+	max_entries, take_fwd, sign, alphabet_size=4):
+	"""Per-seqlet gapped-kmer feature extraction for the coarse affinity matrix.
+
+	The kmer hash encodes (position, base) tuples in base `(alphabet_size+1)`.
+	The +1 leaves the zero hash reserved for the gap symbol; per-position
+	letters are encoded as `base+1` so DNA (alphabet_size=4) keeps its
+	historical base-5 hash and matrix shape unchanged. For non-DNA alphabets
+	the hash base is scaled accordingly so different letters never collide.
+	`max_len` is clamped down (via `_safe_max_len`) when the alphabet is large
+	enough that `hash_base ** max_len` would overflow int64.
+	"""
+	hash_base = alphabet_size + 1
+	max_len = _safe_max_len(max_len, hash_base)
 
 	Xs = []
 	for seqlet in seqlets:
@@ -124,12 +159,13 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 		Xs.append(X_)
 
 	X = np.array(Xs)
-	keys, scores = _extract_gkmers(X, min_k=min_k, max_k=max_k, 
-		max_gap=max_gap, max_len=max_len, max_entries=max_entries)
-	
+	keys, scores = _extract_gkmers(X, min_k=min_k, max_k=max_k,
+		max_gap=max_gap, max_len=max_len, max_entries=max_entries,
+		hash_base=hash_base)
+
 	row_idxs = np.repeat(range(keys.shape[0]), keys.shape[1])
-	csr_mat = scipy.sparse.csr_matrix((scores.flatten(), 
-		(row_idxs, keys.flatten())), shape=(len(keys), 5**max_len))
+	csr_mat = scipy.sparse.csr_matrix((scores.flatten(),
+		(row_idxs, keys.flatten())), shape=(len(keys), hash_base**max_len))
 	
 	scipy.sparse.csr_matrix.eliminate_zeros(csr_mat)
 
