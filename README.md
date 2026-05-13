@@ -94,3 +94,58 @@ For users who need the legacy report format use:
 ```sh
 modisco report-simple -i modisco_results.h5 -o simple_report/ -s simple_report/ -m motifs.txt
 ```
+
+## Custom alphabets (proteins, RNA, ...)
+
+TF-MoDISco can run on any alphabet whose length matches the trailing dimension
+of the one-hot encoding. This is exposed via an `alphabet` keyword on
+`TFMoDISco(...)` and `core.TrackSet(...)` (Python API only — the CLI is still
+DNA-only). The default is `'ACGT'`, so existing DNA call sites are unchanged.
+
+Examples:
+- DNA (default): `alphabet='ACGT'`, one-hot shape `(N, L, 4)`
+- RNA: `alphabet='ACGU'`, one-hot shape `(N, L, 4)`
+- Protein (20 amino acids): `alphabet='ACDEFGHIKLMNPQRSTVWY'`, one-hot shape `(N, L, 20)`
+- Any reduced or custom alphabet whose length equals `one_hot.shape[-1]`
+
+```python
+import numpy as np
+from modiscolite.tfmodisco import TFMoDISco
+from modiscolite.io import save_hdf5
+
+ALPHABET = "ACDEFGHIKLMNPQRSTVWY"   # 20 amino acids
+# one_hot: (N, L, 20) float32, hypothetical_contribs: same shape
+pos, neg = TFMoDISco(
+    one_hot=one_hot,
+    hypothetical_contribs=hypothetical_contribs,
+    alphabet=ALPHABET,
+    sliding_window_size=6, flank_size=2,
+    trim_to_window_size=4, initial_flank_to_add=2,
+    min_metacluster_size=20, max_seqlets_per_metacluster=4000,
+    final_min_cluster_size=15,
+    min_ic_in_window=0.3, min_ic_windowsize=3,
+    target_seqlet_fdr=0.2,
+)
+save_hdf5("modisco.h5", pos, neg, window_size=6)
+```
+
+Behavior changes when `alphabet != 'ACGT'`:
+- The reverse-complement augmentation in `aggregator._align_patterns` is
+  auto-disabled. RC is only meaningful for DNA-like complementary alphabets;
+  for any other alphabet, patterns are aligned in the forward direction only.
+- `save_hdf5` stamps the alphabet as an HDF5 root attribute (`alphabet`).
+  Older h5 files without this attribute are read as DNA, preserving back-compat.
+- `modisco report` writes a `modisco_cwm_rev` column for every pattern. For
+  non-DNA alphabets that column is a **length-reversed** (C → N read) view of
+  the forward CWM, not a biological reverse complement. The HTML report
+  includes a banner noting this.
+- The MEME writer drops the `strands: + -` line and emits an alphabet block
+  matching the alphabet used. The motif logo uses a 20-color protein scheme
+  when `len(alphabet) >= 20` and the default WebLogo NA scheme otherwise.
+
+Tips for protein ISM scores: pass mean-centered contributions as
+`hypothetical_contribs = deltas - deltas.mean(axis=-1, keepdims=True)` so the
+WT-AA channel carries a positive contribution at residues where mutations are
+costly. Tune `sliding_window_size`, `trim_to_window_size`, `min_ic_in_window`,
+`min_ic_windowsize`, and `min_metacluster_size` for short motifs; the DNA
+defaults assume ~20 bp windows.
