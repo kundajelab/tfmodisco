@@ -188,6 +188,10 @@ def save_hdf5(filename: os.PathLike, pos_patterns, neg_patterns, window_size: in
 	TF-MoDISco. Regardless of format, only information used in the SeqletSets
 	are saved.
 
+	The alphabet (e.g. 'ACGT', 'ACGU', 'ACDEFGHIKLMNPQRSTVWY') is stamped as
+	an HDF5 root attribute so the MEME / FASTA writers and report generator
+	can decode the one-hot back to letters without a separate hint. Older
+	files without this attribute are read as 'ACGT' for back-compat.
 
 	Parameters
 	----------
@@ -199,6 +203,9 @@ def save_hdf5(filename: os.PathLike, pos_patterns, neg_patterns, window_size: in
 
 	neg_patterns: list or None
 		A list of SeqletSet objects or None.
+
+	window_size: int
+		Sliding window size used to extract seqlets. Persisted as an h5 attr.
 	"""
 
 	grp = h5py.File(filename, 'w')

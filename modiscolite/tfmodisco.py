@@ -277,15 +277,36 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 	subcluster_perplexity=50, merging_max_seqlets_subsample=1000,
 	final_min_cluster_size=20, min_ic_in_window=0.6, min_ic_windowsize=6,
 	ppm_pseudocount=0.001, verbose=False, alphabet='ACGT'):
-	"""
+	"""Run TF-MoDISco on one-hot sequences and per-position contributions.
+
+	Parameters
+	----------
+	one_hot : np.ndarray, shape (N, L, A)
+		One-hot encoded sequences. Trailing dim A must equal len(alphabet).
+	hypothetical_contribs : np.ndarray, shape (N, L, A)
+		Per-position, per-channel hypothetical contribution scores
+		(e.g. DeepLIFT / SHAP / ISM-mean-centered).
 	alphabet : str, default 'ACGT'
-		Per-channel letter identity of the one_hot input. The only constraint
-		is `len(alphabet) == one_hot.shape[-1]`. Common choices: 'ACGT' (DNA),
+		Per-channel letter identity of `one_hot`. The only constraint is
+		`len(alphabet) == one_hot.shape[-1]`. Common choices: 'ACGT' (DNA),
 		'ACGU' (RNA), 'ACDEFGHIKLMNPQRSTVWY' (protein, 20 AA), or any reduced
 		or custom alphabet whose length matches the encoding's trailing dim.
-		Reverse-complement augmentation in aggregator._align_patterns is only
-		meaningful for DNA-like complementary alphabets; for any other
-		alphabet it is auto-disabled.
+		When `alphabet != 'ACGT'`, the reverse-complement augmentation in
+		`aggregator._align_patterns` is auto-disabled (RC is only meaningful
+		for DNA-like complementary alphabets); patterns are aligned in the
+		forward direction only.
+
+	Returns
+	-------
+	pos_patterns, neg_patterns : list[SeqletSet] or None
+		Discovered motifs from positively- and negatively-attributed seqlets.
+		Either may be None if no metacluster reached `min_metacluster_size`.
+
+	Notes
+	-----
+	The remaining keyword arguments are seqlet-extraction and clustering
+	hyperparameters; the DNA defaults (window=21, trim=20) assume ~20 bp
+	motifs and should be reduced for short protein motifs.
 	"""
 
 	contrib_scores = np.multiply(one_hot, hypothetical_contribs)

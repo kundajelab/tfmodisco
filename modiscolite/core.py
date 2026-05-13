@@ -14,11 +14,23 @@ from . import util
 from collections import OrderedDict
 
 class TrackSet(object):
+	"""Holds one-hot sequences and contribution scores for seqlet extraction.
+
+	Parameters
+	----------
+	one_hot : np.ndarray, shape (N, L, A)
+		One-hot encoded sequences.
+	contrib_scores : np.ndarray, shape (N, L, A)
+		Per-position, per-channel actual contribution scores (one_hot * hypothetical).
+	hypothetical_contribs : np.ndarray, shape (N, L, A)
+		Per-position, per-channel hypothetical contribution scores.
+	alphabet : str, default 'ACGT'
+		Per-channel letter identity of `one_hot`. Must satisfy
+		`len(alphabet) == one_hot.shape[-1]`. The alphabet is stamped onto
+		every Seqlet produced by `create_seqlets`, so SeqletSets and h5
+		outputs downstream know which alphabet they are working with.
+	"""
 	def __init__(self, one_hot, contrib_scores, hypothetical_contribs, alphabet='ACGT'):
-		# `alphabet` carries the per-channel letter identity of `one_hot`. Default
-		# 'ACGT' keeps existing DNA call sites unchanged; protein callers pass
-		# 'ACDEFGHIKLMNPQRSTVWY'. The string is the source of truth — its length
-		# must match the one_hot trailing dim.
 		if one_hot.shape[-1] != len(alphabet):
 			raise ValueError(
 				f"one_hot last dim ({one_hot.shape[-1]}) does not match "
