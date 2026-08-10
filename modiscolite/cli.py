@@ -61,7 +61,7 @@ def cli() -> None:
     "-l",
     "--n-leiden",
     type=int,
-    default=50,
+    default=2,
     show_default=True,
     help="The number of Leiden clusterings to perform with different random seeds."
 )
