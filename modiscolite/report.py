@@ -336,7 +336,7 @@ def report_motifs(modisco_h5py: Path, output_dir: os.PathLike, img_path_suffix: 
 						logos.append("NA")
 					else:
 						make_logo(row[name], output_dir, motifs)
-						logos.append(f'{img_path_suffix}{row[name]}.png')
+						logos.append(os.path.join(img_path_suffix, f'{row[name]}.png'))
 				else:
 					break
 
