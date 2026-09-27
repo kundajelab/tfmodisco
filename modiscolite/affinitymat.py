@@ -533,20 +533,58 @@ def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):
 
 	if min_overlap is not None:
 		n_pad = int(func(X.shape[1]*(1-min_overlap)))
-		pad_width = ((0, 0), (n_pad, n_pad), (0, 0)) 
-		Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
+		if n_pad >= 0:
+			# np.pad(mode="constant") without its Python overhead: a new
+			# C-ordered array of Y's dtype, zeros around a copy of Y.
+			m, l, k = Y.shape
+			Y_padded = np.zeros((m, l + 2*n_pad, k), dtype=Y.dtype)
+			Y_padded[:, n_pad:n_pad+l] = Y
+			Y = Y_padded
+		else:
+			pad_width = ((0, 0), (n_pad, n_pad), (0, 0))
+			Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 
 	n, d, _ = X.shape
 	len_output = 1 + Y.shape[1] - d 
 	scores = np.zeros((n, len_output))
 
-	for idx in range(len_output):
-		Y_ = Y[:, idx:idx+d]
+	if (n == 1 and Y.shape[0] == 1 and X.shape[2] == Y.shape[2]
+			and len_output > 0 and X.dtype in (np.float32, np.float64)
+			and Y.dtype in (np.float32, np.float64)
+			and Y.flags.c_contiguous):
+		# The loop below with its loop-invariant work taken out. Every
+		# value comes from the same operation on the same operands:
+		# np.linalg.norm(Y_) is sqrt(Y_.ravel().dot(itself)), so each
+		# offset's window (a contiguous view, as Y_.ravel() is) is dotted
+		# with itself; sqrt and the division are elementwise and exact;
+		# np.dot casts both vectors to their common dtype, as done here,
+		# and each score is one np.dot of the same two contiguous vectors
+		# of the same length; nan_to_num maps each element as on a scalar.
+		k = Y.shape[2]
+		Y_flat = Y.reshape(-1)
+		windows = np.lib.stride_tricks.as_strided(Y_flat,
+			shape=(len_output, d*k), strides=(k*Y_flat.itemsize,
+			Y_flat.itemsize), writeable=False)
 
-		scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
-				  (Y_ / np.linalg.norm(Y_)).ravel()) 
-		scores_ = np.nan_to_num(scores_)
-		scores[:,idx] = scores_
+		sqnorms = np.array(list(map(np.ndarray.dot, windows, windows)),
+			dtype=Y.dtype)
+		normed = windows / np.sqrt(sqnorms)[:, None]
+
+		X_normed = (X / np.linalg.norm(X)).ravel()
+		dtype = np.result_type(X_normed, normed)
+		X_normed = X_normed.astype(dtype, copy=False)
+		normed = normed.astype(dtype, copy=False)
+
+		scores_ = np.array(list(map(X_normed.dot, normed)), dtype=dtype)
+		scores[0] = np.nan_to_num(scores_)
+	else:
+		for idx in range(len_output):
+			Y_ = Y[:, idx:idx+d]
+
+			scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
+					  (Y_ / np.linalg.norm(Y_)).ravel())
+			scores_ = np.nan_to_num(scores_)
+			scores[:,idx] = scores_
 
 	argmaxs = np.argmax(scores, axis=1)
 	idxs = np.arange(len(scores))

@@ -105,37 +105,125 @@ def _filter_patterns(patterns, min_seqlet_support, window_size,
 	return passing_patterns
 
 
-def _patterns_from_clusters(seqlets, track_set, min_overlap,
-	min_frac, min_num, flank_to_add, window_size, bg_freq, cluster_indices, 
-	track_sign):
+# A share of clusters goes to a forked child only when it holds at least this
+# many seqlets: merging costs about 0.2 ms per seqlet, against 10-20 ms to
+# fork a child and reap it.
+MIN_CHILD_SEQLETS = 200
+
+
+def _pattern_from_cluster(seqlets, track_set, min_overlap, min_frac, min_num,
+	flank_to_add, window_size, bg_freq, track_sign):
+	"""The pattern built from one cluster's seqlets, or None when polishing
+	drops it or the sign of its contributions is not track_sign."""
 
 	seqlet_sort_metric = lambda x: -np.sum(np.abs(x.contrib_scores))
+	sorted_seqlets = sorted(seqlets, key=seqlet_sort_metric)
+	pattern = core.SeqletSet([sorted_seqlets[0]])
+
+	if len(sorted_seqlets) > 1:
+		pattern = aggregator.merge_in_seqlets_filledges(
+			parent_pattern=pattern, seqlets_to_merge=sorted_seqlets[1:],
+			track_set=track_set, metric=affinitymat.jaccard,
+			min_overlap=min_overlap)
+
+	pattern = aggregator.polish_pattern(pattern, min_frac=min_frac,
+		min_num=min_num, track_set=track_set, flank=flank_to_add,
+		window_size=window_size, bg_freq=bg_freq)
+
+	if pattern is not None:
+		if np.sign(np.sum(pattern.contrib_scores)) == track_sign:
+			return pattern
+
+	return None
+
+
+def _plan_clusters(sizes, n_budget):
+	"""Group clusters into shares, one per process, or return None to build
+	every pattern here.
+
+	A cluster's cost is about linear in its number of seqlets, since its
+	seqlets are merged into the pattern one at a time. The largest cluster
+	goes to share 0, which the parent runs, and the rest are packed longest
+	first (forked._lpt) into the fewest shares that leave no child more
+	seqlets than the parent. There is at most one share per cluster, one per
+	thread of the budget, and one child for every MIN_CHILD_SEQLETS seqlets
+	outside the largest cluster.
+	"""
+
+	n = len(sizes)
+	if n < 2:
+		return None
+
+	order = sorted(range(n), key=lambda j: -sizes[j])
+	largest = sizes[order[0]]
+	rest = sum(sizes) - largest
+	max_bins = min(n, n_budget, 1 + rest // MIN_CHILD_SEQLETS)
+	if max_bins < 2:
+		return None
+
+	for n_bins in range(2, max_bins + 1):
+		bins, loads = forked._lpt(sizes, order, n_bins)
+		if max(loads[1:]) <= largest:
+			break
+
+	return bins, loads
+
+
+def _patterns_from_clusters(seqlets, track_set, min_overlap,
+	min_frac, min_num, flank_to_add, window_size, bg_freq, cluster_indices,
+	track_sign):
+
 	num_clusters = max(cluster_indices+1)
-	cluster_to_seqlets = defaultdict(list) 
+	cluster_to_seqlets = defaultdict(list)
 
 	for seqlet, idx in zip(seqlets, cluster_indices):
 		cluster_to_seqlets[idx].append(seqlet)
 
-	patterns = []
-	for i in range(num_clusters):
-		sorted_seqlets = sorted(cluster_to_seqlets[i], key=seqlet_sort_metric) 
-		pattern = core.SeqletSet([sorted_seqlets[0]])
+	def build(i):
+		return _pattern_from_cluster(cluster_to_seqlets[i], track_set=track_set,
+			min_overlap=min_overlap, min_frac=min_frac, min_num=min_num,
+			flank_to_add=flank_to_add, window_size=window_size,
+			bg_freq=bg_freq, track_sign=track_sign)
 
-		if len(sorted_seqlets) > 1:
-			pattern = aggregator.merge_in_seqlets_filledges(
-				parent_pattern=pattern, seqlets_to_merge=sorted_seqlets[1:],
-				track_set=track_set, metric=affinitymat.jaccard,
-				min_overlap=min_overlap)
+	# The clusters' patterns are built independently of each other, so
+	# shares of them are built in forked children (forked.forked_map). A
+	# child sends back the coordinates of each pattern's seqlets, in order,
+	# and the pattern is made again here from new seqlets over the track set:
+	# views of the same arrays with the same strides as the child's, added
+	# in the same order, so every sum in the pattern has the same bits.
+	def build_share(share):
+		return [build(i) for i in share]
 
-		pattern = aggregator.polish_pattern(pattern, min_frac=min_frac, 
-			min_num=min_num, track_set=track_set, flank=flank_to_add, 
-			window_size=window_size, bg_freq=bg_freq)
+	def pack_share(patterns):
+		return [None if pattern is None else [(seqlet.example_idx,
+			seqlet.start, seqlet.end, seqlet.is_revcomp)
+			for seqlet in pattern.seqlets] for pattern in patterns]
 
-		if pattern is not None:
-			if np.sign(np.sum(pattern.contrib_scores)) == track_sign:
-				patterns.append(pattern)
+	def unpack_share(packed):
+		return [None if coordinates is None else core.SeqletSet(
+			track_set.create_seqlets([core.Seqlet(example_idx=example_idx,
+				start=start, end=end, is_revcomp=is_revcomp)
+			for example_idx, start, end, is_revcomp in coordinates]))
+			for coordinates in packed]
 
-	return patterns
+	n_budget = forked.budget()
+	plan = _plan_clusters([len(cluster_to_seqlets[i])
+		for i in range(num_clusters)], n_budget)
+
+	if plan is None or not forked.numba_fork_safe():
+		built = [build(i) for i in range(num_clusters)]
+	else:
+		bins, loads = plan
+		shares = forked.forked_map(build_share, bins,
+			budgets=forked._split_budget(loads, n_budget),
+			pack=pack_share, unpack=unpack_share)
+
+		built = [None] * num_clusters
+		for share, share_patterns in zip(bins, shares):
+			for i, pattern in zip(share, share_patterns):
+				built[i] = pattern
+
+	return [pattern for pattern in built if pattern is not None]
 
 
 def _average_ranks(values, mask):
