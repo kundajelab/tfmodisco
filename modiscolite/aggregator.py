@@ -12,6 +12,75 @@ from collections import OrderedDict
 from sklearn.metrics import roc_auc_score
 
 
+def _roc_auc_score(neg_scores, pos_scores):
+	"""The AUROC of telling `pos_scores` (label 1) from `neg_scores` (label 0).
+
+	Returns the same float64 bits as sklearn 1.6.1's
+	`roc_auc_score(y_true=[0]*len(neg_scores) + [1]*len(pos_scores),
+	y_score=list(neg_scores) + list(pos_scores))`, without its input
+	validation and without building Python lists. The arithmetic after the
+	sort is sklearn's, step for step: the false and true positive counts at
+	each distinct score (`_binary_clf_curve`), the collinear intermediate
+	points dropped and (0, 0) prepended (`roc_curve`), both normalised by
+	their last value, and scipy's trapezoid expression (`auc`).
+
+	sklearn orders the scores with a stable argsort. The counts taken at the
+	end of each run of tied scores do not depend on the order inside the
+	run, so any correct sort gives the same points. Each class is sorted on
+	its own with numpy's quicksort, and a stable argsort of the two sorted
+	runs merges them in linear time.
+	"""
+
+	neg_scores = np.asarray(neg_scores, dtype=np.float64).ravel()
+	pos_scores = np.asarray(pos_scores, dtype=np.float64).ravel()
+	n_neg, n_pos = neg_scores.shape[0], pos_scores.shape[0]
+
+	def _sklearn():
+		return roc_auc_score(
+			y_true=np.r_[np.zeros(n_neg, dtype=int), np.ones(n_pos, dtype=int)],
+			y_score=np.concatenate([neg_scores, pos_scores]))
+
+	# One class only: sklearn warns and returns nan.
+	if n_neg == 0 or n_pos == 0:
+		return _sklearn()
+
+	neg_sorted = np.sort(neg_scores)
+	pos_sorted = np.sort(pos_scores)
+
+	# NaN sorts last and -inf first; sklearn raises on either, so let it.
+	if not (np.isfinite(neg_sorted[0]) and np.isfinite(neg_sorted[-1])
+			and np.isfinite(pos_sorted[0]) and np.isfinite(pos_sorted[-1])):
+		return _sklearn()
+
+	y_score = np.concatenate([neg_sorted, pos_sorted])
+	desc_score_indices = np.argsort(y_score, kind="stable")[::-1]
+	y_true = desc_score_indices >= n_neg
+	y_score = y_score[desc_score_indices]
+
+	# sklearn.metrics._ranking._binary_clf_curve, sample_weight=None
+	distinct_value_indices = np.where(np.diff(y_score))[0]
+	threshold_idxs = np.r_[distinct_value_indices, y_true.size - 1]
+	tps = np.cumsum(y_true, dtype=np.float64)[threshold_idxs]
+	fps = 1 + threshold_idxs - tps
+
+	# sklearn.metrics.roc_curve, drop_intermediate=True
+	if len(fps) > 2:
+		optimal_idxs = np.where(np.r_[True, np.logical_or(np.diff(fps, 2),
+			np.diff(tps, 2)), True])[0]
+		fps = fps[optimal_idxs]
+		tps = tps[optimal_idxs]
+
+	tps = np.r_[0, tps]
+	fps = np.r_[0, fps]
+	fpr = fps / fps[-1]
+	tpr = tps / tps[-1]
+
+	# sklearn.metrics.auc -> scipy.integrate.trapezoid. fpr never decreases,
+	# so sklearn's direction is 1.
+	d = fpr[1:] - fpr[:-1]
+	return np.sum(d * (tpr[1:] + tpr[:-1]) / 2.0, axis=-1, dtype=np.float64)
+
+
 def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg_freq):
 	pattern = pattern.trim_to_support(min_frac=min_frac, min_num=min_num)
 
@@ -301,11 +370,8 @@ def SimilarPatternsCollapser(patterns, track_set,
 					flat_pattern1_fwdseqdata[:, :, None], 
 					flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
 
-				auroc = roc_auc_score(
-					y_true=[0 for x in between_pattern_sims]
-						   +[1 for x in within_pattern1_sims],
-					y_score=list(between_pattern_sims)
-							+list(within_pattern1_sims))
+				auroc = _roc_auc_score(between_pattern_sims,
+					within_pattern1_sims)
 
 				#The symmetrization over i,j and j,i is done later
 				pairwise_aurocs[i,j] = auroc
