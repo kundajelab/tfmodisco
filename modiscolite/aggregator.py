@@ -288,9 +288,22 @@ def SimilarPatternsCollapser(patterns, track_set,
 	pairwise_aurocs = -np.ones((len(patterns), len(patterns)))
 	pairwise_sims = np.zeros((len(patterns), len(patterns)))
 
+	# Pattern i's flattened subsample data and its within-pattern Jaccard
+	# depend only on pattern i, so they are computed once per pattern object
+	# rather than once per (i, j) pair. The key is the object itself (identity
+	# hash, and the dict keeps it alive so its id is not reused). An object's
+	# subsample is the same in every while iteration: its seqlets are never
+	# changed once it is in `patterns` (merging copies the parent first), and
+	# the subsample is drawn from a fresh RandomState(1234) each time.
+	pattern1_cache = {}
+
 	#loop until no more patterns get merged
 	while merge_occurred_last_iteration:
 		merge_occurred_last_iteration = False
+
+		# Drop the entries of patterns merged away in the last iteration.
+		pattern1_cache = {pattern: pattern1_cache[pattern] for pattern in
+			patterns if pattern in pattern1_cache}
 
 		#Let's subsample 'patterns' to prevent runtime from being too
 		# large in calculating pairwise sims. 
@@ -350,25 +363,33 @@ def SimilarPatternsCollapser(patterns, track_set,
 				pattern2_shifted_seqlets = track_set.create_seqlets(
 					seqlets=pattern2_coords)
 
-				pattern1_fwdseqdata, _ =\
-				  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
+				if patterns[i] not in pattern1_cache:
+					pattern1_fwdseqdata, _ =\
+					  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
+
+					flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
+						(len(pattern1_fwdseqdata), -1))
+
+					within_pattern1_sims = affinitymat.jaccard(
+						flat_pattern1_fwdseqdata[:, :, None],
+						flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
+
+					pattern1_cache[patterns[i]] = (flat_pattern1_fwdseqdata,
+						within_pattern1_sims)
+
+				flat_pattern1_fwdseqdata, within_pattern1_sims =\
+					pattern1_cache[patterns[i]]
 
 				pattern2_fwdseqdata, _ =\
 				  util.get_2d_data_from_patterns(pattern2_shifted_seqlets)
 
 				#Flatten, compute continjacc sim at this alignment
-				flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
-					(len(pattern1_fwdseqdata), -1))
 				flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
 					(len(pattern2_fwdseqdata), -1))
 
 				between_pattern_sims = affinitymat.jaccard(
 					flat_pattern1_fwdseqdata[:, :, None], 
 					flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()
-
-				within_pattern1_sims = affinitymat.jaccard(
-					flat_pattern1_fwdseqdata[:, :, None], 
-					flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
 
 				auroc = _roc_auc_score(between_pattern_sims,
 					within_pattern1_sims)
