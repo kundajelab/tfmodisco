@@ -137,22 +137,77 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 		return None
 
 
-def _align_patterns(parent_pattern, child_pattern, metric, min_overlap, 
-	transformer, include_hypothetical):
+def _fwd_data(pattern, transformer, include_hypothetical):
+	"""The forward-strand data of one pattern: the first array that
+	`util.get_2d_data_from_patterns([pattern], transformer,
+	include_hypothetical)` returns, computed the same way, without the
+	reverse strand that an alignment never uses for the parent."""
 
-	fwd_data_parent, rev_data_parent = util.get_2d_data_from_patterns(
-		[parent_pattern], transformer=transformer,
-		include_hypothetical=include_hypothetical)
+	func = util.l1 if transformer == 'l1' else util.magnitude
+	tracks = ['hypothetical_contribs', 'contrib_scores']
+	if not include_hypothetical:
+		tracks = tracks[1:]
 
-	fwd_data_child, rev_data_child = util.get_2d_data_from_patterns(
-		[child_pattern], transformer=transformer,
-		include_hypothetical=include_hypothetical)
+	return np.array([np.concatenate([func(getattr(pattern, track))
+		for track in tracks], axis=1)])
 
-	best_crossmetric, best_crossmetric_argmax = metric(fwd_data_child, 
-		fwd_data_parent, min_overlap).squeeze()
 
-	best_crossmetric_rev, best_crossmetric_argmax_rev = metric(rev_data_child, 
-		fwd_data_parent, min_overlap).squeeze()
+def _seqlets_data(seqlets, transformer, include_hypothetical):
+	"""[util.get_2d_data_from_patterns([seqlet], transformer,
+	include_hypothetical) for seqlet in seqlets], with the same bytes.
+
+	For `l1`, when every seqlet's tracks have one shape and dtype, the data
+	comes from a single call over the whole list, whose stacked path returns
+	the per-seqlet loop's values bit for bit and otherwise falls back to that
+	loop. Each seqlet's pair is then a (1, length, width) view of the stacked
+	arrays.
+	"""
+
+	tracks = ['hypothetical_contribs', 'contrib_scores']
+	if not include_hypothetical:
+		tracks = tracks[1:]
+
+	if transformer == 'l1' and len(seqlets) > 1:
+		kinds = set(tuple((getattr(seqlet, track).shape,
+			getattr(seqlet, track).dtype) for track in tracks)
+			for seqlet in seqlets)
+
+		if len(kinds) == 1:
+			fwd_data, rev_data = util.get_2d_data_from_patterns(seqlets,
+				transformer=transformer,
+				include_hypothetical=include_hypothetical)
+			return [(fwd_data[k:k+1], rev_data[k:k+1])
+				for k in range(len(seqlets))]
+
+	return [util.get_2d_data_from_patterns([seqlet], transformer=transformer,
+		include_hypothetical=include_hypothetical) for seqlet in seqlets]
+
+
+def _best_alignment(fwd_data_parent, fwd_data_child, rev_data_child, metric,
+	min_overlap):
+	"""The better of the child's forward and reverse strands against the
+	parent's forward strand: (offset, whether the reverse strand won, its
+	score).
+
+	`jaccard` scores each row of its first argument against the second on
+	its own: every row gets the same padding (it depends only on the rows'
+	shared length), its own scores at each offset and its own argmax. So the
+	two strands are stacked into one call, which returns what two calls
+	would. `pearson_correlation` normalizes by the norm of its whole first
+	argument, so each strand gets its own call.
+	"""
+
+	if metric is affinitymat.jaccard:
+		both_data_child = np.concatenate([fwd_data_child, rev_data_child])
+		((best_crossmetric, best_crossmetric_argmax), (best_crossmetric_rev,
+			best_crossmetric_argmax_rev)) = metric(both_data_child,
+			fwd_data_parent, min_overlap)[0]
+	else:
+		best_crossmetric, best_crossmetric_argmax = metric(fwd_data_child,
+			fwd_data_parent, min_overlap).squeeze()
+
+		best_crossmetric_rev, best_crossmetric_argmax_rev = metric(
+			rev_data_child, fwd_data_parent, min_overlap).squeeze()
 
 	if best_crossmetric_rev > best_crossmetric:
 		return int(best_crossmetric_argmax_rev), True, best_crossmetric_rev
@@ -160,16 +215,44 @@ def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
 		return int(best_crossmetric_argmax), False, best_crossmetric
 
 
+def _align_patterns(parent_pattern, child_pattern, metric, min_overlap,
+	transformer, include_hypothetical):
+
+	fwd_data_parent = _fwd_data(parent_pattern, transformer,
+		include_hypothetical)
+
+	fwd_data_child, rev_data_child = util.get_2d_data_from_patterns(
+		[child_pattern], transformer=transformer,
+		include_hypothetical=include_hypothetical)
+
+	return _best_alignment(fwd_data_parent, fwd_data_child, rev_data_child,
+		metric, min_overlap)
+
+
 def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
-	track_set, metric, min_overlap, transformer='l1', 
+	track_set, metric, min_overlap, transformer='l1',
 	include_hypothetical=True):
 
 	parent_pattern = parent_pattern.copy()
 
-	for seqlet in seqlets_to_merge:
-		alnmt, revcomp_match, alnmt_score = _align_patterns(parent_pattern, 
-			seqlet, metric, min_overlap, transformer, include_hypothetical)
-		
+	# Each seqlet is aligned, as it was given, against the parent pattern as
+	# it stands when its turn comes. The seqlets' own data does not depend on
+	# the parent, so it is computed for all of them up front; the parent's is
+	# computed again only after the parent changes (fwd_data_parent = None).
+	seqlets_to_merge = list(seqlets_to_merge)
+	seqlets_data = _seqlets_data(seqlets_to_merge, transformer,
+		include_hypothetical)
+	fwd_data_parent = None
+
+	for seqlet, (fwd_data_child, rev_data_child) in zip(seqlets_to_merge,
+			seqlets_data):
+		if fwd_data_parent is None:
+			fwd_data_parent = _fwd_data(parent_pattern, transformer,
+				include_hypothetical)
+
+		alnmt, revcomp_match, alnmt_score = _best_alignment(fwd_data_parent,
+			fwd_data_child, rev_data_child, metric, min_overlap)
+
 		if revcomp_match:
 			seqlet = seqlet.revcomp()
 
@@ -206,6 +289,7 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 
 			if candidate_parent_pattern is not None:
 				parent_pattern = candidate_parent_pattern
+				fwd_data_parent = None
 			else:
 				continue
 
@@ -213,6 +297,7 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 		# part of the pattern
 		if seqlet.string not in parent_pattern.unique_seqlets:
 			parent_pattern._add_seqlet(seqlet=seqlet)
+			fwd_data_parent = None
 
 	return parent_pattern
 

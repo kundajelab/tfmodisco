@@ -227,7 +227,15 @@ def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn,
 
 		n = len(fine_affmat_nn)
 		mask = np.abs(fine_affmat_nn) > 0
-		correlations = _spearman_rows(fine_affmat_nn, coarse_affmat_nn, mask)
+
+		# Rows are independent. Blocks of 1,024 rows keep the temporaries to
+		# a few tens of MB rather than several arrays the size of the input.
+		correlations = np.empty(n, dtype='float64')
+		for start in range(0, n, 1024):
+			block = slice(start, start + 1024)
+			correlations[block] = _spearman_rows(fine_affmat_nn[block],
+				coarse_affmat_nn[block], mask[block])
+
 		filtered_rows_mask = correlations > correlation_threshold
 
 		filtered_seqlets = [seqlet for seqlet, retained in zip(seqlets,
