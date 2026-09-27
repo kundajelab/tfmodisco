@@ -18,16 +18,28 @@ from . import cluster
 
 def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	eps = 0.0000001
+	n = len(affmat_nn)
 
-	rows, cols, data = [], [], []
-	for row in range(len(affmat_nn)):
-		for col, datum in zip(seqlet_neighbors[row], affmat_nn[row]):
-			rows.append(row)
-			cols.append(col)
-			data.append(datum)
+	# The (row, col, value) triples in row order and, within a row, in the
+	# order of zip(seqlet_neighbors[row], affmat_nn[row]).
+	if (isinstance(affmat_nn, np.ndarray) and affmat_nn.ndim == 2 and
+		isinstance(seqlet_neighbors, np.ndarray) and seqlet_neighbors.ndim == 2):
+		k = min(affmat_nn.shape[1], seqlet_neighbors.shape[1])
+		data = affmat_nn[:, :k].ravel()
+		cols = seqlet_neighbors[:n, :k].ravel()
+		rows = np.repeat(np.arange(n), k)
+	else:
+		lengths = np.array([min(len(seqlet_neighbors[row]), len(affmat_nn[row]))
+			for row in range(n)], dtype='int64')
+		data = np.concatenate([np.asarray(affmat_nn[row][:m])
+			for row, m in enumerate(lengths)] + [np.empty(0)])
+		cols = np.concatenate([np.asarray(seqlet_neighbors[row][:m], dtype='int64')
+			for row, m in enumerate(lengths)] + [np.empty(0, dtype='int64')])
+		rows = np.repeat(np.arange(n), lengths)
 
 	affmat_nn = scipy.sparse.csr_matrix((data, (rows, cols)), 
-		shape=(len(affmat_nn), len(affmat_nn)), dtype='float64')
+		shape=(n, n), dtype='float64')
+	del data, rows, cols
 	
 	affmat_nn.data = np.maximum(np.log((1.0/(0.5*np.maximum(affmat_nn.data, eps)))-1), 0)
 	affmat_nn.eliminate_zeros()
@@ -40,18 +52,24 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	affmat_nn.data /= counts_nn.data
 	del counts_nn
 
-	betas = [util.binary_search_perplexity(tsne_perplexity, affmat_nn[i].data) for i in range(affmat_nn.shape[0])]
-	normfactors = np.array([np.exp(-np.array(affmat_nn[i].data)/beta).sum()+1 for i, beta in enumerate(betas)])
+	data, indices, indptr = affmat_nn.data, affmat_nn.indices, affmat_nn.indptr
+	betas = np.array([util.binary_search_perplexity(tsne_perplexity,
+		data[indptr[i]:indptr[i+1]]) for i in range(n)])
 
-	for i in range(affmat_nn.shape[0]):
-		for j_idx in range(affmat_nn.indptr[i], affmat_nn.indptr[i+1]):
-			j = affmat_nn.indices[j_idx]
-			distance = affmat_nn.data[j_idx]
+	# Elementwise over all stored entries: the same operations, in the same
+	# order, as a loop over entries, and each row's normalizer is numpy's sum
+	# over that row's values, so every value keeps its bits.
+	row_idx = np.repeat(np.arange(n), np.diff(indptr))
+	neg_data = -data
 
-			rbf_i = np.exp(-distance / betas[i]) / normfactors[i]
-			rbf_j = np.exp(-distance / betas[j]) / normfactors[j]
+	rbf_i = np.exp(neg_data / betas[row_idx])
+	normfactors = np.array([rbf_i[indptr[i]:indptr[i+1]].sum() + 1
+		for i in range(n)])
 
-			affmat_nn.data[j_idx] = np.sqrt(rbf_i * rbf_j)
+	rbf_i /= normfactors[row_idx]
+	rbf_j = np.exp(neg_data / betas[indices]) / normfactors[indices]
+	data[:] = np.sqrt(rbf_i * rbf_j)
+	del row_idx, neg_data, rbf_i, rbf_j
 
 	affmat_diags = scipy.sparse.diags(1.0 / normfactors)
 	affmat_nn += affmat_diags
