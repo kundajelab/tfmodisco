@@ -5,6 +5,8 @@
 import sklearn
 import sklearn.manifold
 
+import math
+
 import numpy as np
 
 import scipy
@@ -292,11 +294,30 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	len_output = 1 + Y.shape[1] - X.shape[1] 
 
-	X = X.astype('float32')
-	Y = Y.astype('float32')
+	X = np.ascontiguousarray(X, dtype='float32')
+	Y = np.ascontiguousarray(Y, dtype='float32')
 
-	seqlet_neighbors = seqlet_neighbors.astype('int32')
-	scores = np.zeros((Y.shape[0], seqlet_neighbors.shape[1], len_output), dtype='float32')
+	seqlet_neighbors = np.ascontiguousarray(seqlet_neighbors.astype('int32'))
+	n, k = Y.shape[0], seqlet_neighbors.shape[1]
+
+	if len_output == 1 or (len_output > 1 and X.shape[2] % 2 == 0):
+		best = np.empty((n, k), dtype='float32')
+		best_idx = np.empty((n, k), dtype='int64')
+		flags = np.zeros(n, dtype='uint8')
+		_jaccard_best(X, Y, seqlet_neighbors, best, best_idx, flags)
+
+		if return_sparse != True:
+			results = np.zeros((n, k, 2))
+			results[:, :, 0] = best
+			results[:, :, 1] = best_idx - n_pad
+			return results
+
+		# The largest score is unique in its bits unless a row holds a NaN
+		# or a -0.0; for those, numpy's max decides which bits come back.
+		if not flags.any():
+			return best
+
+	scores = np.zeros((n, k, len_output), dtype='float32')
 	_jaccard(X, Y, seqlet_neighbors, scores)
 
 	if return_sparse == True:
@@ -347,7 +368,10 @@ def pairwise_jaccard(X, k):
 	return jaccards, neighbors
 
 
-@njit('void(float32[:, :, :], float32[:, :, :], int32[:, :], float32[:, :, :])', parallel=True)
+# Every score at every offset. `jaccard` uses it only where `_jaccard_best`
+# cannot stand in (a NaN or -0.0 score under return_sparse, an odd number of
+# channels), so it is compiled on first use.
+@njit(parallel=True)
 def _jaccard(X, Y, neighbors, scores):
 	nx, d, m = X.shape
 	ny = Y.shape[0]
@@ -377,6 +401,125 @@ def _jaccard(X, Y, neighbors, scores):
 							max_sum += x
 
 				scores[l, i, idx] = min_sum / max_sum
+
+
+@njit('void(float32[:, :, ::1], float32[:, :, ::1], int32[:, ::1], float32[:, ::1], int64[:, ::1], uint8[::1])', parallel=True)
+def _jaccard_best(X, Y, neighbors, best, best_idx, flags):
+	"""For each (l, i), the largest score over all offsets and the first
+	offset that reaches it, as `np.argmax` picks it (a NaN wins), without
+	storing every offset's score. Each score is summed in the same order as
+	in `_jaccard` and rounded to float32 before the comparison, so both are
+	bit-identical to taking them from `_jaccard`'s scores. flags[l] is set
+	when row l holds a NaN or a -0.0 score. With more than one offset, the
+	number of channels must be even."""
+
+	nx, d, m = X.shape
+	ny, L, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = L - d + 1
+
+	# The offsets are padded to a multiple of 8 so the vectorized loop over
+	# them has no scalar remainder; the padding offsets are never read.
+	n_offsets = (len_output + 7) // 8 * 8
+	L_pad = d - 1 + n_offsets
+
+	for l in prange(ny):
+		flag = 0
+
+		if len_output == 1:
+			for i in range(n_neighbors):
+				min_sum = 0.0
+				max_sum = 0.0
+				neighbor_li = neighbors[l, i]
+
+				for j in range(d):
+					for k in range(m):
+						sign = np.sign(X[neighbor_li, j, k]) * np.sign(Y[l, j, k])
+
+						x = abs(X[neighbor_li, j, k])
+						y = abs(Y[l, j, k])
+
+						if y > x:
+							min_sum += x * sign
+							max_sum += y
+						else:
+							min_sum += y * sign
+							max_sum += x
+
+				score = np.float32(min_sum / max_sum)
+				if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+					flag = 1
+
+				best[l, i] = score
+				best_idx[l, i] = 0
+
+		else:
+			# |Y| and sign(Y) for this row, channel-major, so that the
+			# offsets of one (position, channel) pair are contiguous. Zero
+			# past the end.
+			abs_Y = np.empty((m, L_pad), dtype=np.float32)
+			sign_Y = np.empty((m, L_pad), dtype=np.float32)
+			for j in range(L):
+				for k in range(m):
+					abs_Y[k, j] = abs(Y[l, j, k])
+					sign_Y[k, j] = np.sign(Y[l, j, k])
+			for k in range(m):
+				for j in range(L, L_pad):
+					abs_Y[k, j] = 0.0
+					sign_Y[k, j] = 0.0
+
+			min_sums = np.empty(n_offsets, dtype=np.float64)
+			max_sums = np.empty(n_offsets, dtype=np.float64)
+
+			for i in range(n_neighbors):
+				neighbor_li = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_sums[idx] = 0.0
+					max_sums[idx] = 0.0
+
+				# Offsets innermost, two channels per pass: each offset's
+				# sums still take their terms in (j, k) order.
+				for j in range(d):
+					for k in range(0, m, 2):
+						x0 = abs(X[neighbor_li, j, k])
+						x1 = abs(X[neighbor_li, j, k+1])
+						sign_x0 = np.sign(X[neighbor_li, j, k])
+						sign_x1 = np.sign(X[neighbor_li, j, k+1])
+
+						for idx in range(n_offsets):
+							min_sum = min_sums[idx]
+							max_sum = max_sums[idx]
+
+							y = abs_Y[k, j + idx]
+							sign = sign_x0 * sign_Y[k, j + idx]
+							gt = y > x0
+							min_sum += (x0 if gt else y) * sign
+							max_sum += y if gt else x0
+
+							y = abs_Y[k+1, j + idx]
+							sign = sign_x1 * sign_Y[k+1, j + idx]
+							gt = y > x1
+							min_sum += (x1 if gt else y) * sign
+							max_sum += y if gt else x1
+
+							min_sums[idx] = min_sum
+							max_sums[idx] = max_sum
+
+				best_score = np.float32(0.0)
+				best_offset = 0
+				for idx in range(len_output):
+					score = np.float32(min_sums[idx] / max_sums[idx])
+					if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+						flag = 1
+
+					if idx == 0 or (best_score == best_score and not (score <= best_score)):
+						best_score = score
+						best_offset = idx
+
+				best[l, i] = best_score
+				best_idx[l, i] = best_offset
+
+		flags[l] = flag
 
 
 
