@@ -150,8 +150,29 @@ class SeqletSet():
 		sp_density_adapted_affmat /= np.sum(sp_density_adapted_affmat.data)
 
 		#Do Leiden clustering
-		self.subclusters = cluster.LeidenCluster(sp_density_adapted_affmat,
-			n_seeds=n_seeds, n_leiden_iterations=n_iterations) 
+		self._set_subclusters(cluster.LeidenCluster(sp_density_adapted_affmat,
+			n_seeds=n_seeds, n_leiden_iterations=n_iterations))
+
+	def _compile_subpattern_kernels(self):
+		"""Compile the numba kernel compute_subpatterns calls, for the
+		argument types it passes, by calling it on this pattern's first two
+		seqlets. Called before forking workers that subcluster patterns, so
+		that they inherit the compiled code instead of each compiling it."""
+
+		X = util.get_2d_data_from_patterns(self.seqlets[:2])[0]
+		X = X.reshape(len(X), -1)
+		try:
+			affinitymat.pairwise_jaccard(X, len(X))
+		except Exception:
+			pass
+
+	def _set_subclusters(self, subclusters):
+		"""Store the subcluster of each seqlet (the Leiden membership) and
+		build the subpatterns from it: the second half of
+		compute_subpatterns, also used to attach a membership computed in a
+		forked worker."""
+
+		self.subclusters = subclusters
 
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0

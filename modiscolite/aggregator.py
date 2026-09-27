@@ -6,6 +6,7 @@ import numpy as np
 
 from . import affinitymat
 from . import core
+from . import forked
 from . import util
 
 from collections import OrderedDict
@@ -244,20 +245,54 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
 	n_seeds, max_seqlets_subsample=1000):
 
+	def refine(i):
+		pattern = patterns[i]
+		pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds)
+
+		subpatterns = pattern.subcluster_to_subpattern.values()
+		refined_subpatterns = SimilarPatternsCollapser(patterns=subpatterns, 
+			track_set=track_set, min_overlap=min_overlap, 
+			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+			min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
+			bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
+
+		return refined_subpatterns[0]
+
+	# Each pattern is subclustered and its subpatterns merged independently
+	# of the others, so this runs in forked workers (forked.map_tasks). A
+	# worker sends back the pattern's membership and each refined
+	# subpattern's seqlet coordinates. Here the membership is attached as
+	# compute_subpatterns would, and the seqlets are made again from the
+	# track set: views of the same arrays with the same strides as the
+	# worker's, so every later sum over them adds in the same order.
+	def pack(i, refined):
+		return patterns[i].subclusters, [[(seqlet.example_idx, seqlet.start,
+			seqlet.end, seqlet.is_revcomp) for seqlet in pattern.seqlets]
+			for pattern in refined]
+
+	def unpack(packed):
+		results = {}
+		for i, (subclusters, refined) in packed.items():
+			patterns[i]._set_subclusters(subclusters)
+			results[i] = [core.SeqletSet(track_set.create_seqlets([
+				core.Seqlet(example_idx=example_idx, start=start, end=end,
+					is_revcomp=is_revcomp)
+				for example_idx, start, end, is_revcomp in coordinates]))
+				for coordinates in refined]
+		return results
+
+	to_refine = [i for i, pattern in enumerate(patterns)
+		if len(pattern.seqlets) > min_in_subcluster]
+	refined = forked.map_tasks(refine, to_refine,
+		weights=[len(patterns[i].seqlets) ** 2 for i in to_refine],
+		pack=pack, unpack=unpack, before_fork=lambda:
+			patterns[to_refine[0]]._compile_subpattern_kernels())
+
 	to_return = []
 	for i, pattern in enumerate(patterns):
-		if len(pattern.seqlets) > min_in_subcluster:
-			pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds)
-
-			subpatterns = pattern.subcluster_to_subpattern.values()
-			refined_subpatterns = SimilarPatternsCollapser(patterns=subpatterns, 
-				track_set=track_set, min_overlap=min_overlap, 
-				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
-				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
-				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
-
-			to_return.extend(refined_subpatterns[0]) 
+		if i in refined:
+			to_return.extend(refined[i]) 
 		else:
 			to_return.append(pattern)
 	

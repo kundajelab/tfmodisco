@@ -3,6 +3,7 @@
 # adapted from code written by Avanti Shrikumar 
 
 from enum import Enum
+from operator import attrgetter
 import textwrap
 from typing import List
 import numpy as np
@@ -116,11 +117,110 @@ def l1(X):
 		return X
 	return (X/abs_sum)
 
+# Below this many patterns the per-pattern loop is faster than stacking.
+_MIN_STACKED = 2
+
+_get_shape = attrgetter('shape')
+_get_dtype = attrgetter('dtype')
+_get_strides = attrgetter('strides')
+
+
+def _l1_stacked(patterns, tracks):
+	"""Apply `l1` to every pattern's snippets at once.
+
+	Returns the same two arrays as the per-pattern loop in
+	`get_2d_data_from_patterns`, bit for bit, or None when the snippets differ
+	in shape, dtype or memory order and cannot be stacked.
+
+	`l1` sums |X| over an (L, w) snippet in the memory order of `np.abs(X)`,
+	which numpy lays out by the snippet's absolute strides: position-major
+	when the snippet is C-like, base-major for the transposed layout the CLI
+	makes from npz input. Each row of `flat` below holds one snippet's |X| in
+	that order, so reducing a row runs numpy's pairwise sum over the same
+	sequence of values. The reverse complement X[::-1, ::-1] has the same
+	absolute strides, so its sum runs over the same row read backwards.
+	"""
+
+	n = len(patterns)
+	shape, dtype = None, None
+	per_track = []
+
+	for track in tracks:
+		snippets = [getattr(pattern, track) for pattern in patterns]
+
+		shapes = set(map(_get_shape, snippets))
+		dtypes = set(map(_get_dtype, snippets))
+		if len(shapes) != 1 or len(dtypes) != 1:
+			return None
+
+		track_shape, track_dtype = shapes.pop(), dtypes.pop()
+		if shape is None:
+			shape, dtype = track_shape, track_dtype
+		elif track_shape != shape or track_dtype != dtype:
+			return None
+
+		if len(shape) != 2 or shape[0] == 0 or shape[1] == 0:
+			return None
+
+		if shape[0] == 1 or shape[1] == 1:
+			base_major = False
+		else:
+			orders = set()
+			for strides in set(map(_get_strides, snippets)):
+				if abs(strides[0]) == abs(strides[1]):
+					return None
+				orders.add(abs(strides[0]) < abs(strides[1]))
+
+			if len(orders) != 1:
+				return None
+
+			base_major = orders.pop()
+
+		# Row k of `stacked` is snippet k laid out as np.abs lays it out:
+		# (w, L) when base-major, (L, w) otherwise.
+		if base_major:
+			stacked = np.array([snippet.T for snippet in snippets])
+		else:
+			stacked = np.array(snippets)
+
+		flat = np.abs(stacked).reshape(n, -1)
+		fwd_sums = np.sum(flat, axis=1)
+		rev_sums = np.sum(np.ascontiguousarray(flat[:, ::-1]), axis=1)
+
+		# `l1` returns X unchanged when its sum is zero; X / 1 is X.
+		fwd_sums[fwd_sums == 0] = 1
+		rev_sums[rev_sums == 0] = 1
+		per_track.append((stacked, base_major, fwd_sums, rev_sums))
+
+	length, width = shape
+	all_fwd_data = np.empty((n, length, width * len(tracks)), dtype=dtype)
+	all_rev_data = np.empty((n, length, width * len(tracks)), dtype=dtype)
+
+	# Divide in the contiguous stacked layout, then copy into (n, L, w) order.
+	for i, (stacked, base_major, fwd_sums, rev_sums) in enumerate(per_track):
+		columns = slice(i * width, (i + 1) * width)
+
+		fwd = stacked / fwd_sums[:, None, None]
+		rev = (stacked / rev_sums[:, None, None])[:, ::-1, ::-1]
+		if base_major:
+			fwd, rev = fwd.transpose(0, 2, 1), rev.transpose(0, 2, 1)
+
+		all_fwd_data[:, :, columns] = fwd
+		all_rev_data[:, :, columns] = rev
+
+	return all_fwd_data, all_rev_data
+
+
 def get_2d_data_from_patterns(patterns, transformer='l1', include_hypothetical=True):
 	func = l1 if transformer == 'l1' else magnitude
 	tracks = ['hypothetical_contribs', 'contrib_scores']
 	if not include_hypothetical:
 		tracks = tracks[1:]
+
+	if transformer == 'l1' and isinstance(patterns, list) and len(patterns) >= _MIN_STACKED:
+		stacked = _l1_stacked(patterns, tracks)
+		if stacked is not None:
+			return stacked
 
 	all_fwd_data, all_rev_data = [], []
 

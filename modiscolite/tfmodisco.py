@@ -15,6 +15,7 @@ from . import extract_seqlets
 from . import core
 from . import util
 from . import cluster
+from . import forked
 
 def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	eps = 0.0000001
@@ -269,14 +270,29 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 
 	#apply subclustering procedure on the final patterns
 	for patternidx, pattern in enumerate(patterns):
-		pattern = aggregator._expand_seqlets_to_fill_pattern(pattern, track_set, 
-			left_flank_to_add=final_flank_to_add,
+		patterns[patternidx] = aggregator._expand_seqlets_to_fill_pattern(
+			pattern, track_set, left_flank_to_add=final_flank_to_add,
 			right_flank_to_add=final_flank_to_add)
 
+	# The patterns are subclustered independently of each other, so this runs
+	# in forked workers (forked.map_tasks). A worker sends back each
+	# pattern's membership, and the subpatterns are built from it here, as
+	# compute_subpatterns would.
+	def subcluster(patternidx):
+		pattern = patterns[patternidx]
 		pattern.compute_subpatterns(subcluster_perplexity, 
 			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations)
-		
-		patterns[patternidx] = pattern
+		return pattern.subclusters
+
+	def attach(packed):
+		for patternidx, subclusters in packed.items():
+			patterns[patternidx]._set_subclusters(subclusters)
+		return packed
+
+	forked.map_tasks(subcluster, range(len(patterns)),
+		weights=[len(pattern.seqlets) ** 2 for pattern in patterns],
+		unpack=attach,
+		before_fork=lambda: patterns[0]._compile_subpattern_kernels())
 
 	return patterns
 
