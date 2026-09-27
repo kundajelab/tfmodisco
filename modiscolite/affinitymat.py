@@ -44,7 +44,11 @@ def _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, 
 	return dot
 
 @njit(parallel=True)
-def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
+def _sparse_mm_dot_merge(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
+	"""The pairwise merge-join version of `_sparse_mm_dot`, used only when a
+	row of X or Y is not in canonical form (sorted, no duplicate columns),
+	where the inverted index would not reproduce the merge join."""
+
 	n_rows = len(Y_indptr) - 1
 
 	neighbors = np.empty((n_rows, k), dtype='int32')
@@ -64,6 +68,165 @@ def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
 
 	return sims, neighbors
 
+
+@njit
+def _lt(a, b):
+	"""numba's float `<` for sorting: NaN after every number."""
+	return a < b or (np.isnan(b) and not np.isnan(a))
+
+
+@njit
+def _after(a, b, dot):
+	"""Whether index `a` comes after index `b` in the stable argsort of -dot."""
+	va = -dot[a]
+	vb = -dot[b]
+	return _lt(vb, va) or (not _lt(va, vb) and a > b)
+
+
+@njit
+def _sift_down(heap, size, dot):
+	pos = 0
+	while True:
+		child = 2 * pos + 1
+		if child >= size:
+			break
+
+		if child + 1 < size and _after(heap[child + 1], heap[child], dot):
+			child += 1
+
+		if _after(heap[child], heap[pos], dot):
+			tmp = heap[pos]
+			heap[pos] = heap[child]
+			heap[child] = tmp
+			pos = child
+		else:
+			break
+
+
+@njit(parallel=True)
+def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
+	Yt_indptr, Yt_rows, Yt_data, k):
+	"""For each row i of X, the k rows j with the largest max(X_i.X_j,
+	X_i.Y_j) and those values, in the order of a stable argsort of the
+	negated values.
+
+	X is in CSR form with its columns renumbered to a compact range
+	(`X_cols`); Xt and Yt are X and Y in CSC form over the same compact
+	columns. Every product X_i[c] * X_j[c] is added to dot[j] while walking
+	row i's columns in ascending order, so each dot is summed over the
+	shared columns in the same order, from the same +0.0, as the pairwise
+	merge join of two sorted rows, and is bitwise equal to it. Only pairs
+	that share a column cost anything.
+
+	The top k are kept in a heap whose root is the entry that comes last in
+	the order the argsort would give (value descending, NaN last, ties by
+	ascending index), then written out best first.
+	"""
+
+	n_rows = len(X_indptr) - 1
+
+	neighbors = np.empty((n_rows, k), dtype='int32')
+	sims = np.empty((n_rows, k), dtype='float64')
+
+	for i in prange(n_rows):
+		dot = np.zeros(n_rows, dtype='float64')
+		ydot = np.zeros(n_rows, dtype='float64')
+
+		for p in range(X_indptr[i], X_indptr[i+1]):
+			c = X_cols[p]
+			x_data = X_data[p]
+
+			for q in range(Xt_indptr[c], Xt_indptr[c+1]):
+				dot[Xt_rows[q]] += x_data * Xt_data[q]
+
+			for q in range(Yt_indptr[c], Yt_indptr[c+1]):
+				ydot[Yt_rows[q]] += x_data * Yt_data[q]
+
+		for j in range(n_rows):
+			dot[j] = max(dot[j], ydot[j])
+
+		heap = np.empty(k, dtype=np.int64)
+		for j in range(k):
+			heap[j] = j
+			pos = j
+			while pos > 0:
+				parent = (pos - 1) // 2
+				if _after(heap[pos], heap[parent], dot):
+					tmp = heap[pos]
+					heap[pos] = heap[parent]
+					heap[parent] = tmp
+					pos = parent
+				else:
+					break
+
+		# j is larger than every index in the heap, so it enters exactly when
+		# its value sorts strictly before the root's.
+		for j in range(k, n_rows):
+			if _lt(-dot[j], -dot[heap[0]]):
+				heap[0] = j
+				_sift_down(heap, k, dot)
+
+		for size in range(k, 0, -1):
+			neighbors[i, size-1] = heap[0]
+			sims[i, size-1] = dot[heap[0]]
+			heap[0] = heap[size-1]
+			_sift_down(heap, size-1, dot)
+
+	return sims, neighbors
+
+
+def _sparse_knn(X, Y, k):
+	"""The k nearest rows of X for each row of X by max(X_i.X_j, X_i.Y_j),
+	for two CSR matrices with the same number of rows."""
+
+	if not (X.has_canonical_format and Y.has_canonical_format):
+		return _sparse_mm_dot_merge(X.data, X.indices, X.indptr, Y.data, 
+			Y.indices, Y.indptr, k)
+
+	# Sort X's entries by column, which gives X in CSC form and renumbers
+	# the hashed columns (up to 5**15) to 0..len(cols)-1. A row holds each
+	# column at most once, so the order of the rows inside one column
+	# changes no sum and the sort need not be stable.
+	n = X.shape[0]
+	order = np.argsort(X.indices)
+	sorted_cols = X.indices[order]
+	first = np.empty(X.nnz, dtype=bool)
+	first[:1] = True
+	np.not_equal(sorted_cols[1:], sorted_cols[:-1], out=first[1:])
+	cols = sorted_cols[first]
+	del sorted_cols
+
+	X_cols = np.empty(X.nnz, dtype=np.int64)
+	X_cols[order] = np.cumsum(first) - 1
+	Xt_indptr = np.append(np.flatnonzero(first), X.nnz)
+	del first
+
+	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(X.indptr))
+	Xt_rows = rows[order]
+	Xt_data = X.data[order]
+	del order, rows
+
+	# Y in CSC form over the same columns, without the columns X lacks,
+	# which no row of X visits. -1 is below every column index.
+	order = np.argsort(Y.indices)
+	sorted_cols = Y.indices[order]
+	pos = np.searchsorted(cols, sorted_cols)
+	keep = np.append(cols, -1)[pos] == sorted_cols
+	del sorted_cols
+
+	order = order[keep]
+	Yt_indptr = np.searchsorted(pos[keep], np.arange(len(cols) + 1))
+	del pos, keep
+
+	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(Y.indptr))
+	Yt_rows = rows[order]
+	Yt_data = Y.data[order]
+	del order, rows
+
+	return _sparse_mm_dot(X.data, np.asarray(X.indptr, dtype=np.int64), 
+		X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, Yt_data, k)
+
+
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
 	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
 	alphabet_size=4):
@@ -76,10 +239,11 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 
 	X = sklearn.preprocessing.normalize(X_fwd, norm='l2', axis=1)
 	Y = sklearn.preprocessing.normalize(X_bwd, norm='l2', axis=1)
+	del X_fwd, X_bwd
 
 	n, d = X.shape
 	k = min(n_neighbors+1, n)
-	return _sparse_mm_dot(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr, k)
+	return _sparse_knn(X, Y, k)
 
 
 def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, 
