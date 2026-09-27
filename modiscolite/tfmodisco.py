@@ -16,6 +16,7 @@ from . import core
 from . import util
 from . import cluster
 from . import forked
+from . import precompile
 
 def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 	eps = 0.0000001
@@ -419,6 +420,9 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 	subcluster_perplexity=50, merging_max_seqlets_subsample=1000,
 	final_min_cluster_size=20, min_ic_in_window=0.6, min_ic_windowsize=6,
 	ppm_pseudocount=0.001, verbose=False):
+
+	# Compile the numba kernels in forked children while this runs.
+	precompile.start()
 
 	contrib_scores = np.multiply(one_hot, hypothetical_contribs)
 

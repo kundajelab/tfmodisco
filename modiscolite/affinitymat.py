@@ -17,6 +17,7 @@ from numba import prange
 
 from . import util
 from . import gapped_kmer
+from . import precompile
 
 
 @njit('float64(float64[:], int64[:], int64[:], float64[:], int64[:], int64[:], int64, int64)')
@@ -403,7 +404,8 @@ def _jaccard(X, Y, neighbors, scores):
 				scores[l, i, idx] = min_sum / max_sum
 
 
-@njit('void(float32[:, :, ::1], float32[:, :, ::1], int32[:, ::1], float32[:, ::1], int64[:, ::1], uint8[::1])', parallel=True)
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], int32[:, ::1], float32[:, ::1], int64[:, ::1], uint8[::1])')
+@njit(parallel=True)
 def _jaccard_best(X, Y, neighbors, best, best_idx, flags):
 	"""For each (l, i), the largest score over all offsets and the first
 	offset that reaches it, as `np.argmax` picks it (a NaN wins), without

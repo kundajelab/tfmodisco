@@ -9,6 +9,8 @@ from typing import List
 import numpy as np
 from numba import njit
 
+from . import precompile
+
 
 class MemeDataType(Enum):
 	PFM = "PFM"
@@ -36,7 +38,8 @@ def cpu_sliding_window_sum(arr, window_size):
 	return to_return
 
 
-@njit('float64(float64, float64[:])')
+@precompile.signature('float64(float64, float64[:])')
+@njit
 def binary_search_perplexity(desired_perplexity, distances):
 	EPSILON_DBL = 1e-8
 	PERPLEXITY_TOLERANCE = 1e-5
