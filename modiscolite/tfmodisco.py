@@ -137,8 +137,116 @@ def _patterns_from_clusters(seqlets, track_set, min_overlap,
 	return patterns
 
 
+def _average_ranks(values, mask):
+	"""The 1-based ranks of each row's masked entries among themselves, ties
+	given their average rank, as scipy.stats.rankdata gives them. Entries
+	outside the mask get meaningless ranks."""
+
+	n, k = values.shape
+	positions = np.arange(k)
+
+	# Entries outside the mask become NaN, which sorts after every number,
+	# so each row's masked entries come first and in order. NaN never equals
+	# anything, so it never joins a group of ties.
+	x = np.where(mask, values, np.nan)
+	order = np.argsort(x, axis=1)
+	y = np.take_along_axis(x, order, axis=1)
+
+	starts = np.ones((n, k), dtype=bool)
+	np.not_equal(y[:, 1:], y[:, :-1], out=starts[:, 1:])
+	ends = np.ones((n, k), dtype=bool)
+	ends[:, :-1] = starts[:, 1:]
+
+	first = np.maximum.accumulate(np.where(starts, positions, 0), axis=1)
+	last = np.minimum.accumulate(np.where(ends, positions, k)[:, ::-1],
+		axis=1)[:, ::-1]
+
+	# rankdata's ordinal rank of the first tie plus (count - 1) / 2: both are
+	# exact, so these are the same half-integers.
+	sorted_ranks = (first + 1) + (last - first) / 2
+
+	ranks = np.empty((n, k), dtype='float64')
+	np.put_along_axis(ranks, order, sorted_ranks, axis=1)
+	return ranks
+
+
+def _spearman_rows(fine_affmat_nn, coarse_affmat_nn, mask):
+	"""For every row i, scipy.stats.spearmanr(fine_affmat_nn[i][mask[i]],
+	coarse_affmat_nn[i][mask[i]]).correlation, with the same bits.
+
+	spearmanr ranks both columns and hands the ranks to np.corrcoef. Ranks
+	are half-integers with mean (m+1)/2 over m entries, so the centred
+	ranks, their products and every partial sum of those products are
+	multiples of 0.25 far below 2**53: the three sums corrcoef takes with a
+	BLAS product are exact in any order. What remains is the scaling, done
+	here in corrcoef's order: each sum times 1/(m-1), then divided by the
+	coarse and then by the fine standard deviation, then clipped to [-1, 1].
+	spearmanr returns NaN for fewer than two entries, for a constant input
+	and for an input holding a NaN.
+	"""
+
+	counts = mask.sum(axis=1)
+	ranks_fine = _average_ranks(fine_affmat_nn, mask)
+	ranks_coarse = _average_ranks(coarse_affmat_nn, mask)
+
+	with np.errstate(divide='ignore', invalid='ignore'):
+		mean_fine = np.where(mask, ranks_fine, 0).sum(axis=1) / counts
+		mean_coarse = np.where(mask, ranks_coarse, 0).sum(axis=1) / counts
+
+		centred_fine = np.where(mask, ranks_fine - mean_fine[:, None], 0)
+		centred_coarse = np.where(mask, ranks_coarse - mean_coarse[:, None], 0)
+		del ranks_fine, ranks_coarse
+
+		c_ff = (centred_fine * centred_fine).sum(axis=1)
+		c_cc = (centred_coarse * centred_coarse).sum(axis=1)
+		c_cf = (centred_coarse * centred_fine).sum(axis=1)
+
+		scale = 1 / (counts - 1)
+		std_fine = np.sqrt(c_ff * scale)
+		std_coarse = np.sqrt(c_cc * scale)
+		correlations = ((c_cf * scale) / std_coarse) / std_fine
+		np.clip(correlations, -1, 1, out=correlations)
+
+	# A constant input has every rank tied, so its exact sum of squares is 0.
+	# Masked fine entries are nonzero and so never NaN; coarse ones can be.
+	undefined = ((counts <= 1) | (c_ff == 0) | (c_cc == 0) |
+		np.isnan(np.where(mask, coarse_affmat_nn, 0)).any(axis=1))
+	correlations[undefined] = np.nan
+	return correlations
+
+
 def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn, 
 	fine_affmat_nn, correlation_threshold):
+
+	arrays = (seqlet_neighbors, coarse_affmat_nn, fine_affmat_nn)
+	if (all(isinstance(a, np.ndarray) and a.ndim == 2 for a in arrays) and
+		seqlet_neighbors.shape == fine_affmat_nn.shape == coarse_affmat_nn.shape
+		and np.issubdtype(seqlet_neighbors.dtype, np.integer) and
+		len(seqlets) == len(fine_affmat_nn)):
+
+		n = len(fine_affmat_nn)
+		mask = np.abs(fine_affmat_nn) > 0
+		correlations = _spearman_rows(fine_affmat_nn, coarse_affmat_nn, mask)
+		filtered_rows_mask = correlations > correlation_threshold
+
+		filtered_seqlets = [seqlet for seqlet, retained in zip(seqlets,
+			filtered_rows_mask) if retained == True]
+		if len(filtered_seqlets) == 0:
+			return filtered_seqlets, [], []
+
+		# Each retained row keeps, in order, the neighbours that are
+		# retained rows, renumbered to the retained rows' positions, and
+		# their affinities: int64 and fine_affmat_nn's dtype, as before.
+		new_idx_mapping = np.cumsum(filtered_rows_mask) - 1
+		rows = np.flatnonzero(filtered_rows_mask)
+		neighbors = seqlet_neighbors[rows]
+		in_range = (neighbors >= 0) & (neighbors < n)
+		keep = in_range & filtered_rows_mask[np.where(in_range, neighbors, 0)]
+
+		splits = np.cumsum(keep.sum(axis=1))[:-1]
+		filtered_neighbors = np.split(new_idx_mapping[neighbors[keep]], splits)
+		filtered_affmat_nn = np.split(fine_affmat_nn[rows][keep], splits)
+		return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
 
 	correlations = []
 	for fine_affmat_row, coarse_affmat_row in zip(fine_affmat_nn, coarse_affmat_nn):
