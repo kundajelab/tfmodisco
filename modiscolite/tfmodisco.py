@@ -60,18 +60,35 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 
 	# Elementwise over all stored entries: the same operations, in the same
 	# order, as a loop over entries, and each row's normalizer is numpy's sum
-	# over that row's values, so every value keeps its bits.
+	# over that row's values, so every value keeps its bits. The ufuncs
+	# write into arrays that already exist and each array is dropped after
+	# its last use, so at most four arrays of nnz floats are alive at once
+	# instead of six; writing a ufunc's result in place changes no value.
 	row_idx = np.repeat(np.arange(n), np.diff(indptr))
 	neg_data = -data
 
-	rbf_i = np.exp(neg_data / betas[row_idx])
+	# rbf_i = exp(neg_data / betas[row_idx])
+	rbf_i = betas[row_idx]
+	np.divide(neg_data, rbf_i, out=rbf_i)
+	np.exp(rbf_i, out=rbf_i)
 	normfactors = np.array([rbf_i[indptr[i]:indptr[i+1]].sum() + 1
 		for i in range(n)])
 
 	rbf_i /= normfactors[row_idx]
-	rbf_j = np.exp(neg_data / betas[indices]) / normfactors[indices]
-	data[:] = np.sqrt(rbf_i * rbf_j)
-	del row_idx, neg_data, rbf_i, rbf_j
+	del row_idx
+
+	# rbf_j = exp(neg_data / betas[indices]) / normfactors[indices]
+	rbf_j = betas[indices]
+	np.divide(neg_data, rbf_j, out=rbf_j)
+	del neg_data
+	np.exp(rbf_j, out=rbf_j)
+	rbf_j /= normfactors[indices]
+
+	# data = sqrt(rbf_i * rbf_j)
+	rbf_i *= rbf_j
+	del rbf_j
+	np.sqrt(rbf_i, out=data)
+	del rbf_i
 
 	affmat_diags = scipy.sparse.diags(1.0 / normfactors)
 	affmat_nn += affmat_diags

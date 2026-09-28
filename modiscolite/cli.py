@@ -175,9 +175,15 @@ def motifs(
             f"Window ({window}) cannot be longer than the sequence length ({sequences.shape[1]})."
         )
 
+    # The float32 copies are what the run uses; the arrays as loaded are
+    # dropped here rather than held until the run ends.
+    one_hot = sequences.astype("float32")
+    hypothetical_contribs = attributions.astype("float32")
+    del sequences, attributions
+
     pos_patterns, neg_patterns = modiscolite.tfmodisco.TFMoDISco(
-        one_hot=sequences.astype("float32"),
-        hypothetical_contribs=attributions.astype("float32"),
+        one_hot=one_hot,
+        hypothetical_contribs=hypothetical_contribs,
         max_seqlets_per_metacluster=max_seqlets,
         sliding_window_size=sliding,
         flank_size=seqlet_flank_size,

@@ -178,41 +178,49 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 	return sims, neighbors
 
 
-def _sparse_knn(X, Y, k):
+def _sparse_knn(matrices, k):
 	"""The k nearest rows of X for each row of X by max(X_i.X_j, X_i.Y_j),
-	for two CSR matrices with the same number of rows."""
+	for two CSR matrices with the same number of rows, given as the list
+	[X, Y].
+
+	The list is emptied, and each of X's and Y's arrays is dropped as soon
+	as it is no longer needed: the index arrays once they are sorted, and
+	all of Y once its CSC form is built. A caller that keeps no other
+	reference to X and Y has that memory back before the kernel runs. Y's
+	CSC form is built before X's, so that its temporaries are not alive
+	alongside X's CSC arrays.
+	"""
+
+	X, Y = matrices
+	matrices.clear()
 
 	if not (X.has_canonical_format and Y.has_canonical_format):
 		return _sparse_mm_dot_merge(X.data, X.indices, X.indptr, Y.data, 
 			Y.indices, Y.indptr, k)
 
+	n, nnz = X.shape[0], X.nnz
+	X_data, X_indptr, X_indices = X.data, X.indptr, X.indices
+	Y_data, Y_indptr, Y_indices = Y.data, Y.indptr, Y.indices
+	del X, Y
+
 	# Sort X's entries by column, which gives X in CSC form and renumbers
 	# the hashed columns (up to 5**15) to 0..len(cols)-1. A row holds each
 	# column at most once, so the order of the rows inside one column
 	# changes no sum and the sort need not be stable.
-	n = X.shape[0]
-	order = np.argsort(X.indices)
-	sorted_cols = X.indices[order]
-	first = np.empty(X.nnz, dtype=bool)
+	order_x = np.argsort(X_indices)
+	sorted_cols = X_indices[order_x]
+	del X_indices
+	first = np.empty(nnz, dtype=bool)
 	first[:1] = True
 	np.not_equal(sorted_cols[1:], sorted_cols[:-1], out=first[1:])
 	cols = sorted_cols[first]
 	del sorted_cols
 
-	X_cols = np.empty(X.nnz, dtype=np.int64)
-	X_cols[order] = np.cumsum(first) - 1
-	Xt_indptr = np.append(np.flatnonzero(first), X.nnz)
-	del first
-
-	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(X.indptr))
-	Xt_rows = rows[order]
-	Xt_data = X.data[order]
-	del order, rows
-
 	# Y in CSC form over the same columns, without the columns X lacks,
 	# which no row of X visits. -1 is below every column index.
-	order = np.argsort(Y.indices)
-	sorted_cols = Y.indices[order]
+	order = np.argsort(Y_indices)
+	sorted_cols = Y_indices[order]
+	del Y_indices
 	pos = np.searchsorted(cols, sorted_cols)
 	keep = np.append(cols, -1)[pos] == sorted_cols
 	del sorted_cols
@@ -221,12 +229,26 @@ def _sparse_knn(X, Y, k):
 	Yt_indptr = np.searchsorted(pos[keep], np.arange(len(cols) + 1))
 	del pos, keep
 
-	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(Y.indptr))
+	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(Y_indptr))
 	Yt_rows = rows[order]
-	Yt_data = Y.data[order]
-	del order, rows
+	Yt_data = Y_data[order]
+	del order, rows, Y_data, Y_indptr
 
-	return _sparse_mm_dot(X.data, np.asarray(X.indptr, dtype=np.int64), 
+	# X in CSC form, from the sort above.
+	X_cols = np.empty(nnz, dtype=np.int64)
+	ranks = np.cumsum(first)
+	ranks -= 1
+	X_cols[order_x] = ranks
+	del ranks
+	Xt_indptr = np.append(np.flatnonzero(first), nnz)
+	del first
+
+	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(X_indptr))
+	Xt_rows = rows[order_x]
+	Xt_data = X_data[order_x]
+	del order_x, rows
+
+	return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
 		X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, Yt_data, k)
 
 
@@ -246,7 +268,12 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 
 	n, d = X.shape
 	k = min(n_neighbors+1, n)
-	return _sparse_knn(X, Y, k)
+
+	# _sparse_knn frees X's and Y's arrays as it goes, once nothing here
+	# holds them.
+	matrices = [X, Y]
+	del X, Y
+	return _sparse_knn(matrices, k)
 
 
 def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, 
