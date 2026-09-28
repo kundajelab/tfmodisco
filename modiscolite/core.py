@@ -100,8 +100,9 @@ class SeqletSet():
 	def __init__(self, seqlets):
 		self.seqlets = []
 		self.unique_seqlets = {}
-		self.length = max([len(seqlet) for seqlet in seqlets])  
-		
+		lengths = [len(seqlet) for seqlet in seqlets]
+		self.length = max(lengths)
+
 		self._sequence_sum = np.zeros((self.length, 4), dtype='float')
 		self._contrib_sum = np.zeros((self.length, 4), dtype='float')
 		self._hypothetical_sum = np.zeros((self.length, 4), dtype='float')
@@ -116,10 +117,32 @@ class SeqletSet():
 		self._contrib_scores = None
 		self._hypothetical_contribs = None
 
-		for seqlet in seqlets:
-			if seqlet.string not in self.unique_seqlets: 
-				self._add_seqlet(seqlet=seqlet)
-		
+		if min(lengths) == self.length:
+			# All seqlets are self.length long: keep the first seqlet of
+			# each string, in order, and build the counts and sums in one
+			# batch. This gives the same bits as calling _add_seqlet on each
+			# kept seqlet: numpy reduces along the stacked (outer) axis one
+			# seqlet at a time, starting from `initial`, which is the order
+			# of the running sums.
+			for seqlet in seqlets:
+				key = seqlet.string
+				if key not in self.unique_seqlets:
+					self.unique_seqlets[key] = seqlet
+					self.seqlets.append(seqlet)
+
+			if self.seqlets:
+				self.per_position_counts += len(self.seqlets)
+				for total, track in ((self._sequence_sum, 'sequence'),
+						(self._contrib_sum, 'contrib_scores'),
+						(self._hypothetical_sum, 'hypothetical_contribs')):
+					np.add.reduce(np.array([getattr(seqlet, track) for seqlet
+						in self.seqlets]), axis=0, dtype=np.float64,
+						initial=0.0, out=total)
+		else:
+			for seqlet in seqlets:
+				if seqlet.string not in self.unique_seqlets:
+					self._add_seqlet(seqlet=seqlet)
+
 		self.subclusters = None
 		self.subcluster_to_subpattern = None
 

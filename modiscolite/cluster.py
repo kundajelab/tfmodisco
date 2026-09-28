@@ -3,12 +3,17 @@
 # adapted from code written by Avanti Shrikumar
 
 import sys
+import itertools
 
 import leidenalg
 import numpy as np
 import igraph as ig
 
 from . import forked
+
+
+# Edges handed to igraph per chunk in _graph (about 1.3 MB of Python ints).
+_EDGE_CHUNK = 16384
 
 
 def _leiden(g, weights, seed, n_leiden_iterations):
@@ -92,8 +97,17 @@ def _graph(affinity_mat):
 	else:
 		targets, weights = indices, data
 
-	g = ig.Graph(n=n_vertices, edges=np.column_stack([sources, targets]),
-		directed=False)
+	# python-igraph's abi3 build turns an ndarray edge list into a nested
+	# Python list (memoryview.tolist()), about 140 bytes per edge, before it
+	# reads a single pair. It reads any other iterable one pair at a time, so
+	# pairs taken from a chunk of Python ints at a time give the same edges,
+	# in the same order, while only one chunk's ints exist.
+	edges = itertools.chain.from_iterable(
+		zip(sources[start:start+_EDGE_CHUNK].tolist(),
+			targets[start:start+_EDGE_CHUNK].tolist())
+		for start in range(0, len(sources), _EDGE_CHUNK))
+
+	g = ig.Graph(n=n_vertices, edges=edges, directed=False)
 	return g, weights
 
 
