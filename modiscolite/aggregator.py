@@ -388,6 +388,23 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
 				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
 
+# The least estimated work, in seconds on one thread, that is worth giving
+# a forked worker in SimilarPatternsCollapser: about ten forks and reaps.
+PAIR_MIN_CHILD_SECONDS = 0.1
+
+
+def _pair_seconds(n_i, n_j, length_i):
+	"""Estimated seconds on one thread to compute one (i, j) pair's entries
+	in SimilarPatternsCollapser, for subsamples of n_i and n_j seqlets and
+	pattern i of length length_i: a fixed cost (the alignment, shifting the
+	seqlets), the between-pattern Jaccard (n_i x n_j rows of 8 * length_i
+	values) and sorting the n_i ** 2 within-pattern scores in the AUROC.
+	Fitted to the 600 pairs of the final collapser on a 5,000-seqlet run;
+	used only to balance the pairs across forked workers."""
+
+	return 2.5e-3 + 1.35e-9 * n_i * n_j * 8 * length_i + 6.6e-9 * n_i * n_i
+
+
 def SimilarPatternsCollapser(patterns, track_set,
 	min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
@@ -436,7 +453,76 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 			subsample_patterns.append(pattern)
 
+		def pattern1_data(i):
+			if patterns[i] not in pattern1_cache:
+				pattern1_fwdseqdata, _ =\
+				  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
+
+				flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
+					(len(pattern1_fwdseqdata), -1))
+
+				within_pattern1_sims = affinitymat.jaccard(
+					flat_pattern1_fwdseqdata[:, :, None],
+					flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
+
+				pattern1_cache[patterns[i]] = (flat_pattern1_fwdseqdata,
+					within_pattern1_sims)
+
+			return pattern1_cache[patterns[i]]
+
+		def pair_stats(pair):
+			"""The pairwise_sims and pairwise_aurocs entries of (i, j)."""
+
+			i, j = pair
+
+			#Compute best alignment between pattern pair
+			alnmt, rc, aligner_sim =\
+				_align_patterns(parent_pattern=patterns[i],
+					child_pattern=patterns[j],
+					metric=affinitymat.pearson_correlation,
+					min_overlap=min_overlap,
+					include_hypothetical=False,
+					transformer='magnitude')
+
+			#get realigned pattern2
+			pattern2_coords = subsample_patterns[j].seqlets
+			if rc: #flip strand if needed to align
+				pattern2_coords  = [x.revcomp() for x in pattern2_coords]
+
+			#now apply the alignment
+			pattern2_coords = [x.shift((1 if x.is_revcomp else -1)*alnmt)
+				for x in pattern2_coords]
+
+			# Filter out bad seqlets
+			pattern2_coords = [seqlet for seqlet in pattern2_coords
+				if seqlet.start >= 0 and seqlet.end < track_set.length]
+
+			if len(pattern2_coords) == 0:
+				return 0.0, 0.5
+
+			pattern2_shifted_seqlets = track_set.create_seqlets(
+				seqlets=pattern2_coords)
+
+			flat_pattern1_fwdseqdata, within_pattern1_sims = pattern1_data(i)
+
+			pattern2_fwdseqdata, _ =\
+			  util.get_2d_data_from_patterns(pattern2_shifted_seqlets)
+
+			#Flatten, compute continjacc sim at this alignment
+			flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
+				(len(pattern2_fwdseqdata), -1))
+
+			between_pattern_sims = affinitymat.jaccard(
+				flat_pattern1_fwdseqdata[:, :, None],
+				flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()
+
+			auroc = _roc_auc_score(between_pattern_sims,
+				within_pattern1_sims)
+
+			return aligner_sim, auroc
+
 		n = len(patterns)
+		pairs = []
 		for i in range(n):
 			for j in range(n):
 				#Note: I compute both i,j AND j,i because although
@@ -449,73 +535,31 @@ def SimilarPatternsCollapser(patterns, track_set,
 					continue
 
 				if pairwise_aurocs[i, j] >= 0: #filled in from previous iter
-					continue 
-
-				#Compute best alignment between pattern pair
-				alnmt, rc, aligner_sim =\
-					_align_patterns(parent_pattern=patterns[i], 
-						child_pattern=patterns[j], 
-						metric=affinitymat.pearson_correlation, 
-						min_overlap=min_overlap, 
-						include_hypothetical=False,
-						transformer='magnitude') 
-
-				pairwise_sims[i, j] = aligner_sim
-
-				#get realigned pattern2
-				pattern2_coords = subsample_patterns[j].seqlets
-				if rc: #flip strand if needed to align
-					pattern2_coords  = [x.revcomp() for x in pattern2_coords]
-
-				#now apply the alignment
-				pattern2_coords = [x.shift((1 if x.is_revcomp else -1)*alnmt)
-					for x in pattern2_coords] 
-
-				# Filter out bad seqlets
-				pattern2_coords = [seqlet for seqlet in pattern2_coords 
-					if seqlet.start >= 0 and seqlet.end < track_set.length]
-
-				if len(pattern2_coords) == 0:
-					pairwise_sims[i, j] = 0.0
-					pairwise_aurocs[i, j] = 0.5
 					continue
 
-				pattern2_shifted_seqlets = track_set.create_seqlets(
-					seqlets=pattern2_coords)
+				pairs.append((i, j))
 
-				if patterns[i] not in pattern1_cache:
-					pattern1_fwdseqdata, _ =\
-					  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
+		# Each pair's entries depend only on the two patterns, their
+		# subsamples and the track set, so the pairs are computed in forked
+		# workers (forked.map_tasks) when there is enough work. A worker
+		# sends back each pair's two float64s as raw bytes. Pattern i's
+		# cached data is computed here before forking, so that the workers
+		# share it and it is kept for the next while iteration.
+		stats = forked.map_tasks(pair_stats, pairs,
+			weights=[_pair_seconds(len(subsample_patterns[i].seqlets),
+				len(subsample_patterns[j].seqlets), len(patterns[i]))
+				for i, j in pairs],
+			pack=lambda pair, values: np.array(values,
+				dtype=np.float64).tobytes(),
+			unpack=lambda packed: {pair: tuple(np.frombuffer(values,
+				dtype=np.float64)) for pair, values in packed.items()},
+			before_fork=lambda: [pattern1_data(i) for i in
+				sorted(set(i for i, _ in pairs))],
+			min_child_weight=PAIR_MIN_CHILD_SECONDS)
 
-					flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
-						(len(pattern1_fwdseqdata), -1))
-
-					within_pattern1_sims = affinitymat.jaccard(
-						flat_pattern1_fwdseqdata[:, :, None],
-						flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
-
-					pattern1_cache[patterns[i]] = (flat_pattern1_fwdseqdata,
-						within_pattern1_sims)
-
-				flat_pattern1_fwdseqdata, within_pattern1_sims =\
-					pattern1_cache[patterns[i]]
-
-				pattern2_fwdseqdata, _ =\
-				  util.get_2d_data_from_patterns(pattern2_shifted_seqlets)
-
-				#Flatten, compute continjacc sim at this alignment
-				flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
-					(len(pattern2_fwdseqdata), -1))
-
-				between_pattern_sims = affinitymat.jaccard(
-					flat_pattern1_fwdseqdata[:, :, None], 
-					flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()
-
-				auroc = _roc_auc_score(between_pattern_sims,
-					within_pattern1_sims)
-
-				#The symmetrization over i,j and j,i is done later
-				pairwise_aurocs[i,j] = auroc
+		for i, j in pairs:
+			#The symmetrization over i,j and j,i is done later
+			pairwise_sims[i, j], pairwise_aurocs[i, j] = stats[(i, j)]
 
 
 		#pairwise_sims is not symmetric; differ based on which pattern is

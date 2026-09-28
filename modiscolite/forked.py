@@ -229,6 +229,23 @@ def _plan(weights, n_budget):
 	return bins, loads
 
 
+def _plan_even(weights, n_budget, min_child_weight):
+	"""Group many small tasks into shares of about equal weight, one per
+	process: as many processes as the budget has threads, but no more than
+	there are tasks and no more than one for every `min_child_weight` of
+	total weight (so a single share when the total is below twice that).
+	The tasks are packed longest first (`_lpt`), and bin 0, which the
+	parent runs, takes the heaviest."""
+
+	n = len(weights)
+	order = sorted(range(n), key=lambda j: -weights[j])
+	n_bins = min(n, n_budget, int(sum(weights) // min_child_weight))
+	if n_bins < 2:
+		return [order], [sum(weights)]
+
+	return _lpt(weights, order, n_bins)
+
+
 def _split_budget(loads, n_budget):
 	"""One thread for every bin, and the rest in proportion to the bins'
 	weights, rounded down, with what the rounding leaves over going to bin 0.
@@ -241,7 +258,8 @@ def _split_budget(loads, n_budget):
 	return budgets
 
 
-def map_tasks(func, tasks, weights, pack=None, unpack=None, before_fork=None):
+def map_tasks(func, tasks, weights, pack=None, unpack=None, before_fork=None,
+		min_child_weight=None):
 	"""Return {task: func(task)} for every task, spreading the tasks over
 	forked children when that is worth it and safe.
 
@@ -255,15 +273,20 @@ def map_tasks(func, tasks, weights, pack=None, unpack=None, before_fork=None):
 	this process (for example, to compile a numba kernel once rather than in
 	every child).
 
-	Tasks are grouped by `_plan` from their weights, and the threads by
-	`_split_budget`. When there is one group, or when a child could not run
-	numba's parallel kernels safely (numba_fork_safe), every task runs here,
-	in the order given.
+	Tasks are grouped by `_plan` from their weights, or, when
+	`min_child_weight` is given, by `_plan_even` (many small tasks spread
+	evenly, each process getting at least that much weight), and the
+	threads by `_split_budget`. When there is one group, or when a child
+	could not run numba's parallel kernels safely (numba_fork_safe), every
+	task runs here, in the order given.
 	"""
 
 	tasks = list(tasks)
 	n_budget = budget()
-	bins, loads = _plan(weights, n_budget)
+	if min_child_weight is None:
+		bins, loads = _plan(weights, n_budget)
+	else:
+		bins, loads = _plan_even(weights, n_budget, min_child_weight)
 
 	if len(bins) < 2 or not numba_fork_safe():
 		return {task: func(task) for task in tasks}
