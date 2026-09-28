@@ -7,13 +7,17 @@ import sklearn.manifold
 
 import math
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 import scipy
 from scipy.sparse import coo_matrix
 
+import numba
 from numba import njit
 from numba import prange
+from numba import uint64
 
 from . import util
 from . import gapped_kmer
@@ -135,15 +139,20 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 		dot = np.zeros(n_rows, dtype='float64')
 		ydot = np.zeros(n_rows, dtype='float64')
 
+		# Every index here is non-negative; unsigned casts spare numba's
+		# negative-index fix-up on each access.
 		for p in range(X_indptr[i], X_indptr[i+1]):
-			c = X_cols[p]
+			p = uint64(p)
+			c = uint64(X_cols[p])
 			x_data = X_data[p]
 
-			for q in range(Xt_indptr[c], Xt_indptr[c+1]):
-				dot[Xt_rows[q]] += x_data * Xt_data[q]
+			for q in range(Xt_indptr[c], Xt_indptr[c + uint64(1)]):
+				q = uint64(q)
+				dot[uint64(Xt_rows[q])] += x_data * Xt_data[q]
 
-			for q in range(Yt_indptr[c], Yt_indptr[c+1]):
-				ydot[Yt_rows[q]] += x_data * Yt_data[q]
+			for q in range(Yt_indptr[c], Yt_indptr[c + uint64(1)]):
+				q = uint64(q)
+				ydot[uint64(Yt_rows[q])] += x_data * Yt_data[q]
 
 		for j in range(n_rows):
 			dot[j] = max(dot[j], ydot[j])
@@ -178,17 +187,81 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 	return sims, neighbors
 
 
+def _sort_by_column(holder, n_cols, packed, order):
+	"""Sort the column indices (below n_cols) in the one-element list
+	`holder`, and find the permutation that sorts them, in the caller's
+	arrays: `order` holds 0..len(indices)-1 on entry and the permutation on
+	return, and `packed` the sorted indices. Each index is packed with its
+	position into one int64, index in the high bits, and the packed values
+	are sorted in place, which is several times faster than an argsort;
+	ties come out in position order. The list is emptied once the indices
+	are copied, so that they can be freed. Returns False, having changed
+	nothing, when the two do not fit in 63 bits. Callers must not depend on
+	the order of equal indices."""
+
+	nnz = len(holder[0])
+	shift = max(1, int(nnz).bit_length())
+	if nnz == 0 or max(1, int(n_cols - 1).bit_length()) + shift > 63:
+		return False
+
+	np.copyto(packed, holder.pop())
+	np.left_shift(packed, shift, out=packed)
+	np.bitwise_or(packed, order, out=packed)
+	packed.sort()
+
+	np.bitwise_and(packed, (1 << shift) - 1, out=order)
+	np.right_shift(packed, shift, out=packed)
+	return True
+
+
+def _sorted_by_column(holder, n_cols, pool=None):
+	"""(order, sorted indices) for the column indices in `holder`, by
+	`_sort_by_column`, run in `pool` when one is given (a Future is then
+	returned), or by np.argsort when they cannot be packed."""
+
+	nnz = len(holder[0])
+	packed, order = np.empty(nnz, dtype=np.int64), np.arange(nnz)
+
+	def run():
+		if _sort_by_column(holder, n_cols, packed, order):
+			return order, packed
+
+		indices = holder.pop()
+		order_ = np.argsort(indices)
+		return order_, indices[order_]
+
+	return run() if pool is None else pool.submit(run)
+
+
+def _block_offsets(mask, step):
+	"""The number of True entries of `mask` before each block of `step`
+	entries, and the total, as an array of len(range(0, len(mask), step))
+	+ 1 values."""
+
+	starts = np.arange(0, len(mask), step)
+	offsets = np.zeros(len(starts) + 1, dtype=np.int64)
+	if len(starts):
+		np.cumsum(np.add.reduceat(mask, starts, dtype=np.int64), 
+			out=offsets[1:])
+	return offsets
+
+
 def _sparse_knn(matrices, k):
 	"""The k nearest rows of X for each row of X by max(X_i.X_j, X_i.Y_j),
 	for two CSR matrices with the same number of rows, given as the list
 	[X, Y].
 
 	The list is emptied, and each of X's and Y's arrays is dropped as soon
-	as it is no longer needed: the index arrays once they are sorted, and
-	all of Y once its CSC form is built. A caller that keeps no other
-	reference to X and Y has that memory back before the kernel runs. Y's
-	CSC form is built before X's, so that its temporaries are not alive
-	alongside X's CSC arrays.
+	as it is no longer needed. A caller that keeps no other reference to X
+	and Y has that memory back before the kernel runs.
+
+	The CSC forms are built with numpy calls that release the GIL, run by
+	numba.get_num_threads() threads: Y's column sort beside X's, then
+	searches and gathers over blocks of the sorted entries, each writing
+	its own slice of arrays allocated here (gapped_kmer.BLOCK says why), so
+	every array is the one a single thread would build. Y's CSC form is
+	built before X's, so that Y's sort is freed before X's CSC arrays are
+	made.
 	"""
 
 	X, Y = matrices
@@ -198,69 +271,129 @@ def _sparse_knn(matrices, k):
 		return _sparse_mm_dot_merge(X.data, X.indices, X.indptr, Y.data, 
 			Y.indices, Y.indptr, k)
 
-	n, nnz = X.shape[0], X.nnz
-	X_data, X_indptr, X_indices = X.data, X.indptr, X.indices
-	Y_data, Y_indptr, Y_indices = Y.data, Y.indptr, Y.indices
+	n, nnz, nnz_y, n_cols = X.shape[0], X.nnz, Y.nnz, X.shape[1]
+	X_data, X_indptr, x_indices = X.data, X.indptr, [X.indices]
+	Y_data, Y_indptr, y_indices = Y.data, Y.indptr, [Y.indices]
 	del X, Y
 
-	# Sort X's entries by column, which gives X in CSC form and renumbers
-	# the hashed columns (up to 5**15) to 0..len(cols)-1. A row holds each
-	# column at most once, so the order of the rows inside one column
-	# changes no sum and the sort need not be stable.
-	order_x = np.argsort(X_indices)
-	sorted_cols = X_indices[order_x]
-	del X_indices
-	first = np.empty(nnz, dtype=bool)
-	first[:1] = True
-	np.not_equal(sorted_cols[1:], sorted_cols[:-1], out=first[1:])
-	cols = sorted_cols[first]
-	del sorted_cols
+	step = gapped_kmer.BLOCK
 
-	# Y in CSC form over the same columns, without the columns X lacks,
-	# which no row of X visits. -1 is below every column index.
-	order = np.argsort(Y_indices)
-	sorted_cols = Y_indices[order]
-	del Y_indices
-	pos = np.searchsorted(cols, sorted_cols)
-	keep = np.append(cols, -1)[pos] == sorted_cols
-	del sorted_cols
+	with ThreadPoolExecutor(max(2, numba.get_num_threads())) as pool:
+		def map_blocks(f, size):
+			list(pool.map(f, range(0, size, step)))
 
-	order = order[keep]
-	Yt_indptr = np.searchsorted(pos[keep], np.arange(len(cols) + 1))
-	del pos, keep
+		# Sort X's and Y's entries by column. A row holds each column at
+		# most once, so the order of the rows inside one column changes no
+		# sum and the sorts need not be stable.
+		y_sort = _sorted_by_column(y_indices, n_cols, pool)
+		order_x, sorted_x = _sorted_by_column(x_indices, n_cols)
 
-	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(Y_indptr))
-	Yt_rows = rows[order]
-	Yt_data = Y_data[order]
-	del order, rows, Y_data, Y_indptr
+		# X's distinct columns renumber the hashed columns (up to 5**15) to
+		# 0..len(cols)-1.
+		first = np.empty(nnz, dtype=bool)
+		first[:1] = True
+		np.not_equal(sorted_x[1:], sorted_x[:-1], out=first[1:])
+		cols = sorted_x[first]
+		del sorted_x
 
-	# X in CSC form, from the sort above.
-	X_cols = np.empty(nnz, dtype=np.int64)
-	ranks = np.cumsum(first)
-	ranks -= 1
-	X_cols[order_x] = ranks
-	del ranks
-	Xt_indptr = np.append(np.flatnonzero(first), nnz)
-	del first
+		# Y in CSC form over the same columns, without the columns X lacks,
+		# which no row of X visits: each entry's place among X's columns
+		# and whether it is there, then the kept entries.
+		order_y, sorted_y = y_sort.result()
+		del y_sort
 
-	rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(X_indptr))
-	Xt_rows = rows[order_x]
-	Xt_data = X_data[order_x]
-	del order_x, rows
+		m = len(cols)
+		pos = np.empty(nnz_y, dtype=np.int32 if m < 2**31 else np.int64)
+		keep = np.empty(nnz_y, dtype=bool)
+		# -1 is below every column index.
+		cols_end = np.append(cols, -1)
 
-	return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
-		X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, Yt_data, k)
+		def y_search(lo):
+			hi = min(lo + step, nnz_y)
+			pos[lo:hi] = np.searchsorted(cols, sorted_y[lo:hi])
+			np.equal(cols_end[pos[lo:hi]], sorted_y[lo:hi], out=keep[lo:hi])
+
+		map_blocks(y_search, nnz_y)
+		del sorted_y, cols_end
+
+		y_offsets = _block_offsets(keep, step)
+		n_kept = y_offsets[-1]
+		rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(Y_indptr))
+		Yt_rows = np.empty(n_kept, dtype=np.int32)
+		Yt_data = np.empty(n_kept, dtype=np.float64)
+		Yt_cols = np.empty(n_kept, dtype=pos.dtype)
+
+		def y_gather(lo):
+			hi = min(lo + step, nnz_y)
+			a, z = y_offsets[lo // step], y_offsets[lo // step + 1]
+			order = order_y[lo:hi][keep[lo:hi]]
+			np.take(rows, order, out=Yt_rows[a:z], mode='clip')
+			np.take(Y_data, order, out=Yt_data[a:z], mode='clip')
+			np.compress(keep[lo:hi], pos[lo:hi], out=Yt_cols[a:z])
+
+		map_blocks(y_gather, nnz_y)
+		del order_y, pos, keep, rows, Y_data, Y_indptr
+
+		# Yt_indptr[c] is the number of kept entries whose column is below
+		# c; Yt_cols is sorted.
+		Yt_indptr = np.empty(m + 1, dtype=np.int64)
+		needles = np.arange(m + 1, dtype=Yt_cols.dtype)
+
+		def y_indptr(lo):
+			hi = min(lo + step, m + 1)
+			Yt_indptr[lo:hi] = np.searchsorted(Yt_cols, needles[lo:hi])
+
+		map_blocks(y_indptr, m + 1)
+		del Yt_cols, needles
+
+		# X in CSR form over the new columns (X_cols) and in CSC form. The
+		# new column of the sorted entry q is the number of first entries
+		# up to q, less one.
+		x_offsets = _block_offsets(first, step)
+		Xt_indptr = np.append(np.flatnonzero(first), nnz)
+		rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(X_indptr))
+		X_cols = np.empty(nnz, dtype=np.int64)
+		Xt_rows = np.empty(nnz, dtype=np.int32)
+		Xt_data = np.empty(nnz, dtype=np.float64)
+
+		def x_block(lo):
+			hi = min(lo + step, nnz)
+			order = order_x[lo:hi]
+			ranks = np.cumsum(first[lo:hi], dtype=np.int64)
+			ranks += x_offsets[lo // step] - 1
+			X_cols[order] = ranks
+			np.take(rows, order, out=Xt_rows[lo:hi], mode='clip')
+			np.take(X_data, order, out=Xt_data[lo:hi], mode='clip')
+
+		map_blocks(x_block, nnz)
+		del order_x, first, rows
+
+	# Rows differ widely in cost; small chunks keep every thread busy. Each
+	# row is computed by one thread on its own, so the result does not
+	# depend on the chunk size or the thread count.
+	with numba.parallel_chunksize(4):
+		return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
+			X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, 
+			Yt_data, k)
 
 
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
 	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
 	alphabet_size=4):
 
+	# The inputs of both passes, built for all seqlets at once when that is
+	# exact, else seqlet by seqlet.
+	Xs = gapped_kmer._gkmer_inputs(seqlets, topn, sign)
+	if Xs is None:
+		Xs = (gapped_kmer._gkmer_inputs_loop(seqlets, topn, True, sign), 
+			gapped_kmer._gkmer_inputs_loop(seqlets, topn, False, sign))
+
 	X_fwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, 
-		min_k, max_k, max_gap, max_len, max_entries, True, sign)
+		min_k, max_k, max_gap, max_len, max_entries, True, sign, X=Xs[0])
 
 	X_bwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, 
-			max_len, max_entries, False, sign)
+			max_len, max_entries, False, sign, X=Xs[1])
+	del Xs
 
 	X = sklearn.preprocessing.normalize(X_fwd, norm='l2', axis=1)
 	Y = sklearn.preprocessing.normalize(X_bwd, norm='l2', axis=1)

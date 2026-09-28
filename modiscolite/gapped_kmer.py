@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from numba import njit
 import numba
 
+from . import precompile
+
 _FIBONACCI = np.uint64(11400714819323198485)
 
 
@@ -245,6 +247,9 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 	keys = np.zeros((nx, max_entries), dtype='int64')
 	scores = np.zeros((nx, max_entries), dtype='float64')
 
+	# Give back the threads of compile children that have exited
+	# (precompile lowers this process's thread count while they run).
+	precompile._reap()
 	n_threads = numba.get_num_threads()
 	n_blocks = max(1, min(nx, 16 * n_threads))
 	bounds = [nx * b // n_blocks for b in range(n_blocks + 1)]
@@ -258,8 +263,164 @@ def _extract_gkmers(X, min_k, max_k, max_gap, max_len, max_entries):
 
 	return keys, scores
 
-def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len, 
-	max_entries, take_fwd, sign):
+def _gkmer_inputs(seqlets, topn, sign):
+	"""The arrays `_gkmer_inputs_loop` builds for the forward and for the
+	reverse pass, (X_fwd, X_bwd), built for all seqlets at once. Returns
+	None, and the caller takes the per-seqlet loop, unless the seqlets have
+	one shape, float32 or float64 contributions, finite products and at
+	most one nonzero base per position.
+
+	Those conditions make every value the loop computes come out the same:
+	a position's four products hold at most one nonzero value, so their sum
+	is that value (or +0.0) whatever order numpy adds them in; argmax and
+	the elementwise products do not depend on the layout; and np.argsort
+	along the last axis runs, row by row, the same sort as np.argsort on
+	each row's own copy, so ties at the top-n boundary are broken the same
+	way. Positions are distinct, so sorting the (pos, base, imp) tuples by
+	pos is sorting the positions, and np.array of those tuples is float64.
+	"""
+
+	if len(seqlets) == 0 or topn < 1:
+		return None
+
+	shape = np.shape(seqlets[0].sequence)
+	if len(shape) != 2 or shape[0] < 1:
+		return None
+
+	for seqlet in seqlets:
+		if (np.shape(seqlet.sequence) != shape or
+				np.shape(seqlet.hypothetical_contribs) != shape):
+			return None
+
+	onehot = np.stack([seqlet.sequence for seqlet in seqlets])
+	with np.errstate(all='ignore'):
+		# Non-finite products send the seqlets to the loop below, which
+		# warns about them as it always has.
+		contrib_scores = np.stack([seqlet.hypothetical_contribs for seqlet 
+			in seqlets]) * onehot * sign
+
+	if contrib_scores.dtype not in (np.float32, np.float64):
+		return None
+
+	if not np.isfinite(contrib_scores).all():
+		return None
+
+	if (np.count_nonzero(onehot, axis=-1) > 1).any():
+		return None
+
+	per_pos_imp = np.sum(contrib_scores, axis=-1)
+	del contrib_scores
+
+	Xs = []
+	for take_fwd in (True, False):
+		if take_fwd:
+			imp = per_pos_imp
+			bases = np.argmax(onehot, axis=-1)
+		else:
+			imp = np.ascontiguousarray(per_pos_imp[:, ::-1])
+			bases = np.argmax(onehot[:, ::-1, ::-1], axis=-1)
+
+		topn_pos = np.argsort(-imp, axis=-1)[:, :topn]
+		topn_pos.sort(axis=-1)
+
+		X = np.empty(topn_pos.shape + (3,), dtype=np.float64)
+		X[:, :, 0] = topn_pos
+		X[:, :, 1] = np.take_along_axis(bases, topn_pos, axis=-1)
+		X[:, :, 2] = np.take_along_axis(imp, topn_pos, axis=-1)
+		Xs.append(X)
+
+	return tuple(Xs)
+
+
+# Entries per block of the numpy work split over threads. Each thread other
+# than the main one allocates from its own malloc arena, which keeps what is
+# freed mapped, so the outputs are allocated in the calling thread and the
+# threads' own temporaries are kept to about a megabyte.
+BLOCK = 1 << 17
+
+
+def _gkmer_csr(keys, scores, n_cols):
+	"""The CSR matrix scipy builds from the COO triplets (row, keys[row, e],
+	scores[row, e]) followed by eliminate_zeros, without scipy's per-row
+	sort of (index, value) pairs: each row's keys are sorted as packed
+	(key, slot) integers, and entries whose score is zero (the padding of
+	rows with fewer than max_entries gkmers, and gkmers whose sum is zero)
+	are dropped. Rows are independent: blocks of rows are sorted, then
+	compacted into their place in the output, by numba.get_num_threads()
+	threads (numpy releases the GIL in each step). Returns None, and the
+	caller builds it through scipy, when the keys cannot be packed or a row
+	holds a key twice (scipy would sum the two entries).
+	"""
+
+	n, n_entries = keys.shape
+	slot_bits = max(1, (n_entries - 1).bit_length())
+	if (keys.dtype != np.int64 or n == 0 or n_entries == 0 or
+			(n_cols - 1).bit_length() + slot_bits > 63):
+		return None
+
+	slot_ids = np.arange(n_entries, dtype=np.int64)
+	mask = (1 << slot_bits) - 1
+	packed = np.empty((n, n_entries), dtype=np.int64)
+	values = np.empty((n, n_entries), dtype=np.float64)
+	counts = np.empty(n, dtype=np.int64)
+	in_range = [True]
+
+	step = max(1, BLOCK // n_entries)
+	starts = list(range(0, n, step))
+
+	def sort_rows(lo):
+		hi = min(lo + step, n)
+		block = keys[lo:hi]
+		if block.min() < 0 or block.max() >= n_cols:
+			in_range[0] = False
+			return
+
+		rows = packed[lo:hi]
+		np.left_shift(block, slot_bits, out=rows)
+		np.bitwise_or(rows, slot_ids, out=rows)
+		rows.sort(axis=1)
+
+		slots = rows & mask
+		np.right_shift(rows, slot_bits, out=rows)
+		values[lo:hi] = np.take_along_axis(scores[lo:hi], slots, axis=1)
+		counts[lo:hi] = np.count_nonzero(values[lo:hi], axis=1)
+
+	n_threads = max(1, min(numba.get_num_threads(), len(starts)))
+	with ThreadPoolExecutor(n_threads) as pool:
+		list(pool.map(sort_rows, starts))
+		if not in_range[0]:
+			return None
+
+		indptr = np.zeros(n + 1, dtype=np.int64)
+		np.cumsum(counts, out=indptr[1:])
+
+		if indptr[-1] == packed.size:
+			indices, data = packed.reshape(-1), values.reshape(-1)
+		else:
+			indices = np.empty(indptr[-1], dtype=np.int64)
+			data = np.empty(indptr[-1], dtype=np.float64)
+
+			def compact(lo):
+				hi = min(lo + step, n)
+				keep = values[lo:hi] != 0
+				indices[indptr[lo]:indptr[hi]] = packed[lo:hi][keep]
+				data[indptr[lo]:indptr[hi]] = values[lo:hi][keep]
+
+			list(pool.map(compact, starts))
+			del packed, values
+
+	csr_mat = scipy.sparse.csr_matrix((data, indices, indptr), 
+		shape=(n, n_cols))
+	if not csr_mat.has_canonical_format:
+		return None
+
+	return csr_mat
+
+
+def _gkmer_inputs_loop(seqlets, topn, take_fwd, sign):
+	"""The array `_extract_gkmers` takes for one pass, built seqlet by
+	seqlet: each seqlet's topn positions by contribution, in position
+	order, as (position, base, contribution) rows."""
 
 	Xs = []
 	for seqlet in seqlets:
@@ -281,10 +442,30 @@ def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len,
 		X_ = np.array(X_)
 		Xs.append(X_)
 
-	X = np.array(Xs)
+	return np.array(Xs)
+
+
+def _seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, max_len, 
+	max_entries, take_fwd, sign, X=None):
+	"""A CSR matrix of each seqlet's top max_entries gapped k-mers. X, when
+	given, is the input array for this pass, from `_gkmer_inputs` or
+	`_gkmer_inputs_loop`."""
+
+	if X is None:
+		Xs = _gkmer_inputs(seqlets, topn, sign)
+		if Xs is not None:
+			X = Xs[0] if take_fwd else Xs[1]
+		else:
+			X = _gkmer_inputs_loop(seqlets, topn, take_fwd, sign)
+		del Xs
+
 	keys, scores = _extract_gkmers(X, min_k=min_k, max_k=max_k, 
 		max_gap=max_gap, max_len=max_len, max_entries=max_entries)
-	
+
+	csr_mat = _gkmer_csr(keys, scores, 5**max_len)
+	if csr_mat is not None:
+		return csr_mat
+
 	row_idxs = np.repeat(range(keys.shape[0]), keys.shape[1])
 	csr_mat = scipy.sparse.csr_matrix((scores.flatten(), 
 		(row_idxs, keys.flatten())), shape=(len(keys), 5**max_len))
