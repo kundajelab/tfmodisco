@@ -283,8 +283,7 @@ def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None,
 def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil, 
 	return_sparse=False):
 
-	if seqlet_neighbors is None:
-		seqlet_neighbors = np.tile(np.arange(X.shape[0]), (Y.shape[0], 1))
+	all_neighbors = seqlet_neighbors is None
 
 	if min_overlap is not None:
 		n_pad = int(func(X.shape[1]*(1-min_overlap)))
@@ -297,6 +296,31 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	X = np.ascontiguousarray(X, dtype='float32')
 	Y = np.ascontiguousarray(Y, dtype='float32')
+
+	size = X.shape[1] * X.shape[2]
+	if all_neighbors and len_output == 1 and X.shape[2] == Y.shape[2] and size > 0:
+		# Every row of Y against every row of X at the one offset, as
+		# SimilarPatternsCollapser calls it: the scores `_jaccard_best`
+		# would give with neighbours 0..nx-1, from a kernel whose loop over
+		# the neighbours vectorizes. A row flattens to its positions and
+		# channels in (j, k) order, the order each score is summed in.
+		# Empty rows, and inputs holding a NaN or an infinity (the kernel
+		# returns 0), stay on the path below.
+		n, k = Y.shape[0], X.shape[0]
+		best = np.empty((n, k), dtype='float32')
+		if _jaccard_all(X.reshape(k, size), Y.reshape(n, size), best):
+			if return_sparse != True:
+				results = np.zeros((n, k, 2))
+				results[:, :, 0] = best
+				results[:, :, 1] = -n_pad
+				return results
+
+			# As below: a NaN or -0.0 score sends the call to numpy's max.
+			if not (np.isnan(best) | ((best == 0) & np.signbit(best))).any():
+				return best
+
+	if all_neighbors:
+		seqlet_neighbors = np.tile(np.arange(X.shape[0]), (Y.shape[0], 1))
 
 	seqlet_neighbors = np.ascontiguousarray(seqlet_neighbors.astype('int32'))
 	n, k = Y.shape[0], seqlet_neighbors.shape[1]
@@ -523,6 +547,74 @@ def _jaccard_best(X, Y, neighbors, best, best_idx, flags):
 
 		flags[l] = flag
 
+
+@precompile.signature('uint8(float32[:, ::1], float32[:, ::1], float32[:, ::1])')
+@njit(parallel=True)
+def _jaccard_all(X, Y, best):
+	"""best[l, i]: the score of row l of Y against row i of X, for every
+	row of X, at the one offset, with each row flattened to its positions
+	and channels in (j, k) order. Bit-identical to `_jaccard_best`'s
+	single-offset branch with neighbours 0..nx-1: each score's float64 sums
+	take the same terms in the same order, followed by the same division and
+	float32 rounding. The neighbours are innermost, one pair of sums each,
+	so that loop vectorizes; each score is written by one thread.
+
+	Returns 0, leaving best unfinished, when X or Y holds a NaN or an
+	infinity. Only a NaN's payload and sign could then differ from
+	`_jaccard_best`'s (which operand's NaN an operation returns depends on
+	the generated code); with finite values the only NaN is 0/0's."""
+
+	nx, D = X.shape
+	ny = Y.shape[0]
+
+	# X transposed, so that one position's values across the neighbours are
+	# contiguous, and padded with zeros to a multiple of 16 neighbours so
+	# that the vector loop has no scalar remainder. The padding's scores are
+	# computed and never read. (np.empty and a loop: np.zeros of a 2-D
+	# array costs about 0.25 s more to compile.)
+	n_pad = (nx + 15) // 16 * 16
+	X_t = np.empty((D, n_pad), dtype=np.float32)
+	finite = True
+	for j in range(D):
+		for i in range(nx):
+			v = X[i, j]
+			if not math.isfinite(v):
+				finite = False
+			X_t[j, i] = v
+		for i in range(nx, n_pad):
+			X_t[j, i] = 0.0
+
+	if not finite:
+		return 0
+
+	finite_rows = np.empty(ny, dtype=np.uint8)
+	for l in prange(ny):
+		min_sums = np.zeros(n_pad, dtype=np.float64)
+		max_sums = np.zeros(n_pad, dtype=np.float64)
+		row_finite = 1
+
+		for j in range(D):
+			if not math.isfinite(Y[l, j]):
+				row_finite = 0
+			y = abs(Y[l, j])
+			sign_y = np.sign(Y[l, j])
+
+			for i in range(n_pad):
+				v = X_t[j, i]
+				x = abs(v)
+				sign = np.sign(v) * sign_y
+				gt = y > x
+				min_sums[i] += (x if gt else y) * sign
+				max_sums[i] += y if gt else x
+
+		for i in range(nx):
+			best[l, i] = np.float32(min_sums[i] / max_sums[i])
+		finite_rows[l] = row_finite
+
+	for l in range(ny):
+		if finite_rows[l] == 0:
+			return 0
+	return 1
 
 
 def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):

@@ -7,9 +7,11 @@ numba's on-disk cache, while this process gets on with the run.
 A fresh process compiles every kernel on its first call, one after another,
 and waits for each. `start()`, called once at the start of a run, forks
 children that compile the kernels the run will need, with the argument types
-it will pass, and write them to the cache. When this process reaches a kernel
-for the first time, it waits for the child compiling it and then loads the
-compiled code from the cache, which takes a few milliseconds.
+it will pass, and write them to the cache. A child reports each kernel over a
+pipe as soon as it is in the cache. When this process reaches a kernel for
+the first time, it waits for that report, not for the child's other kernels,
+and then loads the compiled code from the cache, which takes a few
+milliseconds.
 
 Nothing depends on a child succeeding. The first call compiles the kernel in
 the ordinary way, and a child's work only turns that compile into a cache
@@ -35,6 +37,7 @@ import os
 import sys
 import time
 import atexit
+import select
 import signal
 import warnings
 import threading
@@ -47,8 +50,9 @@ from numba.core.compiler_lock import global_compiler_lock
 from . import forked
 
 
-# A child that has not finished this many seconds after it was forked is
-# killed, and the kernel is compiled here instead.
+# A child that has not reported a kernel this process waits for, this many
+# seconds after it was forked, is killed, and the kernel is compiled here
+# instead.
 TIMEOUT = 120.0
 
 # Kernels compiled on first call for one signature only (`signature`), and
@@ -78,9 +82,17 @@ def signature(sig):
 
 
 def _kernels():
-	"""The kernels a run of `TFMoDISco` calls, in the order it first calls
-	them, each with the signature its first call compiles: the one it was
-	declared with, or the argument types the pipeline passes it."""
+	"""The kernels a run of `TFMoDISco` calls, each with the signature its
+	first call compiles: the one it was declared with, or the argument types
+	the pipeline passes it.
+
+	Kernels are grouped: one child compiles the kernels of a group, one
+	after another, in the order listed, and reports each as it lands, so a
+	first call never waits for a kernel queued behind its own. Groups are
+	listed in the order the run first calls their first kernel. Every child
+	holds about 100 MB while it compiles, so a kernel first called long
+	after the others shares a child rather than add one to the start of the
+	run."""
 
 	from . import affinitymat, gapped_kmer, util
 
@@ -88,22 +100,32 @@ def _kernels():
 	i8 = types.int64
 
 	return [
-		(gapped_kmer._gkmer_rows, (A(types.float64, 3, 'C'), i8, i8, i8, i8,
+		# _jaccard_all is first called in aggregator._detect_spurious_merging,
+		# just after pairwise_jaccard's first call. Queued behind _gkmer_rows,
+		# it compiles alongside pairwise_jaccard rather than after it, which
+		# a small input, reaching both calls early, would wait for.
+		[(gapped_kmer._gkmer_rows, (A(types.float64, 3, 'C'), i8, i8, i8, i8,
 			i8, i8, A(types.int64, 2, 'C'), A(types.float64, 2, 'C'))),
-		(affinitymat._sparse_mm_dot, (A(types.float64, 1, 'C'),
+			(affinitymat._jaccard_all, None)],
+		[(affinitymat._sparse_mm_dot, (A(types.float64, 1, 'C'),
 			A(types.int64, 1, 'C'), A(types.int64, 1, 'C'),
 			A(types.int64, 1, 'C'), A(types.int32, 1, 'C'),
 			A(types.float64, 1, 'C'), A(types.int64, 1, 'C'),
-			A(types.int32, 1, 'C'), A(types.float64, 1, 'C'), i8)),
-		(affinitymat._jaccard_best, None),
-		(util.binary_search_perplexity, None),
-		(affinitymat.pairwise_jaccard, (A(types.float32, 2, 'C'), i8)),
+			A(types.int32, 1, 'C'), A(types.float64, 1, 'C'), i8))],
+		[(affinitymat._jaccard_best, None)],
+		[(util.binary_search_perplexity, None)],
+		# First called in aggregator._detect_spurious_merging, after both
+		# main clusterings.
+		[(affinitymat.pairwise_jaccard, (A(types.float32, 2, 'C'), i8))],
 	]
 
 
 class _Child:
-	def __init__(self, pid):
+	def __init__(self, pid, fd, kernels):
 		self.pid = pid
+		self.fd = fd
+		self.kernels = kernels
+		self.landed = 0
 		self.forked = time.monotonic()
 		self.finished = False
 
@@ -138,7 +160,7 @@ def _first_compile(dispatcher):
 	with global_compiler_lock:
 		child = _jobs.get(dispatcher)
 		if child is not None:
-			_wait(child)
+			_wait(child, dispatcher)
 
 		sig = _signatures.get(dispatcher)
 		if sig is not None and dispatcher._can_compile:
@@ -148,34 +170,57 @@ def _first_compile(dispatcher):
 	return sig
 
 
-def _wait(child):
-	"""Wait until the child has exited (killing it once TIMEOUT has passed
-	since it was forked), then reap any other child that has exited and
-	give their threads back."""
+def _wait(child, dispatcher):
+	"""Wait until the child has reported the dispatcher's kernel in the
+	cache, or has exited (killing it once TIMEOUT has passed since it was
+	forked), then reap any child that has exited and give their threads
+	back. For the last kernel of its share, wait for the child to exit,
+	which follows at once, so that a child is reaped by the first call of
+	its last kernel."""
 
 	if not child.finished:
 		if os.getpid() != _owner:
-			# A forked worker inherited this record; the child is not its own.
+			# A forked worker inherited this record; the child is not its own,
+			# and its reports are this process's parent's to read.
 			child.finished = True
 		else:
-			while True:
-				try:
-					pid, _ = os.waitpid(child.pid, os.WNOHANG)
-				except ChildProcessError:
-					pid = child.pid
+			n = child.kernels.index(dispatcher) + 1
+			if n == len(child.kernels):
+				n = n + 1
 
-				if pid != 0:
-					break
-
-				if time.monotonic() - child.forked > TIMEOUT:
+			poll = select.poll()
+			poll.register(child.fd, select.POLLIN)
+			while not child.finished and child.landed < n:
+				timeout = child.forked + TIMEOUT - time.monotonic()
+				if timeout <= 0:
 					_kill(child)
-					break
-
-				time.sleep(0.001)
-
-			child.finished = True
+				elif poll.poll(1000 * timeout + 1):
+					_read(child)
 
 	_reap()
+
+
+def _read(child):
+	"""Count the kernels the child has reported since the last read. At the
+	end of the pipe the child is exiting (its end closes as it exits, just
+	before it can be reaped): reap it."""
+
+	data = os.read(child.fd, 64)
+	child.landed += len(data)
+	if not data:
+		try:
+			os.waitpid(child.pid, 0)
+		except ChildProcessError:
+			pass
+
+		_finish(child)
+
+
+def _finish(child):
+	child.finished = True
+	if child.fd is not None:
+		os.close(child.fd)
+		child.fd = None
 
 
 def _reap():
@@ -193,7 +238,8 @@ def _reap():
 				pid, _ = os.waitpid(child.pid, os.WNOHANG)
 			except ChildProcessError:
 				pid = child.pid
-			child.finished = pid != 0
+			if pid != 0:
+				_finish(child)
 
 	# The thread count is per thread and belongs to the main thread; leave it
 	# alone if anything else has changed it since.
@@ -213,7 +259,7 @@ def _kill(child):
 	except OSError:
 		pass
 
-	child.finished = True
+	_finish(child)
 
 
 def _stop():
@@ -264,35 +310,46 @@ def start():
 
 	n_budget = forked.budget()
 	todo = []
-	for dispatcher, sig in _kernels():
-		if not isinstance(dispatcher, Dispatcher):
-			continue
+	for group in _kernels():
+		jobs = []
+		for dispatcher, sig in group:
+			if not isinstance(dispatcher, Dispatcher):
+				continue
 
-		if sig is None:
-			sig = _signatures.get(dispatcher)
-		if sig is None or len(dispatcher.overloads) > 0:
-			continue
+			if sig is None:
+				sig = _signatures.get(dispatcher)
+			if sig is None or len(dispatcher.overloads) > 0:
+				continue
 
-		try:
-			dispatcher.enable_caching()
-		except Exception:
-			# No writable cache location: compile in this process.
-			continue
+			try:
+				dispatcher.enable_caching()
+			except Exception:
+				# No writable cache location: compile in this process.
+				continue
 
-		todo.append((dispatcher, sig))
+			jobs.append((dispatcher, sig))
+
+		if jobs:
+			todo.append(jobs)
 
 	n_children = min(len(todo), n_budget - 1)
 	if n_children < 1:
 		return
 
-	# Kernels are dealt out in the order they are first called, so each
+	# Groups are dealt out in the order they are first called, so each
 	# child compiles the kernel needed soonest first.
-	shares = [todo[k::n_children] for k in range(n_children)]
+	shares = [[job for jobs in todo[k::n_children] for job in jobs]
+		for k in range(n_children)]
 
 	_owner = os.getpid()
 	atexit.register(_stop)
 
 	for share in shares:
+		try:
+			read_fd, write_fd = os.pipe()
+		except OSError:
+			break
+
 		try:
 			with warnings.catch_warnings():
 				# Python >= 3.12 warns when a process with native threads
@@ -300,18 +357,26 @@ def start():
 				warnings.simplefilter('ignore', DeprecationWarning)
 				pid = os.fork()
 		except OSError:
+			os.close(read_fd)
+			os.close(write_fd)
 			continue
 
 		if pid == 0:
 			code = 1
 			try:
+				os.close(read_fd)
 				for dispatcher, sig in share:
+					# compile() has written the cache files when it returns,
+					# each through a temporary file and a rename, so a
+					# reported kernel is complete on disk.
 					dispatcher.compile(sig)
+					os.write(write_fd, b'.')
 				code = 0
 			finally:
 				os._exit(code)
 
-		child = _Child(pid)
+		os.close(write_fd)
+		child = _Child(pid, read_fd, [dispatcher for dispatcher, sig in share])
 		_children.append(child)
 		for dispatcher, sig in share:
 			_jobs[dispatcher] = child
