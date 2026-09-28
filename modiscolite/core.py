@@ -106,11 +106,15 @@ class SeqletSet():
 		self._contrib_sum = np.zeros((self.length, 4), dtype='float')
 		self._hypothetical_sum = np.zeros((self.length, 4), dtype='float')
 
-		self.sequence = np.zeros((self.length, 4), dtype='float')
-		self.contrib_scores = np.zeros((self.length, 4), dtype='float')
-		self.hypothetical_contribs = np.zeros((self.length, 4), dtype='float')
-
 		self.per_position_counts = np.zeros((self.length,))
+
+		# The averages `sequence`, `contrib_scores` and
+		# `hypothetical_contribs` are computed from the sums when read, and
+		# kept until the next _add_seqlet. None means not yet computed.
+		self._ppc = None
+		self._sequence = None
+		self._contrib_scores = None
+		self._hypothetical_contribs = None
 
 		for seqlet in seqlets:
 			if seqlet.string not in self.unique_seqlets: 
@@ -223,18 +227,60 @@ class SeqletSet():
 
 		self.seqlets.append(seqlet)
 		self.unique_seqlets[seqlet.string] = seqlet
-		self.per_position_counts[:n] += 1.0 
-
-		ppc = self.per_position_counts[:, None]
-		ppc = ppc + 1E-7 * (ppc == 0)
+		self.per_position_counts[:n] += 1.0
 
 		self._sequence_sum[:n] += seqlet.sequence
 		self._contrib_sum[:n] += seqlet.contrib_scores
 		self._hypothetical_sum[:n] += seqlet.hypothetical_contribs
 
-		self.sequence = self._sequence_sum / ppc
-		self.contrib_scores = self._contrib_sum / ppc
-		self.hypothetical_contribs = self._hypothetical_sum / ppc
+		# Recomputed from the new sums and counts when next read.
+		self._ppc = None
+		self._sequence = None
+		self._contrib_scores = None
+		self._hypothetical_contribs = None
+
+	def _counts(self):
+		"""The per-position counts as the divisor of the averages: a column,
+		with zero counts replaced by 1E-7."""
+
+		if self._ppc is None:
+			ppc = self.per_position_counts[:, None]
+			self._ppc = ppc + 1E-7 * (ppc == 0)
+		return self._ppc
+
+	# Each average is a new array, made when it is first read after a
+	# change, so an array read earlier keeps the values it had. Assigning
+	# one stores the value until the next _add_seqlet.
+	@property
+	def sequence(self):
+		if self._sequence is None:
+			self._sequence = self._sequence_sum / self._counts()
+		return self._sequence
+
+	@sequence.setter
+	def sequence(self, value):
+		self._sequence = value
+
+	@property
+	def contrib_scores(self):
+		if self._contrib_scores is None:
+			self._contrib_scores = self._contrib_sum / self._counts()
+		return self._contrib_scores
+
+	@contrib_scores.setter
+	def contrib_scores(self, value):
+		self._contrib_scores = value
+
+	@property
+	def hypothetical_contribs(self):
+		if self._hypothetical_contribs is None:
+			self._hypothetical_contribs = (self._hypothetical_sum /
+				self._counts())
+		return self._hypothetical_contribs
+
+	@hypothetical_contribs.setter
+	def hypothetical_contribs(self, value):
+		self._hypothetical_contribs = value
 
 	def __len__(self):
 		return self.length
