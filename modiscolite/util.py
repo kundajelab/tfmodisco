@@ -74,8 +74,284 @@ def binary_search_perplexity(desired_perplexity, distances):
 				beta /= 2.0
 			else:
 				beta = (beta + beta_min) / 2.0
-	
+
 	return beta
+
+
+# The kernels below build the density-adapted affinity matrix of
+# tfmodisco._density_adaptation. Each one keeps every value's bits: they move
+# values and apply the IEEE operations scipy's and numpy's code applied, in
+# the same order. The exponentials and logarithms stay in numpy (numba's
+# np.exp differs from numpy's in the last bit for some arguments), except
+# those inside binary_search_perplexity, which was already compiled.
+
+@precompile.signature('int64(int64[::1], int64[::1], float64[::1], int64, '
+	'int64[::1], int32[::1], float64[::1])')
+@njit(nogil=True)
+def _transpose_triples(offsets, cols, values, n, t_indptr, t_indices, t_data):
+	"""The transpose, as a CSR matrix with sorted indices and no stored
+	zeros, of the n x n matrix whose row r holds values[e] in column cols[e]
+	for e in offsets[r]:offsets[r+1].
+
+	Returns 0, or 1 when a column lies outside [0, n), or 2 when a row holds
+	one column twice (scipy would sum those entries), or 3 when a value is
+	NaN. The outputs are then undefined. Zeros are dropped only after the
+	duplicate check, which looks at every entry. t_indptr has n+1 entries,
+	t_indices and t_data len(cols).
+
+	Which of two NaNs an addition returns depends on the order in which the
+	compiler put its operands, so NaNs of both signs in one sum could come
+	out with another sign bit than scipy's and numpy's. Without a NaN here,
+	none arises later: every value stays finite."""
+
+	nnz = cols.shape[0]
+	for e in range(nnz):
+		if cols[e] < 0 or cols[e] >= n:
+			return 1
+		if values[e] != values[e]:
+			return 3
+
+	for c in range(n + 1):
+		t_indptr[c] = 0
+	for e in range(nnz):
+		t_indptr[cols[e] + 1] += 1
+	for c in range(n):
+		t_indptr[c + 1] += t_indptr[c]
+
+	# A stable counting sort by column: each column's rows come out in
+	# increasing order.
+	fill = t_indptr[:n].copy()
+	for r in range(n):
+		for e in range(offsets[r], offsets[r + 1]):
+			c = cols[e]
+			p = fill[c]
+			t_indices[p] = r
+			t_data[p] = values[e]
+			fill[c] = p + 1
+
+	for c in range(n):
+		for p in range(t_indptr[c] + 1, t_indptr[c + 1]):
+			if t_indices[p] == t_indices[p - 1]:
+				return 2
+
+	# Drop the zeros (scipy's eliminate_zeros), keeping the order.
+	w = 0
+	for c in range(n):
+		start, end = t_indptr[c], t_indptr[c + 1]
+		t_indptr[c] = w
+		for p in range(start, end):
+			if t_data[p] != 0:
+				t_indices[w] = t_indices[p]
+				t_data[w] = t_data[p]
+				w += 1
+	t_indptr[n] = w
+	return 0
+
+
+@precompile.signature('void(int64[::1], int32[::1], float64[::1], '
+	'int64[::1], int32[::1], float64[::1])')
+@njit(nogil=True)
+def _transpose(indptr, indices, data, t_indptr, t_indices, t_data):
+	"""The transpose of a square CSR matrix, with sorted indices (a stable
+	counting sort by column, as scipy's csr_tocsc)."""
+
+	n = indptr.shape[0] - 1
+	for c in range(n + 1):
+		t_indptr[c] = 0
+	for p in range(indptr[n]):
+		t_indptr[indices[p] + 1] += 1
+	for c in range(n):
+		t_indptr[c + 1] += t_indptr[c]
+
+	fill = t_indptr[:n].copy()
+	for r in range(n):
+		for p in range(indptr[r], indptr[r + 1]):
+			c = indices[p]
+			q = fill[c]
+			t_indices[q] = r
+			t_data[q] = data[p]
+			fill[c] = q + 1
+
+
+@precompile.signature('int64(int64[::1], int32[::1], float64[::1], '
+	'int64[::1], int32[::1], float64[::1], int64[::1], int32[::1], '
+	'float64[::1])')
+@njit(nogil=True)
+def _symmetrize(a_indptr, a_indices, a_data, b_indptr, b_indices, b_data,
+	s_indptr, s_indices, s_data):
+	"""(A + B) / (C + C_B), where B is A's transpose and C and C_B hold a
+	1.0 wherever A and B store an entry: the value of
+	`A += A.T; C += C.T; A.data /= C.data` in scipy, for A and B with sorted
+	indices. scipy's csr_binop_csr_canonical merges the two rows, computing
+	a + b where both store an entry, a + 0 or 0 + b where one does, and the
+	counts the same way; this does the same additions and the one division.
+	scipy drops sums that are zero; A's entries are positive or NaN, so no
+	sum is. Returns the number of entries written."""
+
+	n = a_indptr.shape[0] - 1
+	w = 0
+	s_indptr[0] = 0
+	for i in range(n):
+		p, p_end = a_indptr[i], a_indptr[i + 1]
+		q, q_end = b_indptr[i], b_indptr[i + 1]
+		while p < p_end and q < q_end:
+			ja, jb = a_indices[p], b_indices[q]
+			if ja == jb:
+				s_indices[w] = ja
+				s_data[w] = (a_data[p] + b_data[q]) / (1.0 + 1.0)
+				p += 1
+				q += 1
+			elif ja < jb:
+				s_indices[w] = ja
+				s_data[w] = (a_data[p] + 0.0) / (1.0 + 0.0)
+				p += 1
+			else:
+				s_indices[w] = jb
+				s_data[w] = (0.0 + b_data[q]) / (0.0 + 1.0)
+				q += 1
+			w += 1
+
+		while p < p_end:
+			s_indices[w] = a_indices[p]
+			s_data[w] = (a_data[p] + 0.0) / (1.0 + 0.0)
+			p += 1
+			w += 1
+
+		while q < q_end:
+			s_indices[w] = b_indices[q]
+			s_data[w] = (0.0 + b_data[q]) / (0.0 + 1.0)
+			q += 1
+			w += 1
+
+		s_indptr[i + 1] = w
+	return w
+
+
+@precompile.signature('void(float64, float64[:], int64[::1], int64, int64, '
+	'float64[::1])')
+@njit(nogil=True)
+def _perplexity_betas(desired_perplexity, data, indptr, start, stop, betas):
+	"""betas[i] = binary_search_perplexity(desired_perplexity, row i of the
+	CSR matrix's data) for rows start to stop. The rows are passed with the
+	layout binary_search_perplexity was declared with, so this runs its
+	code. It releases the GIL, so threads can share the rows."""
+
+	for i in range(start, stop):
+		betas[i] = binary_search_perplexity(desired_perplexity,
+			data[indptr[i]:indptr[i + 1]])
+
+
+@njit(nogil=True)
+def _pairwise_sum(a, lo, n):
+	"""numpy's pairwise summation of a[lo:lo+n] (pairwise_sum in numpy's
+	loops_utils.h.src): below 8 values a plain loop, up to 128 values eight
+	accumulators combined as ((r0+r1)+(r2+r3))+((r4+r5)+(r6+r7)) and then
+	the remainder, and above that two halves, the first a multiple of 8."""
+
+	if n < 8:
+		res = -0.0
+		for i in range(n):
+			res += a[lo + i]
+		return res
+	elif n <= 128:
+		r0 = a[lo]
+		r1 = a[lo + 1]
+		r2 = a[lo + 2]
+		r3 = a[lo + 3]
+		r4 = a[lo + 4]
+		r5 = a[lo + 5]
+		r6 = a[lo + 6]
+		r7 = a[lo + 7]
+		m = n - n % 8
+		i = 8
+		while i < m:
+			r0 += a[lo + i]
+			r1 += a[lo + i + 1]
+			r2 += a[lo + i + 2]
+			r3 += a[lo + i + 3]
+			r4 += a[lo + i + 4]
+			r5 += a[lo + i + 5]
+			r6 += a[lo + i + 6]
+			r7 += a[lo + i + 7]
+			i += 8
+		res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
+		while i < n:
+			res += a[lo + i]
+			i += 1
+		return res
+	else:
+		n2 = n // 2
+		n2 -= n2 % 8
+		return _pairwise_sum(a, lo, n2) + _pairwise_sum(a, lo + n2, n - n2)
+
+
+@precompile.signature('void(float64[::1], int64[::1], float64[::1])')
+@njit(nogil=True)
+def _row_sums_plus_one(values, indptr, out):
+	"""out[i] = values[indptr[i]:indptr[i+1]].sum() + 1, with numpy's order
+	of additions: its reduction starts from 0 and adds the pairwise sum of
+	each 8,192-value block of the row in turn."""
+
+	for i in range(out.shape[0]):
+		lo = indptr[i]
+		n = indptr[i + 1] - lo
+		s = 0.0
+		for b in range(0, n, 8192):
+			s += _pairwise_sum(values, lo + b, min(8192, n - b))
+		out[i] = s + 1
+
+
+@precompile.signature('int64(int64[::1], int32[::1], float64[::1], '
+	'float64[::1], int32[::1], int32[::1], float64[::1])')
+@njit(nogil=True)
+def _add_diagonal(indptr, indices, data, diag, out_indptr, out_indices,
+	out_data):
+	"""A + D for a CSR matrix A with sorted indices and D the diagonal
+	matrix of diag, as scipy's `A + scipy.sparse.diags(diag)`: D stores
+	only diag's nonzero values, and csr_binop_csr_canonical merges each row,
+	computing a + d where both store an entry, a + 0 or 0 + d where one
+	does, and drops the sums that are zero. Returns the number of entries
+	written; out_indices and out_data need room for A's entries plus n."""
+
+	n = indptr.shape[0] - 1
+	w = 0
+	out_indptr[0] = 0
+	for i in range(n):
+		d = diag[i]
+		pending = d != 0
+		for p in range(indptr[i], indptr[i + 1]):
+			j = indices[p]
+			if pending and j >= i:
+				pending = False
+				if j == i:
+					x = data[p] + d
+					if x != 0:
+						out_indices[w] = j
+						out_data[w] = x
+						w += 1
+					continue
+
+				x = 0.0 + d
+				if x != 0:
+					out_indices[w] = i
+					out_data[w] = x
+					w += 1
+
+			x = data[p] + 0.0
+			if x != 0:
+				out_indices[w] = j
+				out_data[w] = x
+				w += 1
+
+		if pending:
+			x = 0.0 + d
+			if x != 0:
+				out_indices[w] = i
+				out_data[w] = x
+				w += 1
+
+		out_indptr[i + 1] = w
+	return w
 
 
 def compute_per_position_ic(ppm, background, pseudocount):

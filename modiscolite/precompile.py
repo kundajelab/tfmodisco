@@ -113,7 +113,11 @@ def _kernels():
 			A(types.float64, 1, 'C'), A(types.int64, 1, 'C'),
 			A(types.int32, 1, 'C'), A(types.float64, 1, 'C'), i8))],
 		[(affinitymat._jaccard_best, None)],
-		[(util.binary_search_perplexity, None)],
+		# tfmodisco._density_adaptation's kernels, in the order it calls them.
+		# binary_search_perplexity is compiled into _perplexity_betas.
+		[(util._transpose_triples, None), (util._transpose, None),
+			(util._symmetrize, None), (util._perplexity_betas, None),
+			(util._row_sums_plus_one, None), (util._add_diagonal, None)],
 		# First called in aggregator._detect_spurious_merging, after both
 		# main clusterings.
 		[(affinitymat.pairwise_jaccard, (A(types.float32, 2, 'C'), i8))],

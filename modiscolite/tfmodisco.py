@@ -2,12 +2,14 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+import numba
 import numpy as np
 
 import scipy
 import scipy.sparse
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from . import affinitymat
 from . import aggregator
@@ -19,17 +21,17 @@ from . import forked
 from . import precompile
 
 def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
-	eps = 0.0000001
 	n = len(affmat_nn)
 
 	# The (row, col, value) triples in row order and, within a row, in the
-	# order of zip(seqlet_neighbors[row], affmat_nn[row]).
+	# order of zip(seqlet_neighbors[row], affmat_nn[row]): row r holds
+	# lengths[r] of them.
 	if (isinstance(affmat_nn, np.ndarray) and affmat_nn.ndim == 2 and
 		isinstance(seqlet_neighbors, np.ndarray) and seqlet_neighbors.ndim == 2):
 		k = min(affmat_nn.shape[1], seqlet_neighbors.shape[1])
 		data = affmat_nn[:, :k].ravel()
 		cols = seqlet_neighbors[:n, :k].ravel()
-		rows = np.repeat(np.arange(n), k)
+		lengths = np.full(n, k, dtype='int64')
 	else:
 		lengths = np.array([min(len(seqlet_neighbors[row]), len(affmat_nn[row]))
 			for row in range(n)], dtype='int64')
@@ -37,7 +39,137 @@ def _density_adaptation(affmat_nn, seqlet_neighbors, tsne_perplexity):
 			for row, m in enumerate(lengths)] + [np.empty(0)])
 		cols = np.concatenate([np.asarray(seqlet_neighbors[row][:m], dtype='int64')
 			for row, m in enumerate(lengths)] + [np.empty(0, dtype='int64')])
+
+	# The kernels build the matrix with 32-bit indices, as scipy does below
+	# this size; other inputs, and triples the kernels turn down, go through
+	# scipy.
+	affmat = None
+	if (n > 0 and data.dtype.kind == 'f' and data.dtype.itemsize <= 8 and
+		cols.dtype.kind in 'iu' and len(data) == len(cols) == lengths.sum() and
+		2 * len(data) + n <= np.iinfo(np.int32).max):
+		affmat = _density_adaptation_kernels(data, cols, lengths, n,
+			tsne_perplexity)
+
+	if affmat is None:
 		rows = np.repeat(np.arange(n), lengths)
+		del lengths
+		affmat = _density_adaptation_scipy(data, rows, cols, n,
+			tsne_perplexity)
+
+	return affmat
+
+
+def _betas(tsne_perplexity, data, indptr):
+	"""util.binary_search_perplexity over each row of a CSR matrix. Rows are
+	independent, so contiguous blocks of them are shared among
+	numba.get_num_threads() threads running util._perplexity_betas, which
+	releases the GIL. The result does not depend on the number of threads or
+	blocks."""
+
+	n = len(indptr) - 1
+	betas = np.empty(n)
+	n_threads = numba.get_num_threads()
+	n_blocks = max(1, min(n, 16 * n_threads))
+	bounds = [n * b // n_blocks for b in range(n_blocks + 1)]
+
+	def run(b):
+		util._perplexity_betas(tsne_perplexity, data, indptr, bounds[b],
+			bounds[b+1], betas)
+
+	with ThreadPoolExecutor(min(n_threads, n_blocks)) as pool:
+		list(pool.map(run, range(n_blocks)))
+
+	return betas
+
+
+def _density_adaptation_kernels(data, cols, lengths, n, tsne_perplexity):
+	"""_density_adaptation_scipy's matrix, built without sorting: every
+	value is computed by the same operations in the same order, and every
+	entry lands in the same place. Returns None, having changed nothing,
+	when a column index lies outside [0, n) or a row holds one twice, which
+	scipy would reject or sum, or when a log-transformed affinity is NaN
+	(util._transpose_triples)."""
+
+	eps = 0.0000001
+
+	offsets = np.zeros(n + 1, dtype='int64')
+	np.cumsum(lengths, out=offsets[1:])
+	cols = np.ascontiguousarray(cols, dtype='int64')
+
+	# The transform is elementwise, so applying it before the entries are
+	# put in column order, and dropping its zeros after, changes no value.
+	data = np.asarray(data, dtype='float64')
+	data = np.maximum(np.log((1.0/(0.5*np.maximum(data, eps)))-1), 0)
+
+	# B is the transpose of the log-transformed matrix, with sorted indices
+	# and its zeros dropped; A, its transpose, is that matrix itself, as
+	# scipy builds it (coo -> csr, sort_indices, eliminate_zeros).
+	nnz = len(cols)
+	b_indptr = np.empty(n + 1, dtype='int64')
+	b_indices = np.empty(nnz, dtype='int32')
+	b_data = np.empty(nnz, dtype='float64')
+	if util._transpose_triples(offsets, cols, data, n, b_indptr, b_indices,
+			b_data) != 0:
+		return None
+
+	del offsets, cols, data
+	nnz = int(b_indptr[n])
+	b_indices, b_data = b_indices[:nnz], b_data[:nnz]
+
+	a_indptr = np.empty(n + 1, dtype='int64')
+	a_indices = np.empty(nnz, dtype='int32')
+	a_data = np.empty(nnz, dtype='float64')
+	util._transpose(b_indptr, b_indices, b_data, a_indptr, a_indices, a_data)
+
+	# (A + A.T) / (C + C.T), C holding A's pattern: the symmetrized matrix.
+	indptr = np.empty(n + 1, dtype='int64')
+	indices = np.empty(2 * nnz, dtype='int32')
+	data = np.empty(2 * nnz, dtype='float64')
+	nnz = util._symmetrize(a_indptr, a_indices, a_data, b_indptr, b_indices,
+		b_data, indptr, indices, data)
+	del a_indptr, a_indices, a_data, b_indptr, b_indices, b_data
+	indices, data = indices[:nnz], data[:nnz]
+
+	betas = _betas(tsne_perplexity, data, indptr)
+
+	# As in _density_adaptation_scipy, with each row's normalizer summed in
+	# numpy's order by util._row_sums_plus_one.
+	row_idx = np.repeat(np.arange(n), np.diff(indptr))
+	neg_data = -data
+
+	rbf_i = betas[row_idx]
+	np.divide(neg_data, rbf_i, out=rbf_i)
+	np.exp(rbf_i, out=rbf_i)
+	normfactors = np.empty(n, dtype='float64')
+	util._row_sums_plus_one(rbf_i, indptr, normfactors)
+
+	rbf_i /= normfactors[row_idx]
+	del row_idx
+
+	rbf_j = betas[indices]
+	np.divide(neg_data, rbf_j, out=rbf_j)
+	del neg_data
+	np.exp(rbf_j, out=rbf_j)
+	rbf_j /= normfactors[indices]
+
+	rbf_i *= rbf_j
+	del rbf_j
+	np.sqrt(rbf_i, out=data)
+	del rbf_i
+
+	# + scipy.sparse.diags(1.0 / normfactors), which also drops zeros.
+	out_indptr = np.empty(n + 1, dtype='int32')
+	out_indices = np.empty(nnz + n, dtype='int32')
+	out_data = np.empty(nnz + n, dtype='float64')
+	nnz = util._add_diagonal(indptr, indices, data, 1.0 / normfactors,
+		out_indptr, out_indices, out_data)
+
+	return scipy.sparse.csr_matrix((out_data[:nnz], out_indices[:nnz],
+		out_indptr), shape=(n, n))
+
+
+def _density_adaptation_scipy(data, rows, cols, n, tsne_perplexity):
+	eps = 0.0000001
 
 	affmat_nn = scipy.sparse.csr_matrix((data, (rows, cols)), 
 		shape=(n, n), dtype='float64')
