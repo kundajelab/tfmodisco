@@ -535,7 +535,7 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 	prob_and_pertrack_sim_dealbreaker_thresholds=[(0.4, 0.75), (0.2,0.8), (0.1, 0.85), (0.0,0.9)],
 	subcluster_perplexity=50, merging_max_seqlets_subsample=1000,
 	final_min_cluster_size=20,min_ic_in_window=0.6, min_ic_windowsize=6,
-	ppm_pseudocount=0.001):
+	ppm_pseudocount=0.001, beside_clustering=None):
 
 	bg_freq = np.mean([seqlet.sequence for seqlet in seqlets], axis=(0, 1)) 
 
@@ -577,11 +577,30 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 		del filtered_affmat_nn
 		del seqlet_neighbors
 
-		# Step 5: Clustering
-		cluster_indices = cluster.LeidenCluster(
-			csr_density_adapted_affmat,
-			n_seeds=n_leiden_runs,
-			n_leiden_iterations=n_leiden_iterations)
+		# Step 5: Clustering. Leiden runs on one thread in each of its
+		# processes, so the first clustering leaves the rest of the thread
+		# budget idle: a forked.Background given as beside_clustering runs
+		# in a child with those threads, and is waited for before the next
+		# step, which uses the whole budget again.
+		beside = beside_clustering if round_idx == 0 else None
+		if beside is not None:
+			n_workers = cluster._n_workers(n_leiden_runs,
+				len(csr_density_adapted_affmat.data))
+			beside.start(min(forked.budget(), numba.get_num_threads()) -
+				n_workers)
+
+		try:
+			cluster_indices = cluster.LeidenCluster(
+				csr_density_adapted_affmat,
+				n_seeds=n_leiden_runs,
+				n_leiden_iterations=n_leiden_iterations)
+		except BaseException:
+			if beside is not None:
+				beside.kill()
+			raise
+
+		if beside is not None:
+			beside.join()
 
 		del csr_density_adapted_affmat
 
@@ -651,6 +670,42 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 	return patterns
 
 
+def _pack_patterns(patterns):
+	"""What seqlets_to_patterns returned, as a forked child sends it: each
+	pattern's seqlet coordinates, in order, and its subclusters."""
+
+	if patterns is None:
+		return None
+
+	return [([(seqlet.example_idx, seqlet.start, seqlet.end, seqlet.is_revcomp)
+		for seqlet in pattern.seqlets], pattern.subclusters)
+		for pattern in patterns]
+
+
+def _unpack_patterns(packed, track_set):
+	"""The patterns _pack_patterns packed, made again here. seqlets_to_patterns
+	makes each final pattern from new seqlets over the track set
+	(aggregator._expand_seqlets_to_fill_pattern) and then attaches its
+	subclusters (core.SeqletSet._set_subclusters). The same is done here with
+	the same coordinates, in the same order: views of the same arrays with
+	the same strides, summed in the same order, and the same subpatterns."""
+
+	if packed is None:
+		return None
+
+	patterns = []
+	for coordinates, subclusters in packed:
+		pattern = core.SeqletSet(track_set.create_seqlets([core.Seqlet(
+			example_idx=example_idx, start=start, end=end,
+			is_revcomp=is_revcomp)
+			for example_idx, start, end, is_revcomp in coordinates]))
+		if subclusters is not None:
+			pattern._set_subclusters(subclusters)
+		patterns.append(pattern)
+
+	return patterns
+
+
 def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21, 
 	flank_size=10, min_metacluster_size=100,
 	weak_threshold_for_counting_sign=0.8, max_seqlets_per_metacluster=20000,
@@ -699,6 +754,42 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 
 	del seqlets
 
+	# The negative metacluster's patterns depend only on its seqlets and the
+	# track set, not on the positive metacluster's, so they are found in a
+	# forked child while the positive metacluster's first clustering leaves
+	# threads idle (seqlets_to_patterns, beside_clustering), or here, after
+	# the positive metacluster, when no child ran or it failed.
+	negative = None
+	if len(neg_seqlets) > min_metacluster_size:
+		neg_seqlets = neg_seqlets[:max_seqlets_per_metacluster]
+
+		def find_negative():
+			return seqlets_to_patterns(seqlets=neg_seqlets,
+				track_set=track_set, 
+				track_signs=-1,
+				min_overlap_while_sliding=min_overlap_while_sliding,
+				nearest_neighbors_to_compute=nearest_neighbors_to_compute,
+				affmat_correlation_threshold=affmat_correlation_threshold,
+				tsne_perplexity=tsne_perplexity,
+				n_leiden_iterations=n_leiden_iterations,
+				n_leiden_runs=n_leiden_runs,
+				frac_support_to_trim_to=frac_support_to_trim_to,
+				min_num_to_trim_to=min_num_to_trim_to,
+				trim_to_window_size=trim_to_window_size,
+				initial_flank_to_add=initial_flank_to_add,
+				final_flank_to_add=final_flank_to_add,
+				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+				subcluster_perplexity=subcluster_perplexity,
+				merging_max_seqlets_subsample=merging_max_seqlets_subsample,
+				final_min_cluster_size=final_min_cluster_size,
+				min_ic_in_window=min_ic_in_window,
+				min_ic_windowsize=min_ic_windowsize,
+				ppm_pseudocount=ppm_pseudocount)
+
+		negative = forked.Background(find_negative, pack=_pack_patterns,
+			unpack=lambda packed: _unpack_patterns(packed, track_set))
+
 	if len(pos_seqlets) > min_metacluster_size:
 		pos_seqlets = pos_seqlets[:max_seqlets_per_metacluster]
 		if verbose:
@@ -725,37 +816,16 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 			final_min_cluster_size=final_min_cluster_size,
 			min_ic_in_window=min_ic_in_window,
 			min_ic_windowsize=min_ic_windowsize,
-			ppm_pseudocount=ppm_pseudocount)
+			ppm_pseudocount=ppm_pseudocount,
+			beside_clustering=negative)
 	else:
 		pos_patterns = None
 
-	if len(neg_seqlets) > min_metacluster_size:
-		neg_seqlets = neg_seqlets[:max_seqlets_per_metacluster]
+	if negative is not None:
 		if verbose:
 			print("Extracted {} negative seqlets".format(len(neg_seqlets)))
 
-		neg_patterns = seqlets_to_patterns(seqlets=neg_seqlets,
-			track_set=track_set, 
-			track_signs=-1,
-			min_overlap_while_sliding=min_overlap_while_sliding,
-			nearest_neighbors_to_compute=nearest_neighbors_to_compute,
-			affmat_correlation_threshold=affmat_correlation_threshold,
-			tsne_perplexity=tsne_perplexity,
-			n_leiden_iterations=n_leiden_iterations,
-			n_leiden_runs=n_leiden_runs,
-			frac_support_to_trim_to=frac_support_to_trim_to,
-			min_num_to_trim_to=min_num_to_trim_to,
-			trim_to_window_size=trim_to_window_size,
-			initial_flank_to_add=initial_flank_to_add,
-			final_flank_to_add=final_flank_to_add,
-			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
-			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
-			subcluster_perplexity=subcluster_perplexity,
-			merging_max_seqlets_subsample=merging_max_seqlets_subsample,
-			final_min_cluster_size=final_min_cluster_size,
-			min_ic_in_window=min_ic_in_window,
-			min_ic_windowsize=min_ic_windowsize,
-			ppm_pseudocount=ppm_pseudocount)
+		neg_patterns = negative.result()
 	else:
 		neg_patterns = None
 

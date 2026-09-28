@@ -180,6 +180,105 @@ def forked_map(func, shares, budgets=None, pack=None, unpack=None):
 	return results
 
 
+class Background:
+	"""func() computed in a forked child beside this process's own work,
+	for work this process would otherwise do after it.
+
+	start(n_threads) forks the child, which sets its budget and numba's
+	thread count to n_threads before it calls func, when n_threads is at
+	least 1 and a child may run numba's parallel kernels (numba_fork_safe);
+	otherwise it does nothing. join() waits for the child to finish and
+	reaps it. result() returns unpack(pack(func())) as the child computed
+	it (each defaults to the identity), or func() computed here with this
+	process's own budget when no child was started, or the child could not
+	be forked, exited non-zero, was killed or sent a pickle that does not
+	load. kill() kills and reaps a child that is still running, so that
+	result() computes func() here.
+	"""
+
+	def __init__(self, func, pack=None, unpack=None):
+		self.func = func
+		self.pack = pack
+		self.unpack = unpack
+		self._pid = None
+		self._handle = None
+		self._started = False
+		self._data = None
+
+	def start(self, n_threads):
+		if self._started or n_threads < 1 or not numba_fork_safe():
+			return
+		self._started = True
+
+		read_fd, write_fd = os.pipe()
+		try:
+			with warnings.catch_warnings():
+				# As in forked_map.
+				warnings.simplefilter('ignore', DeprecationWarning)
+				pid = os.fork()
+		except OSError:
+			os.close(read_fd)
+			os.close(write_fd)
+			return
+
+		if pid == 0:
+			code = 1
+			try:
+				os.close(read_fd)
+				_set_budget(n_threads)
+
+				result = self.func()
+				if self.pack is not None:
+					result = self.pack(result)
+
+				with os.fdopen(write_fd, 'wb') as handle:
+					pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)
+				code = 0
+			finally:
+				os._exit(code)
+
+		os.close(write_fd)
+		self._pid, self._handle = pid, os.fdopen(read_fd, 'rb')
+
+	def join(self):
+		if self._pid is None:
+			return
+
+		data = self._handle.read()
+		self._handle.close()
+		_, status = os.waitpid(self._pid, 0)
+		self._pid = self._handle = None
+
+		if os.waitstatus_to_exitcode(status) == 0:
+			self._data = data
+
+	def kill(self):
+		if self._pid is None:
+			return
+
+		self._handle.close()
+		try:
+			os.kill(self._pid, signal.SIGKILL)
+			os.waitpid(self._pid, 0)
+		except OSError:
+			pass
+		self._pid = self._handle = None
+
+	def result(self):
+		self.join()
+
+		data, self._data = self._data, None
+		if data is not None:
+			try:
+				result = pickle.loads(data)
+			except Exception:
+				pass
+			else:
+				return result if self.unpack is None else self.unpack(result)
+
+		return self.func()
+
+
 def _lpt(weights, order, n_bins):
 	"""Longest processing time first: the items of `order`, heaviest first,
 	each into the bin with the least weight so far (the lowest index on a
