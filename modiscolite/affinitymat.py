@@ -425,6 +425,11 @@ def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None,
 		seqlet_neighbors = [list(range(len(filter_seqlets)))
 							for x in seqlets] 
 
+	affmat = _jaccard_fwd_rev(filters_all_fwd_data, filters_all_rev_data,
+		all_fwd_data, seqlet_neighbors, min_overlap)
+	if affmat is not None:
+		return affmat
+
 	#apply the cross metric
 	affmat_fwd = jaccard(seqlet_neighbors=seqlet_neighbors, 
 		X=filters_all_fwd_data,
@@ -438,6 +443,74 @@ def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None,
 
 	affmat = np.maximum(affmat_fwd, affmat_rev)
 	return affmat
+
+
+# `_fwd_rev_best` keeps each row of Y in a buffer whose rows are this many
+# float64 apart, a constant, so that every load of one pass is at a
+# constant distance from one base address. Offsets that need longer rows
+# take the two `jaccard` calls instead.
+_FWD_REV_STRIDE = 128
+
+# Rows of Y per parallel task, and so per slice of the scratch arrays.
+_FWD_REV_ROWS = 16
+
+
+def _jaccard_fwd_rev(X_fwd, X_rev, Y, seqlet_neighbors, min_overlap):
+	"""The array jaccard_from_seqlets returns, np.maximum of
+	jaccard(X_fwd, Y) and jaccard(X_rev, Y) with func=int and
+	return_sparse=True, computed by one kernel that scores both strands of
+	each neighbour against a row of Y while that row is in cache. Returns
+	None when the kernel does not apply, and the caller then makes the two
+	calls: channels not a multiple of 4, offsets that do not fit the
+	kernel's row buffer, a value that is not finite, any score that is a
+	NaN or a -0.0 (for those, as in `jaccard`, numpy's max decides which
+	bits come back), and the arguments on which `jaccard` itself raises.
+
+	Without a NaN or a -0.0 among the scores the largest score is unique in
+	its bits, so the maximum over offsets and strands is the value the two
+	calls and np.maximum give."""
+
+	if not isinstance(seqlet_neighbors, np.ndarray) or seqlet_neighbors.ndim != 2:
+		return None
+
+	if X_fwd.ndim != 3 or X_rev.shape != X_fwd.shape or Y.ndim != 3:
+		return None
+
+	nx, d, m = X_fwd.shape
+	ny, Ly, my = Y.shape
+	n_neighbors = seqlet_neighbors.shape[1]
+
+	# As `jaccard` pads Y with func=int.
+	n_pad = 0 if min_overlap is None else int(int(d*(1-min_overlap)))
+	len_output = Ly + 2*n_pad - d + 1
+	n_offsets = (len_output + 7) // 8 * 8
+
+	if (n_pad < 0 or len_output < 1 or m == 0 or m % 4 != 0 or my != m
+			or d - 1 + n_offsets > _FWD_REV_STRIDE or ny == 0 or nx == 0
+			or n_neighbors == 0 or seqlet_neighbors.shape[0] != ny):
+		return None
+
+	X_fwd = np.ascontiguousarray(X_fwd, dtype='float32')
+	X_rev = np.ascontiguousarray(X_rev, dtype='float32')
+	Y = X_fwd if Y is X_fwd else np.ascontiguousarray(Y, dtype='float32')
+	for array in (X_fwd, X_rev) if Y is X_fwd else (X_fwd, X_rev, Y):
+		if not np.isfinite(array).all():
+			return None
+
+	neighbors = np.ascontiguousarray(seqlet_neighbors.astype('int32'))
+
+	# One row of each accumulator per task, 64 bytes longer than it needs
+	# to be so that no two tasks write to one cache line.
+	n_tasks = (ny + _FWD_REV_ROWS - 1) // _FWD_REV_ROWS
+	sums = [np.empty((n_tasks, n_offsets + 8)) for _ in range(4)]
+
+	best = np.empty((ny, n_neighbors), dtype='float32')
+	flags = np.zeros(ny, dtype='uint8')
+	_fwd_rev_best(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums)
+
+	if flags.any():
+		return None
+	return best
 
 
 def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil, 
@@ -706,6 +779,188 @@ def _jaccard_best(X, Y, neighbors, best, best_idx, flags):
 				best_idx[l, i] = best_offset
 
 		flags[l] = flag
+
+
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], '
+	'float32[:, :, ::1], int32[:, ::1], int64, float32[:, ::1], uint8[::1], '
+	'float64[:, ::1], float64[:, ::1], float64[:, ::1], float64[:, ::1])')
+@njit(parallel=True, error_model='numpy')
+def _fwd_rev_best(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
+	min_r, max_r):
+	"""best[l, i]: the largest score, over every offset and both strands,
+	of row l of Y (zero-padded by n_pad on each side) against rows
+	neighbors[l, i] of Xf and of Xr. flags[l] is set when row l holds a NaN
+	or a -0.0 score. Each score is the one `_jaccard_best` gives, bit for
+	bit, for finite inputs whose number of channels is a multiple of 4:
+
+	`_jaccard_best` adds, for each offset and in (j, k) order, the float32
+	values min(|x|, |y|) * sign(x) * sign(y) and max(|x|, |y|), each
+	converted exactly to float64. Here the same float64 values are added in
+	the same order, formed from float64 copies. The first is
+	clamp(sign(x) * y, -|x|, |x|), which equals it whenever it is nonzero;
+	when it is zero its sign may differ, and adding a zero of either sign
+	to a sum that starts at +0.0, and so is never -0.0, changes no bit.
+	sign(x) * y is y or -y, read from one of two rows of the buffer.
+
+	The offsets are innermost and padded to a multiple of 8, as in
+	`_jaccard_best`; four channels of both strands are added per pass over
+	them. The per-task accumulators are arguments rather than allocated
+	here, so the compiler knows they share no memory with the row buffer
+	and the inputs, and the vector loop needs no runtime overlap checks.
+	Each row is scored by one task and each task owns its scratch, so the
+	result does not depend on the number of threads."""
+
+	nx, d, m = Xf.shape
+	ny, Ly, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = Ly + 2 * n_pad - d + 1
+	n_offsets = (len_output + 7) // 8 * 8
+	n_vectors = n_offsets // 8
+	L_pad = d - 1 + n_offsets
+	W = _FWD_REV_STRIDE
+	R = _FWD_REV_ROWS
+	n_tasks = (ny + R - 1) // R
+
+	for b in prange(n_tasks):
+		# Rows 3k, 3k+1 and 3k+2 of the buffer hold y, -y and |y| for
+		# channel k, zero past either end of the row.
+		ybuf = np.empty(3 * m * W, dtype=np.float64)
+
+		for l in range(b * R, min(ny, (b + 1) * R)):
+			for k in range(m):
+				for p in range(L_pad):
+					j = p - n_pad
+					v = 0.0
+					if j >= 0 and j < Ly:
+						v = np.float64(Y[l, j, k])
+					ybuf[(3*k)*W + p] = v
+					ybuf[(3*k+1)*W + p] = -v
+					ybuf[(3*k+2)*W + p] = abs(v)
+
+			flag = 0
+			for i in range(n_neighbors):
+				nb = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_f[b, idx] = 0.0
+					max_f[b, idx] = 0.0
+					min_r[b, idx] = 0.0
+					max_r[b, idx] = 0.0
+
+				for j in range(d):
+					for k in range(0, m, 4):
+						# Per channel and strand: |x|, -|x|, and the buffer
+						# row holding sign(x) * y, less the offset index.
+						# (Unsigned indices spare the negative-index checks.)
+						base = 3*k*W + j
+
+						x = np.float64(Xf[nb, j, np.uint64(k)])
+						af0 = abs(x)
+						nf0 = -af0
+						of0 = base + (1 if x < 0 else 0)*W
+						x = np.float64(Xr[nb, j, np.uint64(k)])
+						ar0 = abs(x)
+						nr0 = -ar0
+						or0 = base + (1 if x < 0 else 0)*W
+
+						x = np.float64(Xf[nb, j, np.uint64(k+1)])
+						af1 = abs(x)
+						nf1 = -af1
+						of1 = base + (3 + (1 if x < 0 else 0))*W
+						x = np.float64(Xr[nb, j, np.uint64(k+1)])
+						ar1 = abs(x)
+						nr1 = -ar1
+						or1 = base + (3 + (1 if x < 0 else 0))*W
+
+						x = np.float64(Xf[nb, j, np.uint64(k+2)])
+						af2 = abs(x)
+						nf2 = -af2
+						of2 = base + (6 + (1 if x < 0 else 0))*W
+						x = np.float64(Xr[nb, j, np.uint64(k+2)])
+						ar2 = abs(x)
+						nr2 = -ar2
+						or2 = base + (6 + (1 if x < 0 else 0))*W
+
+						x = np.float64(Xf[nb, j, np.uint64(k+3)])
+						af3 = abs(x)
+						nf3 = -af3
+						of3 = base + (9 + (1 if x < 0 else 0))*W
+						x = np.float64(Xr[nb, j, np.uint64(k+3)])
+						ar3 = abs(x)
+						nr3 = -ar3
+						or3 = base + (9 + (1 if x < 0 else 0))*W
+
+						# Split into vectors of 8 offsets, so that the loop has no
+						# remainder to keep scalars alive for.
+						for vec in range(n_vectors):
+							for q in range(8):
+								idx = vec * 8 + q
+								mf = min_f[b, idx]
+								Mf = max_f[b, idx]
+								mr = min_r[b, idx]
+								Mr = max_r[b, idx]
+
+								ya = ybuf[np.uint64(base + 2*W + idx)]
+								t = ybuf[np.uint64(of0 + idx)]
+								t = t if t > nf0 else nf0
+								mf += t if t < af0 else af0
+								Mf += ya if ya > af0 else af0
+								t = ybuf[np.uint64(or0 + idx)]
+								t = t if t > nr0 else nr0
+								mr += t if t < ar0 else ar0
+								Mr += ya if ya > ar0 else ar0
+
+								ya = ybuf[np.uint64(base + 5*W + idx)]
+								t = ybuf[np.uint64(of1 + idx)]
+								t = t if t > nf1 else nf1
+								mf += t if t < af1 else af1
+								Mf += ya if ya > af1 else af1
+								t = ybuf[np.uint64(or1 + idx)]
+								t = t if t > nr1 else nr1
+								mr += t if t < ar1 else ar1
+								Mr += ya if ya > ar1 else ar1
+
+								ya = ybuf[np.uint64(base + 8*W + idx)]
+								t = ybuf[np.uint64(of2 + idx)]
+								t = t if t > nf2 else nf2
+								mf += t if t < af2 else af2
+								Mf += ya if ya > af2 else af2
+								t = ybuf[np.uint64(or2 + idx)]
+								t = t if t > nr2 else nr2
+								mr += t if t < ar2 else ar2
+								Mr += ya if ya > ar2 else ar2
+
+								ya = ybuf[np.uint64(base + 11*W + idx)]
+								t = ybuf[np.uint64(of3 + idx)]
+								t = t if t > nf3 else nf3
+								mf += t if t < af3 else af3
+								Mf += ya if ya > af3 else af3
+								t = ybuf[np.uint64(or3 + idx)]
+								t = t if t > nr3 else nr3
+								mr += t if t < ar3 else ar3
+								Mr += ya if ya > ar3 else ar3
+
+								min_f[b, idx] = mf
+								max_f[b, idx] = Mf
+								min_r[b, idx] = mr
+								max_r[b, idx] = Mr
+
+				# With no NaN and no -0.0 among the scores, equal scores
+				# have equal bits, so any maximum is the one numpy's gives.
+				best_score = np.float32(0.0)
+				for idx in range(len_output):
+					s_f = np.float32(min_f[b, idx] / max_f[b, idx])
+					s_r = np.float32(min_r[b, idx] / max_r[b, idx])
+					if s_f != s_f or (s_f == 0 and math.copysign(1.0, s_f) < 0):
+						flag = 1
+					if s_r != s_r or (s_r == 0 and math.copysign(1.0, s_r) < 0):
+						flag = 1
+
+					s = s_f if s_f > s_r else s_r
+					if idx == 0 or s > best_score:
+						best_score = s
+
+				best[l, i] = best_score
+			flags[l] = flag
 
 
 @precompile.signature('uint8(float32[:, ::1], float32[:, ::1], float32[:, ::1])')
