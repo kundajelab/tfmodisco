@@ -590,38 +590,188 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	return results
 
-@njit(parallel=True)
-def pairwise_jaccard(X, k):
+# The columns of pairwise_jaccard's inner loop taken per pass: a tile's two
+# float64 running sums (16 KB) and its slices of the signs and magnitudes
+# (8 KB) stay in L1 while the loop over features runs.
+_PAIRWISE_TILE = 1024
+
+
+@njit
+def _ranks_after(values, a, b):
+	"""Whether index a comes after index b in the stable descending order of
+	values: a smaller value, or an equal one at a later index."""
+
+	return values[a] < values[b] or (values[a] == values[b] and a > b)
+
+
+@njit
+def _top_k_sift_down(values, heap, size, pos, index):
+	"""Place index at heap[pos], moving it down past children that come
+	after it, so that the root of heap[:size] is the one that comes last."""
+
+	while True:
+		child = 2 * pos + 1
+		if child >= size:
+			break
+		if (child + 1 < size and
+				_ranks_after(values, heap[child + 1], heap[child])):
+			child += 1
+		if _ranks_after(values, heap[child], index):
+			heap[pos] = heap[child]
+			pos = child
+		else:
+			break
+	heap[pos] = index
+
+
+@njit
+def _top_k(values, k):
+	"""np.argsort(-values, kind='mergesort')[:k] for values holding no NaN
+	and 0 < k <= len(values): the indices of the k largest values, largest
+	first, equal values in index order.
+
+	That stable sort orders the indices by (value descending, index
+	ascending), a strict order on distinct indices (-0.0 and 0.0 compare
+	equal, as in the sort), so its first k are the k first in that order,
+	in that order. A heap of k holds the best seen so far with the one that
+	comes last at its root; an index read later replaces the root only with
+	a larger value, since among equal values the earlier index comes first.
+	Taking the root out k times gives the k from last to first."""
+
+	n = values.shape[0]
+	heap = np.empty(k, dtype=np.int64)
+
+	for size in range(k):
+		pos = size
+		while pos > 0:
+			parent = (pos - 1) >> 1
+			if _ranks_after(values, size, heap[parent]):
+				heap[pos] = heap[parent]
+				pos = parent
+			else:
+				break
+		heap[pos] = size
+
+	for j in range(k, n):
+		if values[j] > values[heap[0]]:
+			_top_k_sift_down(values, heap, k, 0, j)
+
+	top = np.empty(k, dtype=np.int64)
+	for size in range(k, 0, -1):
+		top[size - 1] = heap[0]
+		if size > 1:
+			_top_k_sift_down(values, heap, size - 1, 0, heap[size - 1])
+
+	return top
+
+
+@njit(nogil=True)
+def _signs_magnitudes(X, signs, magnitudes):
+	"""np.sign and abs of every element of X, transposed."""
+
 	n, m = X.shape
+	for j in range(n):
+		for l in range(m):
+			signs[l, j] = np.sign(X[j, l])
+			magnitudes[l, j] = abs(X[j, l])
 
-	jaccards = np.empty((n, k), dtype='float64')
-	neighbors = np.empty((n, k), dtype='int32')
 
-	for i in prange(n):
-		jaccard_ = np.empty(n, dtype='float64')
+# The numpy error model, as numba uses in the parallel loop this replaced:
+# 0 / 0 gives NaN rather than raising.
+@njit(nogil=True, error_model='numpy')
+def _pairwise_jaccard_rows(X, signs, magnitudes, k, start, stop, jaccards,
+	neighbors):
+	"""pairwise_jaccard's rows start to stop, written into jaccards and
+	neighbors."""
 
-		for j in range(n):
-			min_sum = 0.0
-			max_sum = 0.0
+	n, m = X.shape
+	min_sums = np.empty(n, dtype=np.float64)
+	max_sums = np.empty(n, dtype=np.float64)
+	jaccard_ = np.empty(n, dtype=np.float64)
+
+	for i in range(start, stop):
+		min_sums[:] = 0.0
+		max_sums[:] = 0.0
+
+		for j0 in range(0, n, _PAIRWISE_TILE):
+			j1 = min(j0 + _PAIRWISE_TILE, n)
+			min_tile = min_sums[j0:j1]
+			max_tile = max_sums[j0:j1]
 
 			for l in range(m):
-				sign = np.sign(X[i, l]) * np.sign(X[j, l])
+				si = np.sign(X[i, l])
 				xi = abs(X[i, l])
-				xj = abs(X[j, l])
+				signs_l = signs[l, j0:j1]
+				magnitudes_l = magnitudes[l, j0:j1]
 
-				if xi > xj:
-					min_sum += xj * sign
-					max_sum += xi
-				else:
-					min_sum += xi * sign
-					max_sum += xj 
+				for j in range(j1 - j0):
+					sign = si * signs_l[j]
+					xj = magnitudes_l[j]
 
-			jaccard_[j] = min_sum / max_sum
+					larger = xi > xj
+					lo = xj if larger else xi
+					hi = xi if larger else xj
+					min_tile[j] += lo * sign
+					max_tile[j] += hi
 
-		idxs = np.argsort(-jaccard_, kind='mergesort')[:k]
+		has_nan = False
+		for j in range(n):
+			jaccard_[j] = min_sums[j] / max_sums[j]
+			has_nan |= np.isnan(jaccard_[j])
 
-		jaccards[i] = jaccard_[idxs]
-		neighbors[i] = idxs
+		if has_nan or k >= n:
+			idxs = np.argsort(-jaccard_, kind='mergesort')[:k]
+		else:
+			idxs = _top_k(jaccard_, k)
+
+		for c in range(k):
+			jaccards[i, c] = jaccard_[idxs[c]]
+			neighbors[i, c] = idxs[c]
+
+
+def pairwise_jaccard(X, k):
+	"""The continuous Jaccard similarity of every row of X with every row,
+	and for each row the k largest, largest first (ties in row order), with
+	their row indices: (n, k) float64 similarities and int32 indices.
+
+	Row i's similarity with row j sums, over the features l in order, the
+	smaller magnitude times the product of the two signs, and the larger
+	magnitude, in two float64 running sums, and divides them. Here row i
+	is scored against every row j at once: the loop over j is innermost, so
+	it vectorizes, and each j keeps its own two running sums, which receive
+	the same terms in the same order of l as one pair at a time would. The
+	signs and magnitudes of X's columns are laid out once, transposed, for
+	that loop. The k largest come from `_top_k`, or from the stable sort
+	they stand in for when a row holds a NaN or k is every row.
+
+	Rows are independent, so contiguous blocks of them are shared among
+	numba.get_num_threads() threads running `_pairwise_jaccard_rows`, which
+	releases the GIL (a serial kernel compiles in a fraction of the time a
+	parallel one takes). The result does not depend on the number of
+	threads or blocks.
+	"""
+
+	n, m = X.shape
+	jaccards = np.empty((n, k), dtype='float64')
+	neighbors = np.empty((n, k), dtype='int32')
+	signs = np.empty((m, n), dtype=X.dtype)
+	magnitudes = np.empty((m, n), dtype=X.dtype)
+	_signs_magnitudes(X, signs, magnitudes)
+
+	n_threads = numba.get_num_threads()
+	n_blocks = max(1, min(n, 4 * n_threads))
+	bounds = [n * b // n_blocks for b in range(n_blocks + 1)]
+
+	def run(b):
+		_pairwise_jaccard_rows(X, signs, magnitudes, k, bounds[b],
+			bounds[b+1], jaccards, neighbors)
+
+	if n_threads == 1 or n_blocks == 1:
+		for b in range(n_blocks):
+			run(b)
+	else:
+		with ThreadPoolExecutor(min(n_threads, n_blocks)) as pool:
+			list(pool.map(run, range(n_blocks)))
 
 	return jaccards, neighbors
 
@@ -1135,13 +1285,27 @@ class NNTsneConditionalProbs():
 		#normalize the conditional_P to sum to 1 across the rows
 		conditional_P = conditional_P / marginal_sum[:,None]
 
-		data = []
-		rows = []
-		cols = []
-		for row_idx,(ps,neigh_row) in enumerate(zip(conditional_P, neighbors)):
-			data.extend([p for p,neighbor in zip(ps, neigh_row)])
-			rows.extend([row_idx for neighbor in neigh_row])
-			cols.extend([neighbor for neighbor in neigh_row])
+		n_rows, n_cols = conditional_P.shape
+		if n_rows == n_samples and n_rows > 0 and all(
+				len(neigh_row) == n_cols for neigh_row in neighbors):
+			# Every row of neighbours is as long as its row of
+			# probabilities, so the loop below would list the probabilities
+			# row by row, each row's index once per neighbour, and the
+			# neighbours row by row: the same values, in the same order, as
+			# these arrays. coo_matrix picks the index dtype from the values
+			# and converts both index lists to it, and the data keeps
+			# conditional_P's dtype either way.
+			data = conditional_P.ravel()
+			rows = np.repeat(np.arange(n_rows), n_cols)
+			cols = np.concatenate(neighbors)
+		else:
+			data = []
+			rows = []
+			cols = []
+			for row_idx,(ps,neigh_row) in enumerate(zip(conditional_P, neighbors)):
+				data.extend([p for p,neighbor in zip(ps, neigh_row)])
+				rows.extend([row_idx for neighbor in neigh_row])
+				cols.extend([neighbor for neighbor in neigh_row])
 
 		P = coo_matrix((data, (rows, cols)),
 					   shape=(len(neighbors), len(neighbors)))

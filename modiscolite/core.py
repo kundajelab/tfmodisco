@@ -157,17 +157,8 @@ class SeqletSet():
 
 		affmat_nn, seqlet_neighbors = affinitymat.pairwise_jaccard(X, n_neighb)
 
-		distmat_nn = np.log((1.0/(0.5*np.maximum(affmat_nn, 0.0000001)))-1)
-		distmat_nn = np.maximum(distmat_nn, 0.0) #eliminate tiny neg floats
-
-		distmat_sp = scipy.sparse.coo_matrix(
-				(np.concatenate(distmat_nn, axis=0),
-				 (np.array([i for i in range(len(seqlet_neighbors))
-							   for j in seqlet_neighbors[i]]).astype("int"),
-				  np.concatenate(seqlet_neighbors, axis=0)) ),
-				shape=(len(distmat_nn), len(distmat_nn))).tocsr()
-
-		distmat_sp.sort_indices()
+		# Upstream built a sparse distance matrix here that nothing read;
+		# NNTsneConditionalProbs computes the same distances itself.
 
 		#do density adaptation
 		sp_density_adapted_affmat = affinitymat.NNTsneConditionalProbs(

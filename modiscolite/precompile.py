@@ -123,7 +123,11 @@ def _kernels():
 			(affinitymat._jaccard_best, None)],
 		# First called in aggregator._detect_spurious_merging, after both
 		# main clusterings; _roc_corners in its SimilarPatternsCollapser.
-		[(affinitymat.pairwise_jaccard, (A(types.float32, 2, 'C'), i8)),
+		[(affinitymat._signs_magnitudes, (A(types.float32, 2, 'C'),
+			A(types.float32, 2, 'C'), A(types.float32, 2, 'C'))),
+			(affinitymat._pairwise_jaccard_rows, (A(types.float32, 2, 'C'),
+			A(types.float32, 2, 'C'), A(types.float32, 2, 'C'), i8, i8, i8,
+			A(types.float64, 2, 'C'), A(types.int32, 2, 'C'))),
 			(aggregator._roc_corners, None)],
 	]
 
