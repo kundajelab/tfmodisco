@@ -170,8 +170,11 @@ def extract_seqlets(attribution_scores, window_size, flank, suppress,
 		  min_passing_windows_frac=min_passing_windows_frac,
 		  max_passing_windows_frac=max_passing_windows_frac) 
 
-	distribution = np.array(sorted(np.abs(np.concatenate(smoothed_tracks,
-		axis=0))))
+	# _laplacian_null has raised on any NaN or inf in the tracks, and np.abs
+	# leaves no -0.0, so equal values have equal bits and an in-place sort
+	# gives exactly the array sorted() gave, in a small fraction of the time.
+	distribution = np.abs(smoothed_tracks).ravel()
+	distribution.sort()
 
 	transformed_pos_threshold = np.sign(pos_threshold)*np.searchsorted(
 		a=distribution, v=abs(pos_threshold))/len(distribution)
