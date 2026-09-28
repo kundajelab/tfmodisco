@@ -638,6 +638,7 @@ def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn,
 		filtered_affmat_nn = [flat_affmat_nn[a:b] for a, b in bounds]
 		return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
 
+	import scipy.stats
 	correlations = []
 	for fine_affmat_row, coarse_affmat_row in zip(fine_affmat_nn, coarse_affmat_nn):
 		to_compare_mask = np.abs(fine_affmat_row) > 0
@@ -869,6 +870,16 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 	# has already called this before reading its inputs, and a second call
 	# does nothing.
 	precompile.start()
+
+	# The package imports sklearn, igraph and leidenalg where they are used,
+	# not when it is imported, so that the children above are forked sooner.
+	# Importing them here, while the children compile, puts that time before
+	# the run's first wait for a compiled kernel instead of later in the run.
+	import sklearn.isotonic
+	import sklearn.preprocessing
+	import sklearn.manifold
+	import igraph
+	import leidenalg
 
 	contrib_scores = np.multiply(one_hot, hypothetical_contribs)
 

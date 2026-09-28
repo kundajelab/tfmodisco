@@ -2,9 +2,6 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
-import sklearn
-import sklearn.manifold
-
 import math
 
 from concurrent.futures import ThreadPoolExecutor
@@ -395,6 +392,7 @@ def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20,
 			max_len, max_entries, False, sign, X=Xs[1])
 	del Xs
 
+	import sklearn.preprocessing
 	X = sklearn.preprocessing.normalize(X_fwd, norm='l2', axis=1)
 	Y = sklearn.preprocessing.normalize(X_bwd, norm='l2', axis=1)
 	del X_fwd, X_bwd
@@ -1304,6 +1302,7 @@ class NNTsneConditionalProbs():
 		distances = distances_nn.astype(np.float32, copy=False)
 		neighbors = neighbors_nn
 		
+		import sklearn.manifold
 		conditional_P = sklearn.manifold._utils._binary_search_perplexity(
 			distances, self.perplexity, verbose=False)
 

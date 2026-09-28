@@ -7,7 +7,6 @@ import math
 import numpy as np
 
 from . import core
-from sklearn.isotonic import IsotonicRegression
 
 def _bin_mode(values, bins=1000):
 	hist, bin_edges = np.histogram(values, bins=bins)
@@ -120,6 +119,7 @@ def _isotonic_thresholds(values, null_values, increasing, target_fdr,
 	w = len(values) / len(null_values)
 	sample_weight = np.concatenate([np.ones(n1), np.ones(n2)*w], axis=0)
 
+	from sklearn.isotonic import IsotonicRegression
 	model = IsotonicRegression(out_of_bounds='clip', increasing=increasing)
 	model.fit(X, y, sample_weight=sample_weight)
 

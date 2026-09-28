@@ -5,9 +5,7 @@
 import sys
 import itertools
 
-import leidenalg
 import numpy as np
-import igraph as ig
 
 from . import forked
 
@@ -19,6 +17,7 @@ _EDGE_CHUNK = 16384
 def _leiden(g, weights, seed, n_leiden_iterations):
 	"""One Leiden run from one seed: its quality and its membership."""
 
+	import leidenalg
 	partition = leidenalg.find_partition(
 		graph=g,
 		partition_type=leidenalg.ModularityVertexPartition,
@@ -121,6 +120,7 @@ def _graph(affinity_mat):
 			to_ints(targets[start:start+_EDGE_CHUNK]))
 		for start in range(0, len(sources), _EDGE_CHUNK))
 
+	import igraph as ig
 	g = ig.Graph(n=n_vertices, edges=edges, directed=False)
 	return g, weights
 

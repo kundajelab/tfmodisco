@@ -13,7 +13,6 @@ from . import precompile
 from . import util
 
 from collections import OrderedDict
-from sklearn.metrics import roc_auc_score
 
 
 @precompile.signature('float64[:, ::1](float64[::1], float64[::1])')
@@ -121,6 +120,7 @@ def _roc_auc_sorted(neg_sorted, pos_sorted):
 	n_neg, n_pos = neg_sorted.shape[0], pos_sorted.shape[0]
 
 	def _sklearn():
+		from sklearn.metrics import roc_auc_score
 		return roc_auc_score(
 			y_true=np.r_[np.zeros(n_neg, dtype=int), np.ones(n_pos, dtype=int)],
 			y_score=np.concatenate([neg_sorted, pos_sorted]))
