@@ -198,7 +198,7 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 	new_seqlets = track_set.create_seqlets(seqlets=new_seqlets)
 
 	if len(new_seqlets) > 0:
-		return core.SeqletSet(seqlets=new_seqlets)
+		return core.SeqletSet(seqlets=new_seqlets, track_set=track_set)
 	else:
 		return None
 
@@ -444,8 +444,8 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 			results[i] = [core.SeqletSet(track_set.create_seqlets([
 				core.Seqlet(example_idx=example_idx, start=start, end=end,
 					is_revcomp=is_revcomp)
-				for example_idx, start, end, is_revcomp in coordinates]))
-				for coordinates in refined]
+				for example_idx, start, end, is_revcomp in coordinates]),
+				track_set=track_set) for coordinates in refined]
 		return results
 
 	to_refine = [i for i, pattern in enumerate(patterns)

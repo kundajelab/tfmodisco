@@ -36,6 +36,46 @@ class TrackSet(object):
 
 		return seqlets
 
+	def _add_seqlet_sums(self, seqlets, length, sums):
+		"""Add up the three tracks of `seqlets` into `sums`, the zeroed
+		running sums of a SeqletSet of that length, as SeqletSet.__init__
+		adds them up: in seqlet order, from the seqlets' coordinates rather
+		than their arrays (util._seqlet_sums). The seqlets must be this
+		track set's: each one's arrays the views create_seqlets makes at its
+		coordinates, and each `length` long. Returns False, with `sums`
+		zero again, when the kernel does not apply: tracks that are not
+		float32 (N, L, 4) arrays of one shape, a coordinate outside them, or
+		a NaN among the values."""
+
+		tracks = (self.one_hot, self.contrib_scores, self.hypothetical_contribs)
+		for track in tracks:
+			if not (isinstance(track, np.ndarray) and track.dtype == np.float32
+					and track.ndim == 3 and track.shape == tracks[0].shape
+					and track.shape[2] == 4):
+				return False
+
+		if len(seqlets) == 0 or sums[0].shape != (length, 4):
+			return False
+
+		example_idx = np.array([seqlet.example_idx for seqlet in seqlets],
+			dtype=np.int64)
+		starts = np.array([seqlet.start for seqlet in seqlets], dtype=np.int64)
+		revcomp = np.array([bool(seqlet.is_revcomp) for seqlet in seqlets],
+			dtype=np.uint8)
+
+		n_examples, track_length, _ = tracks[0].shape
+		if (example_idx.min() < 0 or example_idx.max() >= n_examples
+				or starts.min() < 0 or starts.max() + length > track_length):
+			return False
+
+		if util._seqlet_sums(*tracks, example_idx, starts, revcomp, *sums):
+			return True
+
+		for total in sums:
+			total[...] = 0.0
+		return False
+
+
 class Seqlet(object):
 	def __init__(self, example_idx, start, end, is_revcomp):
 		self.example_idx = example_idx
@@ -97,7 +137,10 @@ class Seqlet(object):
 
 
 class SeqletSet():
-	def __init__(self, seqlets):
+	def __init__(self, seqlets, track_set=None):
+		# track_set: the TrackSet whose create_seqlets made `seqlets`, when
+		# the caller knows it, so that the sums can be added up from the
+		# seqlets' coordinates (TrackSet._add_seqlet_sums).
 		self.seqlets = []
 		self.unique_seqlets = {}
 		lengths = [len(seqlet) for seqlet in seqlets]
@@ -132,12 +175,14 @@ class SeqletSet():
 
 			if self.seqlets:
 				self.per_position_counts += len(self.seqlets)
-				for total, track in ((self._sequence_sum, 'sequence'),
-						(self._contrib_sum, 'contrib_scores'),
-						(self._hypothetical_sum, 'hypothetical_contribs')):
-					np.add.reduce(np.array([getattr(seqlet, track) for seqlet
-						in self.seqlets]), axis=0, dtype=np.float64,
-						initial=0.0, out=total)
+				if track_set is None or not track_set._add_seqlet_sums(
+						self.seqlets, self.length, self._sums()):
+					for total, track in ((self._sequence_sum, 'sequence'),
+							(self._contrib_sum, 'contrib_scores'),
+							(self._hypothetical_sum, 'hypothetical_contribs')):
+						np.add.reduce(np.array([getattr(seqlet, track)
+							for seqlet in self.seqlets]), axis=0,
+							dtype=np.float64, initial=0.0, out=total)
 		else:
 			for seqlet in seqlets:
 				if seqlet.string not in self.unique_seqlets:

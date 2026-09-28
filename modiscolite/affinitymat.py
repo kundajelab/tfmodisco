@@ -518,8 +518,16 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	if min_overlap is not None:
 		n_pad = int(func(X.shape[1]*(1-min_overlap)))
-		pad_width = ((0,0), (n_pad, n_pad), (0,0)) 
-		Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
+		if n_pad >= 0 and isinstance(Y, np.ndarray) and Y.ndim == 3:
+			# np.pad(mode="constant") without its Python overhead, as in
+			# pearson_correlations: zeros of Y's dtype around a copy of Y.
+			m, l, k = Y.shape
+			Y_padded = np.zeros((m, l + 2*n_pad, k), dtype=Y.dtype)
+			Y_padded[:, n_pad:n_pad+l] = Y
+			Y = Y_padded
+		else:
+			pad_width = ((0,0), (n_pad, n_pad), (0,0)) 
+			Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 	else:
 		n_pad = 0 
 
@@ -560,7 +568,10 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 		best = np.empty((n, k), dtype='float32')
 		best_idx = np.empty((n, k), dtype='int64')
 		flags = np.zeros(n, dtype='uint8')
-		_jaccard_best(X, Y, seqlet_neighbors, best, best_idx, flags)
+		# One row of Y (aggregator._best_alignment, once per seqlet) runs
+		# on this thread: the same scores without a parallel launch.
+		kernel = _jaccard_best_serial if n == 1 else _jaccard_best
+		kernel(X, Y, seqlet_neighbors, best, best_idx, flags)
 
 		if return_sparse != True:
 			results = np.zeros((n, k, 2))
@@ -831,6 +842,127 @@ def _jaccard_best(X, Y, neighbors, best, best_idx, flags):
 	L_pad = d - 1 + n_offsets
 
 	for l in prange(ny):
+		flag = 0
+
+		if len_output == 1:
+			for i in range(n_neighbors):
+				min_sum = 0.0
+				max_sum = 0.0
+				neighbor_li = neighbors[l, i]
+
+				for j in range(d):
+					for k in range(m):
+						sign = np.sign(X[neighbor_li, j, k]) * np.sign(Y[l, j, k])
+
+						x = abs(X[neighbor_li, j, k])
+						y = abs(Y[l, j, k])
+
+						if y > x:
+							min_sum += x * sign
+							max_sum += y
+						else:
+							min_sum += y * sign
+							max_sum += x
+
+				score = np.float32(min_sum / max_sum)
+				if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+					flag = 1
+
+				best[l, i] = score
+				best_idx[l, i] = 0
+
+		else:
+			# |Y| and sign(Y) for this row, channel-major, so that the
+			# offsets of one (position, channel) pair are contiguous. Zero
+			# past the end.
+			abs_Y = np.empty((m, L_pad), dtype=np.float32)
+			sign_Y = np.empty((m, L_pad), dtype=np.float32)
+			for j in range(L):
+				for k in range(m):
+					abs_Y[k, j] = abs(Y[l, j, k])
+					sign_Y[k, j] = np.sign(Y[l, j, k])
+			for k in range(m):
+				for j in range(L, L_pad):
+					abs_Y[k, j] = 0.0
+					sign_Y[k, j] = 0.0
+
+			min_sums = np.empty(n_offsets, dtype=np.float64)
+			max_sums = np.empty(n_offsets, dtype=np.float64)
+
+			for i in range(n_neighbors):
+				neighbor_li = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_sums[idx] = 0.0
+					max_sums[idx] = 0.0
+
+				# Offsets innermost, two channels per pass: each offset's
+				# sums still take their terms in (j, k) order.
+				for j in range(d):
+					for k in range(0, m, 2):
+						x0 = abs(X[neighbor_li, j, k])
+						x1 = abs(X[neighbor_li, j, k+1])
+						sign_x0 = np.sign(X[neighbor_li, j, k])
+						sign_x1 = np.sign(X[neighbor_li, j, k+1])
+
+						for idx in range(n_offsets):
+							min_sum = min_sums[idx]
+							max_sum = max_sums[idx]
+
+							y = abs_Y[k, j + idx]
+							sign = sign_x0 * sign_Y[k, j + idx]
+							gt = y > x0
+							min_sum += (x0 if gt else y) * sign
+							max_sum += y if gt else x0
+
+							y = abs_Y[k+1, j + idx]
+							sign = sign_x1 * sign_Y[k+1, j + idx]
+							gt = y > x1
+							min_sum += (x1 if gt else y) * sign
+							max_sum += y if gt else x1
+
+							min_sums[idx] = min_sum
+							max_sums[idx] = max_sum
+
+				best_score = np.float32(0.0)
+				best_offset = 0
+				for idx in range(len_output):
+					score = np.float32(min_sums[idx] / max_sums[idx])
+					if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+						flag = 1
+
+					if idx == 0 or (best_score == best_score and not (score <= best_score)):
+						best_score = score
+						best_offset = idx
+
+				best[l, i] = best_score
+				best_idx[l, i] = best_offset
+
+		flags[l] = flag
+
+
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], int32[:, ::1], float32[:, ::1], int64[:, ::1], uint8[::1])')
+@njit(nogil=True, error_model='numpy')
+def _jaccard_best_serial(X, Y, neighbors, best, best_idx, flags):
+	"""`_jaccard_best` without `prange`: the same statements, rows one
+	after another on the calling thread. For the one-row calls of
+	`aggregator._best_alignment` (one per seqlet merged into a pattern), a
+	parallel launch for a single row costs more than the row's work. Each
+	score is the same float64 sums, taken in the same order, as in
+	`_jaccard_best`, so the outputs are bit-identical to its outputs. The
+	numpy error model is the one numba gives a prange body, so 0 / 0 is a
+	NaN here too, not a ZeroDivisionError."""
+
+	nx, d, m = X.shape
+	ny, L, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = L - d + 1
+
+	# The offsets are padded to a multiple of 8 so the vectorized loop over
+	# them has no scalar remainder; the padding offsets are never read.
+	n_offsets = (len_output + 7) // 8 * 8
+	L_pad = d - 1 + n_offsets
+
+	for l in range(ny):
 		flag = 0
 
 		if len_output == 1:

@@ -115,12 +115,16 @@ def _kernels():
 		[(affinitymat._fwd_rev_best, None)],
 		# tfmodisco._density_adaptation's kernels, in the order it calls them.
 		# binary_search_perplexity is compiled into _perplexity_betas.
-		# _jaccard_best is first called in _patterns_from_clusters, after the
-		# first main clustering, so it is queued behind them.
+		# _jaccard_best_serial and _seqlet_sums are first called in
+		# _patterns_from_clusters, after the first main clustering, so they
+		# are queued behind them. (_jaccard_best is not listed: only jaccard
+		# calls with several rows reach it, which a run makes only where
+		# jaccard_from_seqlets' kernel or _jaccard_all turns its input down,
+		# so, like _jaccard, it is compiled on first use.)
 		[(util._transpose_triples, None), (util._transpose, None),
 			(util._symmetrize, None), (util._perplexity_betas, None),
 			(util._row_sums_plus_one, None), (util._add_diagonal, None),
-			(affinitymat._jaccard_best, None)],
+			(affinitymat._jaccard_best_serial, None), (util._seqlet_sums, None)],
 		# First called in aggregator._detect_spurious_merging, after both
 		# main clusterings; _roc_corners in its SimilarPatternsCollapser.
 		[(affinitymat._signs_magnitudes, (A(types.float32, 2, 'C'),

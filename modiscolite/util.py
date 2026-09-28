@@ -354,6 +354,53 @@ def _add_diagonal(indptr, indices, data, diag, out_indptr, out_indices,
 	return w
 
 
+@precompile.signature('uint8(float32[:, :, :], float32[:, :, :], '
+	'float32[:, :, :], int64[::1], int64[::1], uint8[::1], float64[:, ::1], '
+	'float64[:, ::1], float64[:, ::1])')
+@njit(nogil=True)
+def _seqlet_sums(one_hot, contrib_scores, hypothetical_contribs, example_idx,
+	starts, revcomp, sequence_sum, contrib_sum, hypothetical_sum):
+	"""Add the three tracks of each seqlet, in seqlet order, into the
+	running sums, which start at zero: the seqlet at (example_idx[s],
+	starts[s], revcomp[s]) and as long as the sums, read from the track
+	arrays as `core.TrackSet.create_seqlets` makes its views (the reverse
+	strand as [::-1, ::-1]). Each sum adds its values one seqlet after
+	another, each converted exactly to float64, which is the order of
+	`SeqletSet.__init__`'s reductions over the stacked seqlets. Returns 0
+	when a value is a NaN, whose payload could then depend on the order of
+	each addition's operands; the sums are then unfinished."""
+
+	n, k = sequence_sum.shape
+	for s in range(example_idx.shape[0]):
+		e = example_idx[s]
+		start = starts[s]
+		for c in range(k):
+			if revcomp[s]:
+				ci = k - 1 - c
+				for j in range(n):
+					p = start + n - 1 - j
+					a = one_hot[e, p, ci]
+					b = contrib_scores[e, p, ci]
+					h = hypothetical_contribs[e, p, ci]
+					if a != a or b != b or h != h:
+						return 0
+					sequence_sum[j, c] += a
+					contrib_sum[j, c] += b
+					hypothetical_sum[j, c] += h
+			else:
+				for j in range(n):
+					p = start + j
+					a = one_hot[e, p, c]
+					b = contrib_scores[e, p, c]
+					h = hypothetical_contribs[e, p, c]
+					if a != a or b != b or h != h:
+						return 0
+					sequence_sum[j, c] += a
+					contrib_sum[j, c] += b
+					hypothetical_sum[j, c] += h
+	return 1
+
+
 def compute_per_position_ic(ppm, background, pseudocount):
 	"""Compute information content at each position of ppm.
 
