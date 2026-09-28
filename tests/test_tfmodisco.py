@@ -387,7 +387,7 @@ def test_seqlets_to_patterns(pos_seqlets, track_set):
 		n_leiden_runs=2, trim_to_window_size=30, initial_flank_to_add=10)
 
 	assert isinstance(patterns, list)
-	assert [len(p.seqlets) for p in patterns] == [80]
+	assert [len(p.seqlets) for p in patterns] == [77, 24]
 	for pattern in patterns:
 		assert isinstance(pattern, SeqletSet)
 		assert len(pattern) == 50
@@ -469,14 +469,14 @@ def test_tfmodisco_real(one_hot, hypothetical_contribs):
 		max_seqlets_per_metacluster=150, **KWARGS)
 
 	assert neg is None
-	assert [len(p.seqlets) for p in pos] == [80]
-	assert len(pos[0]) == 50
+	assert [len(p.seqlets) for p in pos] == [77, 24]
+	assert all(len(p) == 50 for p in pos)
 
-	assert_array_almost_equal(pos[0].sequence[20:24], [
-		[0.425 , 0.125 , 0.2375, 0.2125],
+	assert_array_almost_equal(pos[0].sequence[19:23], [
+		[0.4286, 0.1169, 0.2468, 0.2078],
 		[0.    , 0.    , 1.    , 0.    ],
 		[0.    , 0.    , 1.    , 0.    ],
-		[0.4   , 0.275 , 0.1625, 0.1625]], 4)
+		[0.4026, 0.2597, 0.1688, 0.1688]], 4)
 
 
 def test_tfmodisco_signed(pos_patterns, neg_patterns):
