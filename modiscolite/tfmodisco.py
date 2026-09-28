@@ -2,6 +2,9 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+import mmap
+import pickle
+
 import numba
 import numpy as np
 
@@ -255,9 +258,23 @@ def _filter_patterns(patterns, min_seqlet_support, window_size,
 
 
 # A share of clusters goes to a forked child only when it holds at least this
-# many seqlets: merging costs about 0.2 ms per seqlet, against 10-20 ms to
-# fork a child and reap it.
-MIN_CHILD_SEQLETS = 200
+# many seqlets. On the 20k input, merging costs 0.05-0.1 ms per seqlet with
+# one thread (PATTERN_THREADS), against 10-20 ms to fork a child and 10-20
+# ms more for it to exit, which this process waits for when the child
+# finishes last.
+MIN_CHILD_SEQLETS = 500
+
+# Bytes of shared memory set aside per seqlet of a child's share for the
+# pickled coordinates of its patterns, which hold no more seqlets than the
+# share: about 45 bytes per seqlet on the 20k input.
+SHARED_BYTES_PER_SEQLET = 128
+
+# Numba threads per process while patterns are built. Merging aligns one
+# seqlet at a time with small numba kernels, and each call pays for waking
+# every thread it has: on the 20k input, the largest round-1 cluster built
+# in 193 ms with 1 thread, 258 ms with 6 and 311 ms with 16, with the same
+# pattern each time.
+PATTERN_THREADS = 1
 
 
 def _pattern_from_cluster(seqlets, track_set, min_overlap, min_frac, min_num,
@@ -341,34 +358,75 @@ def _patterns_from_clusters(seqlets, track_set, min_overlap,
 	# views of the same arrays with the same strides as the child's, added
 	# in the same order, so every sum in the pattern has the same bits.
 	def build_share(share):
-		return [build(i) for i in share]
-
-	def pack_share(patterns):
-		return [None if pattern is None else [(seqlet.example_idx,
-			seqlet.start, seqlet.end, seqlet.is_revcomp)
-			for seqlet in pattern.seqlets] for pattern in patterns]
-
-	def unpack_share(packed):
-		return [None if coordinates is None else core.SeqletSet(
-			track_set.create_seqlets([core.Seqlet(example_idx=example_idx,
-				start=start, end=end, is_revcomp=is_revcomp)
-			for example_idx, start, end, is_revcomp in coordinates]))
-			for coordinates in packed]
+		return share, [build(i) for i in share]
 
 	n_budget = forked.budget()
 	plan = _plan_clusters([len(cluster_to_seqlets[i])
 		for i in range(num_clusters)], n_budget)
 
+	n_threads = min(n_budget, PATTERN_THREADS)
 	if plan is None or not forked.numba_fork_safe():
-		built = [build(i) for i in range(num_clusters)]
+		saved = numba.get_num_threads()
+		numba.set_num_threads(min(saved, n_threads))
+		try:
+			built = [build(i) for i in range(num_clusters)]
+		finally:
+			numba.set_num_threads(saved)
 	else:
 		bins, loads = plan
-		shares = forked.forked_map(build_share, bins,
-			budgets=forked._split_budget(loads, n_budget),
-			pack=pack_share, unpack=unpack_share)
+
+		# The pickled coordinates travel through a shared anonymous mapping,
+		# each child writing its own region, and only their place in it goes
+		# through the pipe. A pickle larger than the pipe (8 KB here) blocks
+		# its child until this process reads it, after building its own
+		# share, and the children then exit one after another, each reaped
+		# before the next is read. With the pipe unblocked, a child exits
+		# as soon as it is done, while this process still builds. A child
+		# whose pickle does not fit its region sends the coordinates through
+		# the pipe instead. Either way this process loads the same pickle.
+		regions, total = {}, 0
+		for share, load in zip(bins[1:], loads[1:]):
+			if share:
+				size = SHARED_BYTES_PER_SEQLET * load + 4096
+				regions[tuple(share)] = (total, size)
+				total += size
+
+		with mmap.mmap(-1, max(total, 1)) as shared:
+			def pack_share(result):
+				share, patterns = result
+				coordinates = [None if pattern is None else [(
+					seqlet.example_idx, seqlet.start, seqlet.end,
+					seqlet.is_revcomp) for seqlet in pattern.seqlets]
+					for pattern in patterns]
+
+				data = pickle.dumps(coordinates,
+					protocol=pickle.HIGHEST_PROTOCOL)
+				offset, size = regions.get(tuple(share), (0, -1))
+				if len(data) > size:
+					return share, coordinates
+
+				shared[offset:offset + len(data)] = data
+				return share, offset, len(data)
+
+			def unpack_share(packed):
+				if len(packed) == 3:
+					share, offset, length = packed
+					coordinates = pickle.loads(shared[offset:offset + length])
+				else:
+					share, coordinates = packed
+
+				return share, [None if pattern is None else core.SeqletSet(
+					track_set.create_seqlets([core.Seqlet(
+						example_idx=example_idx, start=start, end=end,
+						is_revcomp=is_revcomp) for example_idx, start, end,
+						is_revcomp in pattern])) for pattern in coordinates]
+
+			shares = forked.forked_map(build_share, bins,
+				budgets=[n_threads] * len(bins), pack=pack_share,
+				unpack=unpack_share)
 
 		built = [None] * num_clusters
-		for share, share_patterns in zip(bins, shares):
+		for share, (_, share_patterns) in zip(bins, shares):
 			for i, pattern in zip(share, share_patterns):
 				built[i] = pattern
 
@@ -378,33 +436,60 @@ def _patterns_from_clusters(seqlets, track_set, min_overlap,
 def _average_ranks(values, mask):
 	"""The 1-based ranks of each row's masked entries among themselves, ties
 	given their average rank, as scipy.stats.rankdata gives them. Entries
-	outside the mask get meaningless ranks."""
+	outside the mask get meaningless ranks.
+
+	A rank depends only on how many entries of its row are below it and
+	equal to it, so any sort gives the same ranks: the rows are sorted by
+	numpy's float64 argsort (float32 values widen to float64 exactly), or
+	not at all when every row already runs from high to low, as rows of
+	nearest-neighbour affinities do. Only rows holding a tie need the
+	average over their tie groups; in every other row the rank is the
+	sorted position plus one.
+	"""
 
 	n, k = values.shape
 	positions = np.arange(k)
 
 	# Entries outside the mask become NaN, which sorts after every number,
 	# so each row's masked entries come first and in order. NaN never equals
-	# anything, so it never joins a group of ties.
+	# anything, so it never joins a group of ties, and never passes the
+	# descending check.
 	x = np.where(mask, values, np.nan)
-	order = np.argsort(x, axis=1)
-	y = np.take_along_axis(x, order, axis=1)
+	if np.less_equal(x[:, 1:], x[:, :-1]).all():
+		order = None
+		y = x[:, ::-1]
+	else:
+		order = np.argsort(x.astype(np.float64, copy=False), axis=1)
+		order += (np.arange(n) * k)[:, None]
+		y = x.reshape(-1)[order]
 
-	starts = np.ones((n, k), dtype=bool)
+	starts = np.empty((n, k), dtype=bool)
+	starts[:, :1] = True
 	np.not_equal(y[:, 1:], y[:, :-1], out=starts[:, 1:])
-	ends = np.ones((n, k), dtype=bool)
-	ends[:, :-1] = starts[:, 1:]
 
-	first = np.maximum.accumulate(np.where(starts, positions, 0), axis=1)
-	last = np.minimum.accumulate(np.where(ends, positions, k)[:, ::-1],
-		axis=1)[:, ::-1]
+	sorted_ranks = np.empty((n, k), dtype='float64')
+	sorted_ranks[:] = positions + 1.0
 
-	# rankdata's ordinal rank of the first tie plus (count - 1) / 2: both are
-	# exact, so these are the same half-integers.
-	sorted_ranks = (first + 1) + (last - first) / 2
+	tied = np.flatnonzero(~starts.all(axis=1))
+	if len(tied) > 0:
+		starts = starts[tied]
+		ends = np.ones((len(tied), k), dtype=bool)
+		ends[:, :-1] = starts[:, 1:]
+
+		first = np.maximum.accumulate(np.where(starts, positions, 0), axis=1)
+		last = np.minimum.accumulate(np.where(ends, positions, k)[:, ::-1],
+			axis=1)[:, ::-1]
+
+		# rankdata's ordinal rank of the first tie plus (count - 1) / 2: both
+		# are exact, so these are the same half-integers. Where a row has no
+		# tie, first == last and this is the position plus one.
+		sorted_ranks[tied] = (first + 1) + (last - first) / 2
+
+	if order is None:
+		return np.ascontiguousarray(sorted_ranks[:, ::-1])
 
 	ranks = np.empty((n, k), dtype='float64')
-	np.put_along_axis(ranks, order, sorted_ranks, axis=1)
+	ranks.reshape(-1)[order] = sorted_ranks
 	return ranks
 
 
@@ -427,12 +512,25 @@ def _spearman_rows(fine_affmat_nn, coarse_affmat_nn, mask):
 	ranks_fine = _average_ranks(fine_affmat_nn, mask)
 	ranks_coarse = _average_ranks(coarse_affmat_nn, mask)
 
-	with np.errstate(divide='ignore', invalid='ignore'):
-		mean_fine = np.where(mask, ranks_fine, 0).sum(axis=1) / counts
-		mean_coarse = np.where(mask, ranks_coarse, 0).sum(axis=1) / counts
+	# With every entry masked, np.where(mask, a, 0) is a itself.
+	full = bool(mask.all())
 
-		centred_fine = np.where(mask, ranks_fine - mean_fine[:, None], 0)
-		centred_coarse = np.where(mask, ranks_coarse - mean_coarse[:, None], 0)
+	with np.errstate(divide='ignore', invalid='ignore'):
+		if full:
+			mean_fine = ranks_fine.sum(axis=1) / counts
+			mean_coarse = ranks_coarse.sum(axis=1) / counts
+
+			centred_fine = ranks_fine
+			centred_fine -= mean_fine[:, None]
+			centred_coarse = ranks_coarse
+			centred_coarse -= mean_coarse[:, None]
+		else:
+			mean_fine = np.where(mask, ranks_fine, 0).sum(axis=1) / counts
+			mean_coarse = np.where(mask, ranks_coarse, 0).sum(axis=1) / counts
+
+			centred_fine = np.where(mask, ranks_fine - mean_fine[:, None], 0)
+			centred_coarse = np.where(mask, ranks_coarse - mean_coarse[:, None],
+				0)
 		del ranks_fine, ranks_coarse
 
 		c_ff = (centred_fine * centred_fine).sum(axis=1)
@@ -447,9 +545,50 @@ def _spearman_rows(fine_affmat_nn, coarse_affmat_nn, mask):
 
 	# A constant input has every rank tied, so its exact sum of squares is 0.
 	# Masked fine entries are nonzero and so never NaN; coarse ones can be.
+	masked_coarse = coarse_affmat_nn if full else np.where(mask,
+		coarse_affmat_nn, 0)
 	undefined = ((counts <= 1) | (c_ff == 0) | (c_cc == 0) |
-		np.isnan(np.where(mask, coarse_affmat_nn, 0)).any(axis=1))
+		np.isnan(masked_coarse).any(axis=1))
 	correlations[undefined] = np.nan
+	return correlations
+
+
+# Entries per block of rows in _correlations: each thread's temporaries are
+# arrays of about this many float64s, around a megabyte. Threads other than
+# the main one allocate from their own malloc arenas, which keep what is
+# freed mapped, so the output is allocated in the calling thread, and at
+# most SPEARMAN_THREADS threads run: on the 20k input 8 threads were as
+# fast as 16 (the allocations contend) and kept 30 MB mapped against 74.
+SPEARMAN_BLOCK = 1 << 17
+SPEARMAN_THREADS = 8
+
+
+def _correlations(fine_affmat_nn, coarse_affmat_nn):
+	"""_spearman_rows over every row, with the mask |fine| > 0. Rows are
+	independent, so blocks of rows are shared among up to
+	numba.get_num_threads() threads (numpy releases the GIL in the sorts and
+	the elementwise work), each writing its own slice of the output. No
+	value depends on the blocks or the number of threads."""
+
+	n, k = fine_affmat_nn.shape
+	correlations = np.empty(n, dtype='float64')
+	step = max(1, SPEARMAN_BLOCK // max(k, 1))
+
+	def run(start):
+		block = slice(start, start + step)
+		fine = fine_affmat_nn[block]
+		correlations[block] = _spearman_rows(fine, coarse_affmat_nn[block],
+			np.abs(fine) > 0)
+
+	starts = range(0, n, step)
+	n_threads = min(numba.get_num_threads(), SPEARMAN_THREADS, len(starts))
+	if n_threads < 2:
+		for start in starts:
+			run(start)
+	else:
+		with ThreadPoolExecutor(n_threads) as pool:
+			list(pool.map(run, starts))
+
 	return correlations
 
 
@@ -463,35 +602,40 @@ def _filter_by_correlation(seqlets, seqlet_neighbors, coarse_affmat_nn,
 		len(seqlets) == len(fine_affmat_nn)):
 
 		n = len(fine_affmat_nn)
-		mask = np.abs(fine_affmat_nn) > 0
-
-		# Rows are independent. Blocks of 1,024 rows keep the temporaries to
-		# a few tens of MB rather than several arrays the size of the input.
-		correlations = np.empty(n, dtype='float64')
-		for start in range(0, n, 1024):
-			block = slice(start, start + 1024)
-			correlations[block] = _spearman_rows(fine_affmat_nn[block],
-				coarse_affmat_nn[block], mask[block])
+		correlations = _correlations(fine_affmat_nn, coarse_affmat_nn)
 
 		filtered_rows_mask = correlations > correlation_threshold
+		rows = np.flatnonzero(filtered_rows_mask)
 
-		filtered_seqlets = [seqlet for seqlet, retained in zip(seqlets,
-			filtered_rows_mask) if retained == True]
+		seqlets = list(seqlets)
+		filtered_seqlets = [seqlets[i] for i in rows.tolist()]
 		if len(filtered_seqlets) == 0:
 			return filtered_seqlets, [], []
 
 		# Each retained row keeps, in order, the neighbours that are
 		# retained rows, renumbered to the retained rows' positions, and
 		# their affinities: int64 and fine_affmat_nn's dtype, as before.
+		# Each row is a view of one flat array, as np.split gives.
 		new_idx_mapping = np.cumsum(filtered_rows_mask) - 1
-		rows = np.flatnonzero(filtered_rows_mask)
 		neighbors = seqlet_neighbors[rows]
-		in_range = (neighbors >= 0) & (neighbors < n)
-		keep = in_range & filtered_rows_mask[np.where(in_range, neighbors, 0)]
+		if neighbors.size and (neighbors.min() < 0 or neighbors.max() >= n):
+			in_range = (neighbors >= 0) & (neighbors < n)
+			keep = in_range & filtered_rows_mask[np.where(in_range, neighbors,
+				0)]
+		else:
+			keep = np.take(filtered_rows_mask, neighbors)
 
-		splits = np.cumsum(keep.sum(axis=1))[:-1]
-		filtered_neighbors = np.split(new_idx_mapping[neighbors[keep]], splits)
-		filtered_affmat_nn = np.split(fine_affmat_nn[rows][keep], splits)
+		# np.compress over the flattened rows is a[keep] for a 2-D a, in the
+		# same row-major order.
+		bounds = [0] + np.cumsum(keep.sum(axis=1)).tolist()
+		bounds = list(zip(bounds[:-1], bounds[1:]))
+		keep = keep.ravel()
+		flat_neighbors = np.take(new_idx_mapping, np.compress(keep,
+			neighbors.ravel()))
+		del neighbors
+		flat_affmat_nn = np.compress(keep, fine_affmat_nn[rows].ravel())
+		filtered_neighbors = [flat_neighbors[a:b] for a, b in bounds]
+		filtered_affmat_nn = [flat_affmat_nn[a:b] for a, b in bounds]
 		return filtered_seqlets, filtered_neighbors, filtered_affmat_nn
 
 	correlations = []
