@@ -4,13 +4,87 @@
 
 import numpy as np
 
+from numba import njit
+
 from . import affinitymat
 from . import core
 from . import forked
+from . import precompile
 from . import util
 
 from collections import OrderedDict
 from sklearn.metrics import roc_auc_score
+
+
+@precompile.signature('float64[:, ::1](float64[::1], float64[::1])')
+@njit
+def _roc_corners(neg_sorted, pos_sorted):
+	"""The false and true positive counts (rows 0 and 1) of the ROC points
+	that sklearn's `roc_curve` keeps, for scores sorted ascending, finite,
+	and at least one of each class.
+
+	sklearn takes one point per distinct score, from the highest down: the
+	number of negatives and of positives scoring at least that much. Tied
+	scores (-0.0 == 0.0) make one point. With more than two points, it
+	keeps the first, the last, and each point where the step to the next
+	(the numbers of negatives and positives at the next score) differs from
+	the step into it: `np.diff(fps, 2)` or `np.diff(tps, 2)` is nonzero.
+	Here the two sorted classes are merged from the top, one distinct score
+	at a time, and the points are decided as the steps arrive. The counts
+	are integers, so these are the float64 values sklearn computes. The
+	first pass counts the points kept and the second writes them, so the
+	output is only as large as what is kept."""
+
+	n_neg, n_pos = neg_sorted.shape[0], pos_sorted.shape[0]
+	out = np.empty((2, 0), dtype=np.float64)
+
+	for write in range(2):
+		k = 0
+		a, b = n_neg - 1, n_pos - 1
+		fp, tp = 0, 0
+		n_points = 0
+		# The last point seen, not yet decided, and the step into it.
+		last_fp, last_tp, last_cn, last_cp = 0, 0, 0, 0
+
+		while a >= 0 or b >= 0:
+			if b < 0 or (a >= 0 and neg_sorted[a] >= pos_sorted[b]):
+				score = neg_sorted[a]
+			else:
+				score = pos_sorted[b]
+
+			cn = 0
+			while a >= 0 and neg_sorted[a] == score:
+				cn += 1
+				a -= 1
+
+			cp = 0
+			while b >= 0 and pos_sorted[b] == score:
+				cp += 1
+				b -= 1
+
+			fp += cn
+			tp += cp
+
+			# Keep the last point if it is the first, or if its step in
+			# differs from its step out.
+			if n_points > 0 and (n_points == 1 or cn != last_cn
+					or cp != last_cp):
+				if write:
+					out[0, k] = last_fp
+					out[1, k] = last_tp
+				k += 1
+
+			last_fp, last_tp, last_cn, last_cp = fp, tp, cn, cp
+			n_points += 1
+
+		# The last point is always kept.
+		if write:
+			out[0, k] = last_fp
+			out[1, k] = last_tp
+		else:
+			out = np.empty((2, k + 1), dtype=np.float64)
+
+	return out
 
 
 def _roc_auc_score(neg_scores, pos_scores):
@@ -19,57 +93,48 @@ def _roc_auc_score(neg_scores, pos_scores):
 	Returns the same float64 bits as sklearn 1.6.1's
 	`roc_auc_score(y_true=[0]*len(neg_scores) + [1]*len(pos_scores),
 	y_score=list(neg_scores) + list(pos_scores))`, without its input
-	validation and without building Python lists. The arithmetic after the
-	sort is sklearn's, step for step: the false and true positive counts at
-	each distinct score (`_binary_clf_curve`), the collinear intermediate
-	points dropped and (0, 0) prepended (`roc_curve`), both normalised by
-	their last value, and scipy's trapezoid expression (`auc`).
-
-	sklearn orders the scores with a stable argsort. The counts taken at the
-	end of each run of tied scores do not depend on the order inside the
-	run, so any correct sort gives the same points. Each class is sorted on
-	its own with numpy's quicksort, and a stable argsort of the two sorted
-	runs merges them in linear time.
+	validation and without building Python lists: each class is sorted with
+	numpy's quicksort and `_roc_auc_sorted` does the rest.
 	"""
 
 	neg_scores = np.asarray(neg_scores, dtype=np.float64).ravel()
 	pos_scores = np.asarray(pos_scores, dtype=np.float64).ravel()
-	n_neg, n_pos = neg_scores.shape[0], pos_scores.shape[0]
+	return _roc_auc_sorted(np.sort(neg_scores), np.sort(pos_scores))
+
+
+def _roc_auc_sorted(neg_sorted, pos_sorted):
+	"""`_roc_auc_score(neg_sorted, pos_sorted)` for 1-D float64 arrays that
+	are already sorted ascending, which it does not copy.
+
+	The arithmetic is sklearn's, step for step: the false and true positive
+	counts at each distinct score (`_binary_clf_curve`), the collinear
+	intermediate points dropped (`roc_curve`), which `_roc_corners` finds in
+	one merge of the two sorted classes, then (0, 0) prepended, both counts
+	normalised by their last value, and scipy's trapezoid expression
+	(`auc`) over the same arrays. sklearn orders the scores with a stable
+	argsort; the counts at each distinct score do not depend on the order
+	of tied scores, so any correct sort gives the same points.
+	"""
+
+	neg_sorted = np.ascontiguousarray(neg_sorted, dtype=np.float64)
+	pos_sorted = np.ascontiguousarray(pos_sorted, dtype=np.float64)
+	n_neg, n_pos = neg_sorted.shape[0], pos_sorted.shape[0]
 
 	def _sklearn():
 		return roc_auc_score(
 			y_true=np.r_[np.zeros(n_neg, dtype=int), np.ones(n_pos, dtype=int)],
-			y_score=np.concatenate([neg_scores, pos_scores]))
+			y_score=np.concatenate([neg_sorted, pos_sorted]))
 
 	# One class only: sklearn warns and returns nan.
 	if n_neg == 0 or n_pos == 0:
 		return _sklearn()
-
-	neg_sorted = np.sort(neg_scores)
-	pos_sorted = np.sort(pos_scores)
 
 	# NaN sorts last and -inf first; sklearn raises on either, so let it.
 	if not (np.isfinite(neg_sorted[0]) and np.isfinite(neg_sorted[-1])
 			and np.isfinite(pos_sorted[0]) and np.isfinite(pos_sorted[-1])):
 		return _sklearn()
 
-	y_score = np.concatenate([neg_sorted, pos_sorted])
-	desc_score_indices = np.argsort(y_score, kind="stable")[::-1]
-	y_true = desc_score_indices >= n_neg
-	y_score = y_score[desc_score_indices]
-
-	# sklearn.metrics._ranking._binary_clf_curve, sample_weight=None
-	distinct_value_indices = np.where(np.diff(y_score))[0]
-	threshold_idxs = np.r_[distinct_value_indices, y_true.size - 1]
-	tps = np.cumsum(y_true, dtype=np.float64)[threshold_idxs]
-	fps = 1 + threshold_idxs - tps
-
-	# sklearn.metrics.roc_curve, drop_intermediate=True
-	if len(fps) > 2:
-		optimal_idxs = np.where(np.r_[True, np.logical_or(np.diff(fps, 2),
-			np.diff(tps, 2)), True])[0]
-		fps = fps[optimal_idxs]
-		tps = tps[optimal_idxs]
+	fps, tps = _roc_corners(neg_sorted, pos_sorted)
 
 	tps = np.r_[0, tps]
 	fps = np.r_[0, fps]
@@ -427,11 +492,15 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 	# Pattern i's flattened subsample data and its within-pattern Jaccard
 	# depend only on pattern i, so they are computed once per pattern object
-	# rather than once per (i, j) pair. The key is the object itself (identity
-	# hash, and the dict keeps it alive so its id is not reused). An object's
-	# subsample is the same in every while iteration: its seqlets are never
-	# changed once it is in `patterns` (merging copies the parent first), and
-	# the subsample is drawn from a fresh RandomState(1234) each time.
+	# rather than once per (i, j) pair. The within-pattern scores are used
+	# only by the AUROC, which sorts them, so they are kept sorted, and a
+	# pair sorts only its between-pattern scores, in place: a forked worker
+	# then allocates no more than one copy of those. The key is the object
+	# itself (identity hash, and the dict keeps it alive so its id is not
+	# reused). An object's subsample is the same in every while iteration:
+	# its seqlets are never changed once it is in `patterns` (merging copies
+	# the parent first), and the subsample is drawn from a fresh
+	# RandomState(1234) each time.
 	pattern1_cache = {}
 
 	#loop until no more patterns get merged
@@ -464,6 +533,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 				within_pattern1_sims = affinitymat.jaccard(
 					flat_pattern1_fwdseqdata[:, :, None],
 					flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
+				within_pattern1_sims.sort()
 
 				pattern1_cache[patterns[i]] = (flat_pattern1_fwdseqdata,
 					within_pattern1_sims)
@@ -515,8 +585,9 @@ def SimilarPatternsCollapser(patterns, track_set,
 			between_pattern_sims = affinitymat.jaccard(
 				flat_pattern1_fwdseqdata[:, :, None],
 				flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()
+			between_pattern_sims.sort()
 
-			auroc = _roc_auc_score(between_pattern_sims,
+			auroc = _roc_auc_sorted(between_pattern_sims,
 				within_pattern1_sims)
 
 			return aligner_sim, auroc

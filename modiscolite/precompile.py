@@ -94,7 +94,7 @@ def _kernels():
 	after the others shares a child rather than add one to the start of the
 	run."""
 
-	from . import affinitymat, gapped_kmer, util
+	from . import affinitymat, aggregator, gapped_kmer, util
 
 	A = types.Array
 	i8 = types.int64
@@ -119,8 +119,9 @@ def _kernels():
 			(util._symmetrize, None), (util._perplexity_betas, None),
 			(util._row_sums_plus_one, None), (util._add_diagonal, None)],
 		# First called in aggregator._detect_spurious_merging, after both
-		# main clusterings.
-		[(affinitymat.pairwise_jaccard, (A(types.float32, 2, 'C'), i8))],
+		# main clusterings; _roc_corners in its SimilarPatternsCollapser.
+		[(affinitymat.pairwise_jaccard, (A(types.float32, 2, 'C'), i8)),
+			(aggregator._roc_corners, None)],
 	]
 
 
