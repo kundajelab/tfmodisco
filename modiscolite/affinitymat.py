@@ -453,13 +453,80 @@ _FWD_REV_STRIDE = 128
 _FWD_REV_ROWS = 16
 
 
+def _noalias(dispatcher):
+	"""Have numba compile the dispatcher with its array arguments marked
+	noalias, as it marks those of the function it makes of a parallel
+	loop's body. Otherwise LLVM would have to check at run time that no
+	array a vector loop writes overlaps one it reads, and with more than a
+	few such pairs it leaves the loop scalar. The flag is not one of
+	numba's public options, so it is set through the dispatcher's
+	compiler, when this numba has both; the dispatcher is then marked
+	`_modisco_noalias`."""
+
+	try:
+		from numba.core.compiler import Flags
+	except ImportError:
+		return dispatcher
+
+	compiler = getattr(dispatcher, '_compiler', None)
+	customize = getattr(compiler, '_customize_flags', None)
+	if customize is None or not hasattr(Flags, 'noalias'):
+		return dispatcher
+
+	def _customize_flags(flags):
+		flags = customize(flags)
+		flags.noalias = True
+		return flags
+
+	compiler._customize_flags = _customize_flags
+	dispatcher._modisco_noalias = True
+	return dispatcher
+
+
+def _one_hot_contribs(X):
+	"""Whether no position of any row of X, 8 channels, holds more than one
+	nonzero value among channels 4 to 7."""
+
+	nonzero = np.ascontiguousarray(X[:, :, 4:] != 0)
+	words = nonzero.view(np.uint32)
+	return bool(((words & (words - np.uint32(1))) == 0).all())
+
+
+def _fwd_rev_threads(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, sums):
+	"""Run `_fwd_rev_best8` over every task, sharing blocks of tasks among
+	numba.get_num_threads() threads."""
+
+	# A first call on no tasks, here in the main thread, waits for the
+	# kernel's compile and hands back the threads of the compile children
+	# that have finished, before the thread count is read.
+	_fwd_rev_best8(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums, 0, 0)
+
+	n_tasks = sums[0].shape[0]
+	n_threads = numba.get_num_threads()
+	n_blocks = max(1, min(n_tasks, 32 * n_threads))
+	bounds = [n_tasks * b // n_blocks for b in range(n_blocks + 1)]
+
+	def run(b):
+		_fwd_rev_best8(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums,
+			bounds[b], bounds[b+1])
+
+	if n_threads == 1 or n_blocks == 1:
+		for b in range(n_blocks):
+			run(b)
+	else:
+		with ThreadPoolExecutor(min(n_threads, n_blocks)) as pool:
+			list(pool.map(run, range(n_blocks)))
+
+
 def _jaccard_fwd_rev(X_fwd, X_rev, Y, seqlet_neighbors, min_overlap):
 	"""The array jaccard_from_seqlets returns, np.maximum of
 	jaccard(X_fwd, Y) and jaccard(X_rev, Y) with func=int and
 	return_sparse=True, computed by one kernel that scores both strands of
-	each neighbour against a row of Y while that row is in cache. Returns
-	None when the kernel does not apply, and the caller then makes the two
-	calls: channels not a multiple of 4, offsets that do not fit the
+	each neighbour against a row of Y while that row is in cache:
+	`_fwd_rev_best8`, on a pool of threads, for the 8 channels of
+	`util.get_2d_data_from_patterns` whose channels 4 to 7 are one-hot
+	sparse, else `_fwd_rev_best`. Returns None when neither applies, and
+	the caller then makes the two calls: channels not a multiple of 4, offsets that do not fit the
 	kernel's row buffer, a value that is not finite, any score that is a
 	NaN or a -0.0 (for those, as in `jaccard`, numpy's max decides which
 	bits come back), and the arguments on which `jaccard` itself raises.
@@ -504,7 +571,11 @@ def _jaccard_fwd_rev(X_fwd, X_rev, Y, seqlet_neighbors, min_overlap):
 
 	best = np.empty((ny, n_neighbors), dtype='float32')
 	flags = np.zeros(ny, dtype='uint8')
-	_fwd_rev_best(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums)
+	if (_FWD_REV_SERIAL and m == 8 and _one_hot_contribs(X_fwd)
+			and _one_hot_contribs(X_rev)):
+		_fwd_rev_threads(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, sums)
+	else:
+		_fwd_rev_best(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums)
 
 	if flags.any():
 		return None
@@ -1241,6 +1312,234 @@ def _fwd_rev_best(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
 
 				best[l, i] = best_score
 			flags[l] = flag
+
+
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], '
+	'float32[:, :, ::1], int32[:, ::1], int64, float32[:, ::1], uint8[::1], '
+	'float64[:, ::1], float64[:, ::1], float64[:, ::1], float64[:, ::1], '
+	'int64, int64)')
+@_noalias
+@njit(nogil=True, error_model='numpy')
+def _fwd_rev_best8(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
+	min_r, max_r, b0, b1):
+	"""`_fwd_rev_best`, for the rows of Y in tasks b0 to b1 - 1, when there
+	are 8 channels and in channels 4 to 7 no position of any row of Xf or
+	Xr holds more than one nonzero value: the layout of
+	`util.get_2d_data_from_patterns`, whose channels 4 to 7 are the
+	contribution scores, the hypothetical ones masked by a one-hot
+	sequence. Serial and without the GIL, for a pool of threads to share
+	the tasks: it compiles in half the time a parallel loop takes. Each
+	score's two sums take the float64 values `_fwd_rev_best`'s take, in
+	the same order, less zeros:
+
+	- One pass over the offsets per position adds all 8 channels' terms of
+	  both strands, in channel order.
+	- Channels 0 to 3: the min term is copysign(min(|y|, |x|), t), where
+	  t = sign(x) * y is read from the y or the -y row. Its magnitude is
+	  min(|t|, |x|) and its sign that of t, so it equals clamp(t, -|x|,
+	  |x|), the term `_fwd_rev_best` adds, but for the sign of a zero.
+	- Channels 4 to 7: the max terms of all four are added. Of the min
+	  terms, only the nonzero channel's is added (none is, and channel 4's
+	  row serves, when all four are zero): each other one is
+	  clamp(t, -0, +0), a zero.
+	- A sum starts at +0.0, so it is never -0.0, and adding a zero of
+	  either sign to it changes no bit.
+
+	The result depends neither on the number of threads nor on how the
+	tasks are shared: each row is scored by one task, and each task owns
+	its rows of the accumulators."""
+
+	nx, d, m = Xf.shape
+	ny, Ly, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = Ly + 2 * n_pad - d + 1
+	n_offsets = (len_output + 7) // 8 * 8
+	n_vectors = n_offsets // 8
+	L_pad = d - 1 + n_offsets
+	W = _FWD_REV_STRIDE
+	R = _FWD_REV_ROWS
+
+	for b in range(b0, b1):
+		# Rows 3k, 3k+1 and 3k+2 of the buffer hold y, -y and |y| for
+		# channel k, zero past either end of the row.
+		ybuf = np.empty(3 * m * W, dtype=np.float64)
+
+		for l in range(b * R, min(ny, (b + 1) * R)):
+			for k in range(m):
+				for p in range(L_pad):
+					j = p - n_pad
+					v = 0.0
+					if j >= 0 and j < Ly:
+						v = np.float64(Y[l, j, k])
+					ybuf[(3*k)*W + p] = v
+					ybuf[(3*k+1)*W + p] = -v
+					ybuf[(3*k+2)*W + p] = abs(v)
+
+			flag = 0
+			for i in range(n_neighbors):
+				nb = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_f[b, idx] = 0.0
+					max_f[b, idx] = 0.0
+					min_r[b, idx] = 0.0
+					max_r[b, idx] = 0.0
+
+				for j in range(d):
+					# Channels 0 to 3, both strands: |x| and the buffer row
+					# holding sign(x) * y. (Unsigned indices spare the
+					# negative-index checks.)
+					base = j
+					x = np.float64(Xf[nb, j, np.uint64(0)])
+					af0 = abs(x)
+					of0 = base + (0 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(0)])
+					ar0 = abs(x)
+					or0 = base + (0 + (1 if x < 0 else 0))*W
+					x = np.float64(Xf[nb, j, np.uint64(1)])
+					af1 = abs(x)
+					of1 = base + (3 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(1)])
+					ar1 = abs(x)
+					or1 = base + (3 + (1 if x < 0 else 0))*W
+					x = np.float64(Xf[nb, j, np.uint64(2)])
+					af2 = abs(x)
+					of2 = base + (6 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(2)])
+					ar2 = abs(x)
+					or2 = base + (6 + (1 if x < 0 else 0))*W
+					x = np.float64(Xf[nb, j, np.uint64(3)])
+					af3 = abs(x)
+					of3 = base + (9 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(3)])
+					ar3 = abs(x)
+					or3 = base + (9 + (1 if x < 0 else 0))*W
+					# Channels 4 to 7: |x| of each, and of the one that may
+					# be nonzero, v (its value: a sum of it and zeros,
+					# exact), its channel c and the row holding sign(v) * y.
+					x0 = np.float64(Xf[nb, j, np.uint64(4)])
+					x1 = np.float64(Xf[nb, j, np.uint64(5)])
+					x2 = np.float64(Xf[nb, j, np.uint64(6)])
+					x3 = np.float64(Xf[nb, j, np.uint64(7)])
+					bf0 = abs(x0)
+					bf1 = abs(x1)
+					bf2 = abs(x2)
+					bf3 = abs(x3)
+					v = x0 + x1 + x2 + x3
+					c = (1 if x1 != 0 else 0) + (2 if x2 != 0 else 0) + (3 if x3 != 0 else 0)
+					avf = abs(v)
+					nvf = -avf
+					ovf = base + (12 + 3*c + (1 if v < 0 else 0))*W
+					x0 = np.float64(Xr[nb, j, np.uint64(4)])
+					x1 = np.float64(Xr[nb, j, np.uint64(5)])
+					x2 = np.float64(Xr[nb, j, np.uint64(6)])
+					x3 = np.float64(Xr[nb, j, np.uint64(7)])
+					br0 = abs(x0)
+					br1 = abs(x1)
+					br2 = abs(x2)
+					br3 = abs(x3)
+					v = x0 + x1 + x2 + x3
+					c = (1 if x1 != 0 else 0) + (2 if x2 != 0 else 0) + (3 if x3 != 0 else 0)
+					avr = abs(v)
+					nvr = -avr
+					ovr = base + (12 + 3*c + (1 if v < 0 else 0))*W
+
+					for vec in range(n_vectors):
+						for q in range(8):
+							idx = vec * 8 + q
+							mf = min_f[b, idx]
+							Mf = max_f[b, idx]
+							mr = min_r[b, idx]
+							Mr = max_r[b, idx]
+
+							ya = ybuf[np.uint64(base + 2*W + idx)]
+							t = ybuf[np.uint64(of0 + idx)]
+							u = ya if ya < af0 else af0
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af0 else af0
+							t = ybuf[np.uint64(or0 + idx)]
+							u = ya if ya < ar0 else ar0
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar0 else ar0
+
+							ya = ybuf[np.uint64(base + 5*W + idx)]
+							t = ybuf[np.uint64(of1 + idx)]
+							u = ya if ya < af1 else af1
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af1 else af1
+							t = ybuf[np.uint64(or1 + idx)]
+							u = ya if ya < ar1 else ar1
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar1 else ar1
+
+							ya = ybuf[np.uint64(base + 8*W + idx)]
+							t = ybuf[np.uint64(of2 + idx)]
+							u = ya if ya < af2 else af2
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af2 else af2
+							t = ybuf[np.uint64(or2 + idx)]
+							u = ya if ya < ar2 else ar2
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar2 else ar2
+
+							ya = ybuf[np.uint64(base + 11*W + idx)]
+							t = ybuf[np.uint64(of3 + idx)]
+							u = ya if ya < af3 else af3
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af3 else af3
+							t = ybuf[np.uint64(or3 + idx)]
+							u = ya if ya < ar3 else ar3
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar3 else ar3
+
+							ya = ybuf[np.uint64(base + 14*W + idx)]
+							Mf += ya if ya > bf0 else bf0
+							Mr += ya if ya > br0 else br0
+
+							ya = ybuf[np.uint64(base + 17*W + idx)]
+							Mf += ya if ya > bf1 else bf1
+							Mr += ya if ya > br1 else br1
+
+							ya = ybuf[np.uint64(base + 20*W + idx)]
+							Mf += ya if ya > bf2 else bf2
+							Mr += ya if ya > br2 else br2
+
+							ya = ybuf[np.uint64(base + 23*W + idx)]
+							Mf += ya if ya > bf3 else bf3
+							Mr += ya if ya > br3 else br3
+							t = ybuf[np.uint64(ovf + idx)]
+							t = t if t > nvf else nvf
+							mf += t if t < avf else avf
+							t = ybuf[np.uint64(ovr + idx)]
+							t = t if t > nvr else nvr
+							mr += t if t < avr else avr
+
+							min_f[b, idx] = mf
+							max_f[b, idx] = Mf
+							min_r[b, idx] = mr
+							max_r[b, idx] = Mr
+
+				# With no NaN and no -0.0 among the scores, equal scores
+				# have equal bits, so any maximum is the one numpy's gives.
+				best_score = np.float32(0.0)
+				for idx in range(len_output):
+					s_f = np.float32(min_f[b, idx] / max_f[b, idx])
+					s_r = np.float32(min_r[b, idx] / max_r[b, idx])
+					if s_f != s_f or (s_f == 0 and math.copysign(1.0, s_f) < 0):
+						flag = 1
+					if s_r != s_r or (s_r == 0 and math.copysign(1.0, s_r) < 0):
+						flag = 1
+
+					s = s_f if s_f > s_r else s_r
+					if idx == 0 or s > best_score:
+						best_score = s
+
+				best[l, i] = best_score
+			flags[l] = flag
+
+
+# Whether `_fwd_rev_best8` compiles with its arrays marked noalias; without
+# that its vector loops stay scalar, and `_fwd_rev_best` is used instead.
+_FWD_REV_SERIAL = getattr(_fwd_rev_best8, '_modisco_noalias', False)
 
 
 @precompile.signature('uint8(float32[:, ::1], float32[:, ::1], float32[:, ::1])')

@@ -112,7 +112,10 @@ def _kernels():
 			A(types.int64, 1, 'C'), A(types.int32, 1, 'C'),
 			A(types.float64, 1, 'C'), A(types.int64, 1, 'C'),
 			A(types.int32, 1, 'C'), A(types.float64, 1, 'C'), i8))],
-		[(affinitymat._fwd_rev_best, None)],
+		# The kernel jaccard_from_seqlets will run (_fwd_rev_best8 stands in
+		# for _fwd_rev_best whenever it can be compiled noalias).
+		[(affinitymat._fwd_rev_best8 if affinitymat._FWD_REV_SERIAL
+			else affinitymat._fwd_rev_best, None)],
 		# tfmodisco._density_adaptation's kernels, in the order it calls them.
 		# binary_search_perplexity is compiled into _perplexity_betas.
 		# _jaccard_best_serial and _seqlet_sums are first called in
