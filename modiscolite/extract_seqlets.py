@@ -2,6 +2,8 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
+import math
+
 import numpy as np
 
 from . import core
@@ -18,7 +20,7 @@ def _laplacian_null(track, window_size, num_to_samp, random_seed=1234):
 	percentiles_to_use = np.array([5*(x+1) for x in range(19)])
 
 	rng = np.random.RandomState()
-	values = np.concatenate(track, axis=0)
+	values = track.ravel()
 
 	# first estimate mu, using two level histogram to get to 1e-6
 	_, _, top_values = _bin_mode(values)
@@ -40,33 +42,36 @@ def _laplacian_null(track, window_size, num_to_samp, random_seed=1234):
 
 	rng.seed(random_seed)
 	prob_pos = float(len(pos_values))/(len(pos_values)+len(neg_values)) 
-	sampled_vals = []
 
-	for i in range(num_to_samp):
-		sign = 1 if (rng.uniform() < prob_pos) else -1
-		if sign == 1:
-			sampled_cdf = rng.uniform()
-			val = -np.log(1-sampled_cdf)/pos_laplace_lambda + mu 
-		else:
-			sampled_cdf = rng.uniform() 
-			val = mu + np.log(1-sampled_cdf)/neg_laplace_lambda
-		sampled_vals.append(val)
+	# Each sample draws two uniforms, the sign's and then the CDF's; one call
+	# for all of them gives the same stream as a call per draw. np.log gives
+	# the same bits for an array as for one float.
+	uniforms = rng.uniform(size=(num_to_samp, 2))
+	sign_positive = uniforms[:, 0] < prob_pos
+	sampled_cdf = uniforms[:, 1]
+	sampled_vals = np.where(sign_positive,
+		-np.log(1-sampled_cdf)/pos_laplace_lambda + mu,
+		mu + np.log(1-sampled_cdf)/neg_laplace_lambda)
 
-	sampled_vals = np.array(sampled_vals)
 	return sampled_vals[sampled_vals >= 0], sampled_vals[sampled_vals < 0]
 
 
 def _iterative_extract_seqlets(score_track, window_size, flank, suppress):
 	n, d = score_track.shape
 	seqlets = []
-	for example_idx, single_score_track in enumerate(score_track):
+	neg_inf = -np.inf
+
+	# A row with nothing above -inf would stop at its first argmax.
+	rows = np.flatnonzero((score_track > neg_inf).any(axis=1)).tolist()
+	for example_idx in rows:
+		single_score_track = score_track[example_idx]
+		row_argmax = single_score_track.argmax
 		while True:
-			argmax = np.argmax(single_score_track, axis=0)
-			max_val = single_score_track[argmax]
+			argmax = row_argmax()
 
 			#bail if exhausted everything that passed the threshold
 			#and was not suppressed
-			if max_val == -np.inf:
+			if single_score_track[argmax] == neg_inf:
 				break
 
 			#need to be able to expand without going off the edge
@@ -77,10 +82,12 @@ def _iterative_extract_seqlets(score_track, window_size, flank, suppress):
 
 				seqlets.append(seqlet)
 
-			#suppress the chunks within +- suppress
-			l_idx = int(max(np.floor(argmax+0.5-suppress),0))
-			r_idx = int(min(np.ceil(argmax+0.5+suppress), d))
-			single_score_track[l_idx:r_idx] = -np.inf 
+			#suppress the chunks within +- suppress; the same float64
+			#arithmetic as numpy's, on a Python int
+			position = int(argmax)
+			l_idx = int(max(math.floor(position+0.5-suppress),0))
+			r_idx = int(min(math.ceil(position+0.5+suppress), d))
+			single_score_track[l_idx:r_idx] = neg_inf
 
 	return seqlets
 
@@ -130,8 +137,8 @@ def _isotonic_thresholds(values, null_values, increasing, target_fdr,
 def _refine_thresholds(vals, pos_threshold, neg_threshold,
 	min_passing_windows_frac, max_passing_windows_frac):
 	frac_passing_windows =(
-		sum(vals >= pos_threshold)
-		 + sum(vals <= neg_threshold))/float(len(vals))
+		np.count_nonzero(vals >= pos_threshold)
+		 + np.count_nonzero(vals <= neg_threshold))/float(len(vals))
 
 	if frac_passing_windows < min_passing_windows_frac:
 		pos_threshold = np.percentile(

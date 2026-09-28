@@ -9,6 +9,7 @@ import h5py
 import numpy as np
 
 import modiscolite
+from modiscolite import precompile
 from modiscolite.util import calculate_window_offsets, MemeDataType
 
 
@@ -139,6 +140,11 @@ def motifs(
     verbose: bool,
 ):
     """Run TF-MoDISco and extract the motifs."""
+    # Fork the children that compile the numba kernels now, so that they
+    # compile while the inputs are read. The call at the top of TFMoDISco
+    # then does nothing.
+    precompile.start()
+
     if h5_path:
         f = h5py.File(h5_path, "r")
         try:

@@ -85,30 +85,57 @@ def _graph(affinity_mat):
 	n_vertices = affinity_mat.shape[0]
 	indptr, indices, data = (affinity_mat.indptr, affinity_mat.indices,
 		affinity_mat.data)
-	sources = np.repeat(np.arange(n_vertices), np.diff(indptr))
 
 	transpose = affinity_mat.T.tocsr()
-	if (np.array_equal(transpose.indptr, indptr) and
-			np.array_equal(transpose.indices, indices) and
-			transpose.data.tobytes() == data.tobytes()):
+	symmetric = (np.array_equal(transpose.indptr, indptr) and
+		np.array_equal(transpose.indices, indices) and
+		_same_bytes(transpose.data, data))
+	del transpose
+
+	# The row of each entry, in the indices' own integer type, which holds
+	# every vertex index.
+	sources = np.repeat(np.arange(n_vertices, dtype=indices.dtype),
+		np.diff(indptr))
+	if symmetric:
 		upper = indices >= sources
 		sources, targets, weights = sources[upper], indices[upper], data[upper]
+		del upper
 		weights = np.where(sources == targets, weights, weights + weights)
+
+		# Every index of a symmetric matrix is also a row, below n_vertices,
+		# so the pairs can hold the Python ints of `vertices`, made once,
+		# rather than two new ints per edge.
+		vertices = np.arange(n_vertices).astype(object)
+		to_ints = lambda chunk: vertices[chunk].tolist()
 	else:
 		targets, weights = indices, data
+		to_ints = np.ndarray.tolist
 
 	# python-igraph's abi3 build turns an ndarray edge list into a nested
 	# Python list (memoryview.tolist()), about 140 bytes per edge, before it
 	# reads a single pair. It reads any other iterable one pair at a time, so
-	# pairs taken from a chunk of Python ints at a time give the same edges,
-	# in the same order, while only one chunk's ints exist.
+	# pairs taken from a chunk at a time give the same edges, in the same
+	# order, while only one chunk's pairs exist.
 	edges = itertools.chain.from_iterable(
-		zip(sources[start:start+_EDGE_CHUNK].tolist(),
-			targets[start:start+_EDGE_CHUNK].tolist())
+		zip(to_ints(sources[start:start+_EDGE_CHUNK]),
+			to_ints(targets[start:start+_EDGE_CHUNK]))
 		for start in range(0, len(sources), _EDGE_CHUNK))
 
 	g = ig.Graph(n=n_vertices, edges=edges, directed=False)
 	return g, weights
+
+
+def _same_bytes(a, b):
+	"""Whether two arrays of one dtype and shape hold the same bytes, as
+	a.tobytes() == b.tobytes(), compared as unsigned integers of the item
+	size, without copying either array."""
+
+	if (a.dtype != b.dtype or a.shape != b.shape or a.dtype.kind not in
+			'biufcmM' or a.dtype.itemsize not in (1, 2, 4, 8)):
+		return a.tobytes() == b.tobytes()
+
+	unsigned = np.dtype('u{}'.format(a.dtype.itemsize))
+	return np.array_equal(a.view(unsigned), b.view(unsigned))
 
 
 def LeidenCluster(affinity_mat, n_seeds=2, n_leiden_iterations=-1):
