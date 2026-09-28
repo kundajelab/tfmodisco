@@ -190,11 +190,12 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 			end = seqlet.end + left_expansion
 		
 		if start >= 0 and end <= track_set.length:
-			seqlet = track_set.create_seqlets(
-				seqlets=[core.Seqlet(example_idx=seqlet.example_idx,
-					start=start, end=end, is_revcomp=seqlet.is_revcomp)])[0]
+			new_seqlets.append(core.Seqlet(example_idx=seqlet.example_idx,
+				start=start, end=end, is_revcomp=seqlet.is_revcomp))
 
-			new_seqlets.append(seqlet)
+	# One create_seqlets call for all of them: each seqlet gets the views it
+	# would get from a call of its own.
+	new_seqlets = track_set.create_seqlets(seqlets=new_seqlets)
 
 	if len(new_seqlets) > 0:
 		return core.SeqletSet(seqlets=new_seqlets)
@@ -259,7 +260,8 @@ def _best_alignment(fwd_data_parent, fwd_data_child, rev_data_child, metric,
 	shared length), its own scores at each offset and its own argmax. So the
 	two strands are stacked into one call, which returns what two calls
 	would. `pearson_correlation` normalizes by the norm of its whole first
-	argument, so each strand gets its own call.
+	argument, so each strand is scored on its own, against the parent's
+	windows prepared once (`affinitymat.pearson_correlations`).
 	"""
 
 	if metric is affinitymat.jaccard:
@@ -267,6 +269,13 @@ def _best_alignment(fwd_data_parent, fwd_data_child, rev_data_child, metric,
 		((best_crossmetric, best_crossmetric_argmax), (best_crossmetric_rev,
 			best_crossmetric_argmax_rev)) = metric(both_data_child,
 			fwd_data_parent, min_overlap)[0]
+	elif metric is affinitymat.pearson_correlation:
+		# The two calls below, with the parent's padded, normalized windows
+		# computed once for both strands.
+		fwd, rev = affinitymat.pearson_correlations([fwd_data_child,
+			rev_data_child], fwd_data_parent, min_overlap)
+		best_crossmetric, best_crossmetric_argmax = fwd.squeeze()
+		best_crossmetric_rev, best_crossmetric_argmax_rev = rev.squeeze()
 	else:
 		best_crossmetric, best_crossmetric_argmax = metric(fwd_data_child,
 			fwd_data_parent, min_overlap).squeeze()
@@ -367,6 +376,13 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 	return parent_pattern
 
 
+class _Seqlets(object):
+	"""A subsample's seqlets, as SimilarPatternsCollapser reads them."""
+
+	def __init__(self, seqlets):
+		self.seqlets = seqlets
+
+
 class PatternMergeHierarchy(object):
 	def __init__(self, root_nodes):
 		self.root_nodes = root_nodes
@@ -454,20 +470,26 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
 
 # The least estimated work, in seconds on one thread, that is worth giving
-# a forked worker in SimilarPatternsCollapser: about ten forks and reaps.
-PAIR_MIN_CHILD_SECONDS = 0.1
+# a forked worker in SimilarPatternsCollapser: about four forks of a process
+# of this size, which the parent makes one after another (8-13 ms each on a
+# 20,000-seqlet run) before it starts its own share.
+PAIR_MIN_CHILD_SECONDS = 0.05
 
 
 def _pair_seconds(n_i, n_j, length_i):
 	"""Estimated seconds on one thread to compute one (i, j) pair's entries
 	in SimilarPatternsCollapser, for subsamples of n_i and n_j seqlets and
-	pattern i of length length_i: a fixed cost (the alignment, shifting the
-	seqlets), the between-pattern Jaccard (n_i x n_j rows of 8 * length_i
-	values) and sorting the n_i ** 2 within-pattern scores in the AUROC.
-	Fitted to the 600 pairs of the final collapser on a 5,000-seqlet run;
-	used only to balance the pairs across forked workers."""
+	pattern i of length length_i: a fixed cost (the alignment), shifting
+	and stacking pattern j's seqlets, the between-pattern Jaccard (n_i x n_j
+	rows of 8 * length_i values) and the AUROC's pass over the n_i ** 2
+	within-pattern scores (sorted once per pattern, before the pairs).
+	Fitted to the 2,146 pairs of the largest pattern's refine collapser and
+	of the final collapser on a 20,000-seqlet run (the median pair within
+	10% of its estimate); used only to balance the pairs across forked
+	workers and to decide how many to fork."""
 
-	return 2.5e-3 + 1.35e-9 * n_i * n_j * 8 * length_i + 6.6e-9 * n_i * n_i
+	return (1.8e-4 + 4.0e-6 * n_j + 1.1e-9 * n_i * n_j * length_i
+		+ 1.9e-9 * n_i * n_i)
 
 
 def SimilarPatternsCollapser(patterns, track_set,
@@ -513,12 +535,18 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 		#Let's subsample 'patterns' to prevent runtime from being too
 		# large in calculating pairwise sims. 
+		# Only a subsample's seqlets are used: the ones core.SeqletSet(
+		# seqlets=subsample) would keep, the first of each string, without
+		# its running sums.
 		subsample_patterns = []
 		for pattern in patterns:
 			if len(pattern.seqlets) > max_seqlets_subsample:
 				subsample = np.random.RandomState(1234).choice(
 					a=pattern.seqlets, replace=False, size=max_seqlets_subsample)
-				pattern = core.SeqletSet(seqlets=subsample)
+				kept = {}
+				for seqlet in subsample:
+					kept.setdefault(seqlet.string, seqlet)
+				pattern = _Seqlets(list(kept.values()))
 
 			subsample_patterns.append(pattern)
 

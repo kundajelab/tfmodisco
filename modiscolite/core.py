@@ -212,7 +212,56 @@ class SeqletSet():
 			sorted(subcluster_to_subpattern.items(),
 				   key=lambda x: -len(x[1].seqlets)))
 
+	@classmethod
+	def _assemble(cls, seqlets, unique_seqlets, length, per_position_counts,
+		sums):
+		"""A SeqletSet holding this state, made without __init__'s pass over
+		the seqlets. The caller guarantees that it is what
+		SeqletSet(seqlets) would hold: `seqlets` and `unique_seqlets` as
+		__init__ would keep them, and `per_position_counts` and `sums` (the
+		sequence, contrib_scores and hypothetical_contribs running sums) as
+		it would add them up from those seqlets, value for value."""
+
+		self = cls.__new__(cls)
+		self.seqlets = seqlets
+		self.unique_seqlets = unique_seqlets
+		self.length = length
+		self._sequence_sum, self._contrib_sum, self._hypothetical_sum = sums
+		self.per_position_counts = per_position_counts
+		self._ppc = None
+		self._sequence = None
+		self._contrib_scores = None
+		self._hypothetical_contribs = None
+		self.subclusters = None
+		self.subcluster_to_subpattern = None
+		return self
+
+	def _sums(self):
+		return self._sequence_sum, self._contrib_sum, self._hypothetical_sum
+
+	def _spans_length(self):
+		"""Whether every seqlet, and each of its three tracks, is exactly as
+		long as this set: then every running sum has added every seqlet, in
+		order, at every position."""
+
+		n = self.length
+		for seqlet in self.seqlets:
+			if (len(seqlet) != n or seqlet.sequence.shape[0] != n
+					or seqlet.contrib_scores.shape[0] != n
+					or seqlet.hypothetical_contribs.shape[0] != n):
+				return False
+		return True
+
 	def copy(self):
+		# SeqletSet(seqlets=self.seqlets) keeps every seqlet when their
+		# strings are distinct, with this set's length, and adds up the same
+		# counts and sums in the same order, so this set's are copied.
+		if len(self.unique_seqlets) == len(self.seqlets):
+			return SeqletSet._assemble(list(self.seqlets),
+				dict(self.unique_seqlets), self.length,
+				self.per_position_counts.copy(),
+				tuple(total.copy() for total in self._sums()))
+
 		return SeqletSet(seqlets=[seqlet for seqlet in self.seqlets])
 
 	def trim_to_support(self, min_frac, min_num):
@@ -234,6 +283,23 @@ class SeqletSet():
 		for seqlet in self.seqlets:
 				new_seqlet = seqlet.trim(start_idx=start_idx, end_idx=end_idx)
 				new_seqlets.append(new_seqlet)
+
+		# When every seqlet spans this set and the window lies inside it,
+		# each trimmed seqlet is its seqlet's rows start_idx:end_idx; if their
+		# strings are still distinct, SeqletSet(new_seqlets) keeps all of
+		# them and adds up at each position, in the same order, the values
+		# this set added up there, so its counts and sums are this set's over
+		# the window.
+		if 0 <= start_idx < end_idx <= self.length:
+			unique = {seqlet.string: seqlet for seqlet in new_seqlets}
+			if len(unique) == len(new_seqlets) and self._spans_length():
+				length = end_idx - start_idx
+				counts = np.zeros((length,))
+				counts += len(new_seqlets)
+				return SeqletSet._assemble(new_seqlets, unique, length, counts,
+					tuple(total[start_idx:end_idx].copy()
+						for total in self._sums()))
+
 		return SeqletSet(seqlets=new_seqlets)
 
 	def _add_seqlet(self, seqlet):

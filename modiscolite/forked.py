@@ -4,7 +4,7 @@
 """Run independent pieces of work in forked child processes.
 
 Each child inherits the parent's memory copy-on-write, so nothing is pickled
-on the way in, and sends its result back pickled over a pipe. The work of a
+on the way in, and sends its result back pickled (`_Result`). The work of a
 child that could not be forked or that failed is done again in the parent,
 so a result never depends on whether a child succeeded.
 
@@ -18,6 +18,7 @@ import os
 import sys
 import pickle
 import signal
+import tempfile
 import warnings
 import threading
 
@@ -77,26 +78,104 @@ def _set_budget(n, n_threads=None):
 	numba.set_num_threads(n if n_threads is None else n_threads)
 
 
+class _Result:
+	"""Where one forked child leaves its pickled result for this process.
+
+	An unnamed temporary file, made before the fork: the child writes the
+	whole pickle into it and exits, and this process reads it once it has
+	reaped the child. A pipe holds 64 KB, or less for a user whose pipe
+	buffers are capped, which is less than many results, and a child writing
+	into a full pipe waits for this process, often still busy with its own
+	share, to read it; only then does the child exit, and reaping it waits
+	for the teardown of its copy of the address space (10-30 ms for a
+	process of this size), one child after another. When no temporary file
+	can be made, the result goes through a pipe as before.
+
+	Made in this process before the fork; `send` runs in the child, `opened`
+	in this process after the fork, `received` in this process after
+	`os.waitpid` has returned an exit status of 0, and `close` in this
+	process in every case.
+	"""
+
+	def __init__(self):
+		self._file = None
+		self._reader = None
+		self._fds = ()
+		self._data = None
+		try:
+			self._file = tempfile.TemporaryFile(buffering=0)
+		except OSError:
+			self._fds = os.pipe()
+
+	def send(self, result):
+		"""In the child: write the pickled result."""
+
+		if self._file is not None:
+			with open(self._file.fileno(), 'wb', closefd=False) as handle:
+				pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)
+		else:
+			read_fd, write_fd = self._fds
+			os.close(read_fd)
+			with os.fdopen(write_fd, 'wb') as handle:
+				pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+	def opened(self):
+		"""In this process, after the fork: keep only a pipe's reading end."""
+
+		if self._fds:
+			read_fd, write_fd = self._fds
+			self._fds = ()
+			os.close(write_fd)
+			self._reader = os.fdopen(read_fd, 'rb')
+
+	def drain(self):
+		"""In this process, before waiting for the child: read a pipe to its
+		end, so that a child blocked writing into it can finish and exit."""
+
+		if self._reader is not None:
+			self._data = self._reader.read()
+
+	def received(self):
+		"""The bytes the child wrote, once it has exited with status 0."""
+
+		if self._file is None:
+			return self._data
+
+		self._file.seek(0)
+		return self._file.readall()
+
+	def close(self):
+		for handle in (self._file, self._reader):
+			if handle is not None:
+				handle.close()
+		for fd in self._fds:
+			os.close(fd)
+		self._file = self._reader = self._data = None
+		self._fds = ()
+
+
 def forked_map(func, shares, budgets=None, pack=None, unpack=None):
 	"""Return [func(share) for share in shares], computing shares[1:] in
 	forked children, one child each, while this process computes shares[0].
 
-	A child returns pack(func(share)) over a pipe, and this process applies
-	unpack to what it receives; both default to the identity, and neither is
-	applied to a share this process computes itself. With budgets, child k
-	sets its budget and numba's thread count to budgets[k] before it starts,
-	and this process runs shares[0] with budgets[0]; without them (a child
-	that never calls numba) nothing is changed. If a fork raises, or a child
-	exits non-zero, is killed or sends a pickle that does not load, its share
-	is computed again here with this process's own budget. On an exception
-	in this process, every child still running is killed and reaped.
+	A child returns pack(func(share)) (through a `_Result`), and this process
+	applies unpack to what it receives; both default to the identity, and
+	neither is applied to a share this process computes itself. With
+	budgets, child k sets its budget and numba's thread count to budgets[k]
+	before it starts, and this process runs shares[0] with budgets[0];
+	without them (a child that never calls numba) nothing is changed. If a
+	fork raises, or a child exits non-zero, is killed or sends a pickle that
+	does not load, its share is computed again here with this process's own
+	budget. The children are reaped, and their results unpacked, in the
+	order of the shares. On an exception in this process, every child still
+	running is killed and reaped.
 	"""
 
 	children, results = [], [None] * len(shares)
 
 	try:
 		for k in range(1, len(shares)):
-			read_fd, write_fd = os.pipe()
+			channel = _Result()
 			try:
 				with warnings.catch_warnings():
 					# Python >= 3.12 warns when a multi-threaded process
@@ -106,15 +185,13 @@ def forked_map(func, shares, budgets=None, pack=None, unpack=None):
 					warnings.simplefilter('ignore', DeprecationWarning)
 					pid = os.fork()
 			except OSError:
-				os.close(read_fd)
-				os.close(write_fd)
+				channel.close()
 				children.append((None, None, k))
 				continue
 
 			if pid == 0:
 				code = 1
 				try:
-					os.close(read_fd)
 					if budgets is not None:
 						_set_budget(budgets[k])
 
@@ -122,15 +199,13 @@ def forked_map(func, shares, budgets=None, pack=None, unpack=None):
 					if pack is not None:
 						result = pack(result)
 
-					with os.fdopen(write_fd, 'wb') as handle:
-						pickle.dump(result, handle,
-							protocol=pickle.HIGHEST_PROTOCOL)
+					channel.send(result)
 					code = 0
 				finally:
 					os._exit(code)
 
-			os.close(write_fd)
-			children.append((pid, os.fdopen(read_fd, 'rb'), k))
+			channel.opened()
+			children.append((pid, channel, k))
 
 		if budgets is None:
 			results[0] = func(shares[0])
@@ -143,20 +218,23 @@ def forked_map(func, shares, budgets=None, pack=None, unpack=None):
 				_set_budget(*saved)
 
 		while children:
-			pid, handle, k = children[0]
+			pid, channel, k = children[0]
 			result, received = None, False
 			if pid is not None:
-				data = handle.read()
-				handle.close()
+				channel.drain()
 				_, status = os.waitpid(pid, 0)
-				children[0] = (None, None, k)
+				children[0] = (None, channel, k)
 
 				if os.waitstatus_to_exitcode(status) == 0:
 					try:
-						result = pickle.loads(data)
+						result = pickle.loads(channel.received())
 						received = True
 					except Exception:
 						pass
+
+			if channel is not None:
+				channel.close()
+				children[0] = (None, None, k)
 
 			if received:
 				if unpack is not None:
@@ -168,9 +246,10 @@ def forked_map(func, shares, budgets=None, pack=None, unpack=None):
 			children.pop(0)
 
 	finally:
-		for pid, handle, k in children:
+		for pid, channel, k in children:
+			if channel is not None:
+				channel.close()
 			if pid is not None:
-				handle.close()
 				try:
 					os.kill(pid, signal.SIGKILL)
 					os.waitpid(pid, 0)
@@ -201,7 +280,7 @@ class Background:
 		self.pack = pack
 		self.unpack = unpack
 		self._pid = None
-		self._handle = None
+		self._channel = None
 		self._started = False
 		self._data = None
 
@@ -210,59 +289,61 @@ class Background:
 			return
 		self._started = True
 
-		read_fd, write_fd = os.pipe()
+		channel = _Result()
 		try:
 			with warnings.catch_warnings():
 				# As in forked_map.
 				warnings.simplefilter('ignore', DeprecationWarning)
 				pid = os.fork()
 		except OSError:
-			os.close(read_fd)
-			os.close(write_fd)
+			channel.close()
 			return
 
 		if pid == 0:
 			code = 1
 			try:
-				os.close(read_fd)
 				_set_budget(n_threads)
 
 				result = self.func()
 				if self.pack is not None:
 					result = self.pack(result)
 
-				with os.fdopen(write_fd, 'wb') as handle:
-					pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)
+				channel.send(result)
 				code = 0
 			finally:
 				os._exit(code)
 
-		os.close(write_fd)
-		self._pid, self._handle = pid, os.fdopen(read_fd, 'rb')
+		channel.opened()
+		self._pid, self._channel = pid, channel
 
 	def join(self):
 		if self._pid is None:
 			return
 
-		data = self._handle.read()
-		self._handle.close()
+		self._channel.drain()
 		_, status = os.waitpid(self._pid, 0)
-		self._pid = self._handle = None
+		self._pid = None
 
 		if os.waitstatus_to_exitcode(status) == 0:
-			self._data = data
+			try:
+				self._data = self._channel.received()
+			except OSError:
+				pass
+
+		self._channel.close()
+		self._channel = None
 
 	def kill(self):
 		if self._pid is None:
 			return
 
-		self._handle.close()
+		self._channel.close()
 		try:
 			os.kill(self._pid, signal.SIGKILL)
 			os.waitpid(self._pid, 0)
 		except OSError:
 			pass
-		self._pid = self._handle = None
+		self._pid = self._channel = None
 
 	def result(self):
 		self.join()

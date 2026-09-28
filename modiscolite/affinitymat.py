@@ -1183,13 +1183,27 @@ def _jaccard_all(X, Y, best):
 
 
 def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):
-	if X.ndim == 2:
-		X = X[None, :, :]
+	return pearson_correlations([X], Y, min_overlap=min_overlap, func=func)[0]
+
+
+def pearson_correlations(Xs, Y, min_overlap=None, func=np.ceil):
+	"""[pearson_correlation(X, Y, min_overlap, func) for X in Xs].
+
+	For arrays X of one shape, Y is padded once, and on the fast path its
+	windows are normalized once, for all of them; each X's scores are then
+	the same operations on the same operands as in a call of its own.
+	"""
+
+	Xs = [X[None, :, :] if X.ndim == 2 else X for X in Xs]
 	if Y.ndim == 2:
 		Y = Y[None, :, :]
 
+	if len(set(X.shape for X in Xs)) > 1:
+		return [pearson_correlations([X], Y, min_overlap=min_overlap,
+			func=func)[0] for X in Xs]
+
 	if min_overlap is not None:
-		n_pad = int(func(X.shape[1]*(1-min_overlap)))
+		n_pad = int(func(Xs[0].shape[1]*(1-min_overlap)))
 		if n_pad >= 0:
 			# np.pad(mode="constant") without its Python overhead: a new
 			# C-ordered array of Y's dtype, zeros around a copy of Y.
@@ -1201,51 +1215,66 @@ def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):
 			pad_width = ((0, 0), (n_pad, n_pad), (0, 0))
 			Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 
-	n, d, _ = X.shape
+	n, d, _ = Xs[0].shape
 	len_output = 1 + Y.shape[1] - d 
-	scores = np.zeros((n, len_output))
+	Y_normed = None
 
-	if (n == 1 and Y.shape[0] == 1 and X.shape[2] == Y.shape[2]
-			and len_output > 0 and X.dtype in (np.float32, np.float64)
-			and Y.dtype in (np.float32, np.float64)
-			and Y.flags.c_contiguous):
-		# The loop below with its loop-invariant work taken out. Every
-		# value comes from the same operation on the same operands:
-		# np.linalg.norm(Y_) is sqrt(Y_.ravel().dot(itself)), so each
-		# offset's window (a contiguous view, as Y_.ravel() is) is dotted
-		# with itself; sqrt and the division are elementwise and exact;
-		# np.dot casts both vectors to their common dtype, as done here,
-		# and each score is one np.dot of the same two contiguous vectors
-		# of the same length; nan_to_num maps each element as on a scalar.
-		k = Y.shape[2]
-		Y_flat = Y.reshape(-1)
-		windows = np.lib.stride_tricks.as_strided(Y_flat,
-			shape=(len_output, d*k), strides=(k*Y_flat.itemsize,
-			Y_flat.itemsize), writeable=False)
+	results = []
+	for X in Xs:
+		scores = np.zeros((n, len_output))
 
-		sqnorms = np.array(list(map(np.ndarray.dot, windows, windows)),
-			dtype=Y.dtype)
-		normed = windows / np.sqrt(sqnorms)[:, None]
+		if (n == 1 and Y.shape[0] == 1 and X.shape[2] == Y.shape[2]
+				and len_output > 0 and X.dtype in (np.float32, np.float64)
+				and Y.dtype in (np.float32, np.float64)
+				and Y.flags.c_contiguous):
+			# The loop below with its loop-invariant work taken out. Every
+			# value comes from the same operation on the same operands:
+			# np.linalg.norm(Y_) is sqrt(Y_.ravel().dot(itself)), so each
+			# offset's window (a contiguous view, as Y_.ravel() is) is dotted
+			# with itself; sqrt and the division are elementwise and exact;
+			# np.dot casts both vectors to their common dtype, as done here,
+			# and each score is one np.dot of the same two contiguous vectors
+			# of the same length; nan_to_num maps each element as on a scalar.
+			# The normalized windows depend only on Y and d, so they are
+			# made for the first X that needs them and kept for the rest.
+			if Y_normed is None:
+				k = Y.shape[2]
+				Y_flat = Y.reshape(-1)
+				windows = np.lib.stride_tricks.as_strided(Y_flat,
+					shape=(len_output, d*k), strides=(k*Y_flat.itemsize,
+					Y_flat.itemsize), writeable=False)
 
-		X_normed = (X / np.linalg.norm(X)).ravel()
-		dtype = np.result_type(X_normed, normed)
-		X_normed = X_normed.astype(dtype, copy=False)
-		normed = normed.astype(dtype, copy=False)
+				sqnorms = np.array(list(map(np.ndarray.dot, windows, windows)),
+					dtype=Y.dtype)
+				Y_normed = windows / np.sqrt(sqnorms)[:, None]
 
-		scores_ = np.array(list(map(X_normed.dot, normed)), dtype=dtype)
-		scores[0] = np.nan_to_num(scores_)
-	else:
-		for idx in range(len_output):
-			Y_ = Y[:, idx:idx+d]
+			X_normed = (X / np.linalg.norm(X)).ravel()
+			dtype = np.result_type(X_normed, Y_normed)
+			X_normed = X_normed.astype(dtype, copy=False)
+			normed = Y_normed.astype(dtype, copy=False)
 
-			scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
-					  (Y_ / np.linalg.norm(Y_)).ravel())
-			scores_ = np.nan_to_num(scores_)
-			scores[:,idx] = scores_
+			scores_ = np.array(list(map(X_normed.dot, normed)), dtype=dtype)
+			# nan_to_num changes only NaN and infinite values, so when there
+			# are none it returns an identical copy, which is skipped.
+			if np.isfinite(scores_).all():
+				scores[0] = scores_
+			else:
+				scores[0] = np.nan_to_num(scores_)
+		else:
+			for idx in range(len_output):
+				Y_ = Y[:, idx:idx+d]
 
-	argmaxs = np.argmax(scores, axis=1)
-	idxs = np.arange(len(scores))
-	return np.array([[scores[idxs, argmaxs], argmaxs - n_pad]]).transpose(0, 2, 1)
+				scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
+						  (Y_ / np.linalg.norm(Y_)).ravel())
+				scores_ = np.nan_to_num(scores_)
+				scores[:,idx] = scores_
+
+		argmaxs = np.argmax(scores, axis=1)
+		idxs = np.arange(len(scores))
+		results.append(np.array([[scores[idxs, argmaxs], argmaxs - n_pad]]
+			).transpose(0, 2, 1))
+
+	return results
 
 
 class NNTsneConditionalProbs():
