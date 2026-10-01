@@ -30,7 +30,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
+# The end-to-end regression tests expect the clusters leidenalg 0.11.0 finds.
+test = ["pytest", "pytest-cov", "leidenalg==0.11.0"]
 
 [project.urls]
 Homepage = "https://github.com/kundajelab/tfmodisco"
@@ -44,3 +45,10 @@ include = ["modiscolite"]
 
 [tool.setuptools.package-data]
 modiscolite = ["templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not cmd'"
+markers = [
+  "cmd: tests that invoke command-line entry points",
+]

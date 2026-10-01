@@ -13,6 +13,13 @@ modisco
 	- Unit tests
 	Thanks @MuhammedHasan!
 
+	- Unit tests now cover every module, run on a committed set of real
+	attributions instead of downloaded data, and finish in under a minute.
+	CLI tests are deselected by default; run them with `pytest -m cmd`.
+
+	- GitHub Actions runs the full test suite, including the CLI tests, on
+	Python 3.9 through 3.13 for every pull request and push to master.
+
 
 
 Version 2.5.2
