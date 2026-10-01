@@ -212,7 +212,7 @@ def test_extract_seqlet_data_values(modisco_h5):
 		[numpy.abs(data[tag]["cwm"]).sum(axis=1).mean() for tag in TAGS])
 
 
-@pytest.mark.skip(reason="bug: extract_seqlet_data computes gc_content as "
+@pytest.mark.xfail(strict=True, reason="bug: extract_seqlet_data computes gc_content as "
 	"the mean over the C and G columns of the PPM, which is half of the GC "
 	"fraction")
 def test_extract_seqlet_data_gc_content(modisco_h5):
@@ -631,7 +631,7 @@ def test_create_tomtom_match_logos_render(meme_db, tmp_path):
 		assert f.read(8) == b"\x89PNG\r\n\x1a\n"
 
 
-@pytest.mark.skip(reason="bug: create_tomtom_match_logos keys the database by "
+@pytest.mark.xfail(strict=True, reason="bug: create_tomtom_match_logos keys the database by "
 	"the first word of each MOTIF line, but tomtom-lite reports the whole "
 	"line, so --lite reports never draw match logos for databases with "
 	"alternate names such as JASPAR")

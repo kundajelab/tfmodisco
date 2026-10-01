@@ -52,7 +52,7 @@ def test_fasta_writer_independent():
 	assert FASTAWriter().entries == []
 
 
-@pytest.mark.skip(reason="bug: FASTAWriter.__init__ ignores its entries "
+@pytest.mark.xfail(strict=True, reason="bug: FASTAWriter.__init__ ignores its entries "
 	"argument and always starts empty")
 def test_fasta_writer_init_entries(entries):
 	writer = FASTAWriter(entries=entries)

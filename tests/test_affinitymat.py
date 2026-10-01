@@ -287,7 +287,7 @@ def test_cosine_similarity_from_seqlets_kwargs(seqlets, kwargs):
 	assert_array_equal(neighbors, neighbors_ref)
 
 
-@pytest.mark.skip(reason="bug: for max_len <= 13, 5**max_len fits in int32 "
+@pytest.mark.xfail(strict=True, reason="bug: for max_len <= 13, 5**max_len fits in int32 "
 	"so scipy builds the gapped k-mer matrix with int32 indices, which "
 	"_sparse_vv_dot's int64-only signature rejects with a TypingError")
 @pytest.mark.parametrize("max_len", [8, 10, 13])
@@ -400,7 +400,7 @@ def test_jaccard_from_seqlets_real(seqlets):
 		[1.0, 0.6897, 0.6896, 0.6064]], 4)
 
 
-@pytest.mark.skip(reason="bug: with seqlet_neighbors=None, "
+@pytest.mark.xfail(strict=True, reason="bug: with seqlet_neighbors=None, "
 	"jaccard_from_seqlets builds a list of lists, which jaccard then calls "
 	".astype on, raising AttributeError")
 def test_jaccard_from_seqlets_default_neighbors(seqlets):
@@ -741,7 +741,7 @@ def test_pearson_correlation_longer_y():
 	assert_array_almost_equal(result, [[[1.0, 12.0]]])
 
 
-@pytest.mark.skip(reason="bug: pearson_correlation raises UnboundLocalError "
+@pytest.mark.xfail(strict=True, reason="bug: pearson_correlation raises UnboundLocalError "
 	"when min_overlap is None because n_pad is only set inside the "
 	"min_overlap branch")
 def test_pearson_correlation_no_overlap():
@@ -750,7 +750,7 @@ def test_pearson_correlation_no_overlap():
 	assert_array_almost_equal(result, [[[1.0, 0.0]]])
 
 
-@pytest.mark.skip(reason="bug: pearson_correlation normalizes and correlates "
+@pytest.mark.xfail(strict=True, reason="bug: pearson_correlation normalizes and correlates "
 	"the whole batch at once, so every row receives the same score when "
 	"X holds more than one example")
 def test_pearson_correlation_batch():

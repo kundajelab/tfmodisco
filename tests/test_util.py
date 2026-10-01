@@ -482,7 +482,7 @@ def test_calculate_window_offsets_width(window_size):
 	assert end - start == window_size
 
 
-@pytest.mark.skip(reason="bug: calculate_window_offsets returns a window of "
+@pytest.mark.xfail(strict=True, reason="bug: calculate_window_offsets returns a window of "
 	"width window_size - 1 when window_size is odd, e.g. (8, 12) for "
 	"center=10, window_size=5")
 @pytest.mark.parametrize("window_size", [1, 5, 21, 401])

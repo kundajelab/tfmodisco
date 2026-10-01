@@ -597,7 +597,7 @@ def test_extract_seqlets_subset(attributions):
 	assert len(seqlets) > 50
 
 
-@pytest.mark.skip(reason="bug: extract_seqlets with flank=0 sets "
+@pytest.mark.xfail(strict=True, reason="bug: extract_seqlets with flank=0 sets "
 	"smoothed_tracks[:, -0:], which is every column, to -inf, so no seqlets "
 	"are ever returned")
 def test_extract_seqlets_no_flank(attributions):

@@ -47,6 +47,8 @@ def _affinity(n, k, random_state=0):
 
 
 def _density_reference(affmat_nn, seqlet_neighbors, perplexity):
+	# Legacy behavior snapshot, including the beta multiplication/division mismatch.
+	# test_review_regressions checks the intended perplexity independently.
 	n = len(affmat_nn)
 	D = numpy.zeros((n, n))
 	C = numpy.zeros((n, n))
@@ -454,7 +456,7 @@ def test_seqlets_to_patterns_planted():
 		assert len(set(s.example_idx < 40 for s in pattern.seqlets)) == 1
 
 
-@pytest.mark.skip(reason="bug: seqlets_to_patterns([]) raises numpy AxisError "
+@pytest.mark.xfail(strict=True, reason="bug: seqlets_to_patterns([]) raises numpy AxisError "
 	"while computing bg_freq, before it reaches its check for an empty "
 	"list of seqlets")
 def test_seqlets_to_patterns_empty(track_set):

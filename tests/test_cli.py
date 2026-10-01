@@ -158,7 +158,7 @@ def test_motifs_default_window(tmp_path):
 
 
 @pytest.mark.cmd
-@pytest.mark.skip(reason="bug: a window longer than the sequences gives a "
+@pytest.mark.xfail(strict=True, reason="bug: a window longer than the sequences gives a "
 	"negative start offset, which wraps around, so the error reports a "
 	"sequence length of 50 instead of 300")
 def test_motifs_default_window_message(tmp_path):
@@ -167,7 +167,7 @@ def test_motifs_default_window_message(tmp_path):
 
 
 @pytest.mark.cmd
-@pytest.mark.skip(reason="bug: calculate_window_offsets returns a window one "
+@pytest.mark.xfail(strict=True, reason="bug: calculate_window_offsets returns a window one "
 	"bp short when the window is odd, so an odd -w always fails with a "
 	"misleading 'Window cannot be longer than the sequence length' error")
 def test_motifs_odd_window(tmp_path):
@@ -366,6 +366,7 @@ def test_meme_datatype_required(modisco_h5):
 
 
 @pytest.mark.cmd
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_seqlet_bed(small_h5, tmp_path):
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 6)
@@ -378,9 +379,9 @@ def test_seqlet_bed(small_h5, tmp_path):
 	assert result.output == ""
 	lines = [l for l in open(output).read().split("\n")
 		if l and not l.startswith("track")]
-	assert lines == ["chr1\t250\t255\tpattern_0.0\t100\t+",
-		"chr1\t3268\t3273\tpattern_0.1\t103\t-",
-		"chrX\t5278\t5283\tpattern_0.0\t105\t+"]
+	assert lines == ["chr1\t249\t255\tpattern_0.0\t100\t+",
+		"chr1\t3267\t3273\tpattern_0.1\t103\t-",
+		"chrX\t5277\t5283\tpattern_0.0\t105\t+"]
 
 
 @pytest.mark.cmd
@@ -409,6 +410,7 @@ def test_seqlet_bed_chroms(small_h5, tmp_path):
 
 
 @pytest.mark.cmd
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_seqlet_bed_windowsize(small_h5, tmp_path):
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 6)
@@ -417,7 +419,7 @@ def test_seqlet_bed_windowsize(small_h5, tmp_path):
 	result = _invoke(["seqlet-bed", "-i", small_h5, "-p", peaks, "-c", "*",
 		"-o", output, "-q", "-w", 100])
 	assert result.exit_code == 0, result.output
-	assert "chr1\t220\t225\tpattern_0.0" in open(output).read()
+	assert "chr1\t219\t225\tpattern_0.0" in open(output).read()
 
 
 @pytest.mark.cmd
@@ -436,6 +438,7 @@ def test_seqlet_bed_required(small_h5, tmp_path, missing):
 
 
 @pytest.mark.cmd
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason='B11: FASTA must include the complete source span')
 def test_seqlet_fasta(small_h5, tmp_path):
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 6)
@@ -451,9 +454,11 @@ def test_seqlet_fasta(small_h5, tmp_path):
 	headers = open(output).read().split("\n")[::2]
 	assert headers == [">chr1:250-255 dir=+ pattern_0.0",
 		">chr1:3268-3273 dir=- pattern_0.1", ">chrX:5278-5283 dir=+ pattern_0.0"]
+	assert [len(s) for s in open(output).read().splitlines()[1::2]] == [6, 6, 6]
 
 
 @pytest.mark.cmd
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason='B11: FASTA must include the complete source span')
 def test_seqlet_fasta_real(modisco_h5, tmp_path):
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 300)
@@ -465,6 +470,7 @@ def test_seqlet_fasta_real(modisco_h5, tmp_path):
 	assert result.exit_code == 0, result.output
 	lines = open(output).read().split("\n")
 	assert len(lines) == 2 * (74 + 26 + 77 + 27)
+	assert all(len(s) == 50 for s in lines[1::2])
 
 
 @pytest.mark.cmd
