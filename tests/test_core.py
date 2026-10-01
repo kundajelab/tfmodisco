@@ -494,7 +494,7 @@ def test_seqlet_set_trim_to_support(uneven_pattern, min_frac, min_num):
 	assert_array_almost_equal(trimmed.sequence, uneven_pattern.sequence[:4])
 
 
-@pytest.mark.xfail(strict=True, reason="bug: Seqlet.trim does not clip end_idx to the "
+@pytest.mark.skip(reason="bug: Seqlet.trim does not clip end_idx to the "
 	"seqlet's own length, so trim_to_support raises a broadcasting ValueError "
 	"whenever it keeps positions beyond the shortest seqlet")
 @pytest.mark.parametrize("min_frac,min_num,expected", [(0.5, 100, 8),

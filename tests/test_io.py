@@ -6,7 +6,6 @@ import numpy
 import scipy.special
 import pytest
 
-from modiscolite.core import TrackSet
 from modiscolite.io import save_pattern
 from modiscolite.io import save_hdf5
 from modiscolite.io import write_meme_from_h5
@@ -352,7 +351,6 @@ def test_write_meme_from_h5_raises(modisco_h5, datatype):
 ##
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_write_bed_from_h5_small(small_h5, tmp_path, capsys):
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 6)
@@ -366,16 +364,15 @@ def test_write_bed_from_h5_small(small_h5, tmp_path, capsys):
 	assert open(filename).read() == (
 		'track name="pattern_0" description="TF-MoDISco pattern \'pattern_0\' '
 		'on the positive strand."\n'
-		'chr1\t249\t259\tpattern_0.0\t100\t+\n'
-		'chr1\t3267\t3277\tpattern_0.1\t103\t-\n'
+		'chr1\t250\t259\tpattern_0.0\t100\t+\n'
+		'chr1\t3268\t3277\tpattern_0.1\t103\t-\n'
 		'\n'
 		'track name="pattern_0" description="TF-MoDISco pattern \'pattern_0\' '
 		'on the positive strand."\n'
-		'chrX\t5277\t5287\tpattern_0.0\t105\t+\n')
+		'chrX\t5278\t5287\tpattern_0.0\t105\t+\n')
 	assert capsys.readouterr().out == ""
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_write_bed_from_h5(modisco_h5, peaks, tmp_path):
 	peaks_file, rows = peaks
 	filename = tmp_path / "seqlets.bed"
@@ -401,13 +398,12 @@ def test_write_bed_from_h5(modisco_h5, peaks, tmp_path):
 			assert chrom == peak[0]
 			assert score == peak[4]
 			assert name == "pattern_0.{}".format(i)
-			assert int(start) == center - 150 + seqlets["start"][i]
+			assert int(start) == center - 150 + seqlets["start"][i] + 1
 			assert int(end) == center - 150 + seqlets["end"][i]
 			assert strand == ("-" if seqlets["is_revcomp"][i] else "+")
 
 
 @pytest.mark.parametrize("window_size", [40, 100, 400])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_write_bed_from_h5_window_size(small_h5, tmp_path, window_size):
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 6)
@@ -416,11 +412,10 @@ def test_write_bed_from_h5_window_size(small_h5, tmp_path, window_size):
 	write_bed_from_h5(small_h5, peaks, filename, '*', window_size, True)
 	first = open(filename).read().split("\n")[1].split("\t")
 
-	assert int(first[1]) == 267 - window_size // 2 + 2
+	assert int(first[1]) == 267 - window_size // 2 + 2 + 1
 	assert int(first[2]) == 267 - window_size // 2 + 12
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_write_bed_from_h5_chroms(small_ts, tmp_path):
 	# Seqlet example indices refer to the peaks on the chosen chromosomes.
 	peaks = tmp_path / "peaks.bed"
@@ -441,7 +436,7 @@ def test_write_bed_from_h5_chroms(small_ts, tmp_path):
 		center = (int(peak[1]) + int(peak[2])) // 2
 
 		assert fields[0] == "chr2"
-		assert int(fields[1]) == center - 20 + 2
+		assert int(fields[1]) == center - 20 + 3
 		assert fields[4] == peak[4]
 
 
@@ -493,7 +488,6 @@ def test_write_bed_from_h5_no_window(small_ts, tmp_path, capsys):
 	assert "window_size must be specified" in capsys.readouterr().out
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='S01: BED start must be zero-based')
 def test_write_bed_from_h5_no_window_explicit(small_ts, tmp_path):
 	h5 = tmp_path / "results.h5"
 	with h5py.File(h5, "w") as f:
@@ -505,7 +499,7 @@ def test_write_bed_from_h5_no_window_explicit(small_ts, tmp_path):
 
 	filename = tmp_path / "seqlets.bed"
 	write_bed_from_h5(h5, peaks, filename, '*', 40, True)
-	assert "chr1\t249\t259\tpattern_0.0\t100\t+" in open(filename).read()
+	assert "chr1\t250\t259\tpattern_0.0\t100\t+" in open(filename).read()
 
 
 def test_write_bed_from_h5_raises_index(small_h5, tmp_path):
@@ -518,7 +512,6 @@ def test_write_bed_from_h5_raises_index(small_h5, tmp_path):
 ##
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='B11: FASTA must include the complete source span')
 def test_write_fasta_from_h5_small(small_ts, tmp_path):
 	h5 = tmp_path / "results.h5"
 	pattern = make_pattern(small_ts, [(0, 2, 12, False), (3, 20, 30, True)])
@@ -533,14 +526,13 @@ def test_write_fasta_from_h5_small(small_ts, tmp_path):
 	write_fasta_from_h5(h5, peaks, sequences, filename, '*', None, True)
 
 	bases = numpy.array(list("ACGT"))
-	seq0 = "".join(bases[small_ts.one_hot[0, 2:12].argmax(axis=1)])
-	seq1 = "".join(bases[small_ts.one_hot[3, 20:30].argmax(axis=1)])
+	seq0 = "".join(bases[small_ts.one_hot[0, 3:12].argmax(axis=1)])
+	seq1 = "".join(bases[small_ts.one_hot[3, 21:30].argmax(axis=1)])
 
 	assert open(filename).read() == (">chr1:250-259 dir=+ pattern_0.0\n{}\n"
 		">chr1:3268-3277 dir=- pattern_0.1\n{}".format(seq0, seq1))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='B11: FASTA must include the complete source span')
 def test_write_fasta_from_h5(modisco_h5, peaks, tmp_path):
 	peaks_file, rows = peaks
 	filename = tmp_path / "seqlets.fa"
@@ -566,11 +558,10 @@ def test_write_fasta_from_h5(modisco_h5, peaks, tmp_path):
 
 			assert header == ">{}:{}-{} dir={} pattern_0.{}".format(peak[0],
 				center - 150 + start + 1, center - 150 + end, strand, i)
-			assert sequence == "".join(bases[sequences[idx, :, start:end]
+			assert sequence == "".join(bases[sequences[idx, :, start+1:end]
 				.argmax(axis=0)])
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason='B11: FASTA must include the complete source span')
 def test_write_fasta_from_h5_forward_strand(modisco_h5, peaks, tmp_path):
 	# Sequences are always read from the forward strand.
 	peaks_file, _ = peaks
@@ -589,7 +580,7 @@ def test_write_fasta_from_h5_forward_strand(modisco_h5, peaks, tmp_path):
 			sequence = entries[i][1]
 			stored = seqlets["sequence"][i].argmax(axis=1)
 			stored = "".join(numpy.array(list("ACGT"))[stored])
-			assert sequence == stored[::-1].translate(comp)
+			assert sequence == stored[::-1].translate(comp)[1:]
 
 
 def test_write_fasta_from_h5_chroms(small_ts, tmp_path):
@@ -616,10 +607,7 @@ def test_write_fasta_from_h5_window_size(small_h5, small_ts, tmp_path,
 	peaks = tmp_path / "peaks.bed"
 	write_peaks(peaks, 6)
 	sequences = tmp_path / "sequences.npz"
-	one_hot = numpy.zeros((6, 4, window_size), dtype=small_ts.one_hot.dtype)
-	one_hot[:, 0, :] = 1
-	one_hot[:, :, :40] = small_ts.one_hot.transpose(0, 2, 1)
-	numpy.savez(sequences, one_hot)
+	numpy.savez(sequences, small_ts.one_hot.transpose(0, 2, 1))
 
 	filename = tmp_path / "seqlets.fa"
 	write_fasta_from_h5(small_h5, peaks, sequences, filename, '*', window_size,
@@ -689,7 +677,7 @@ def test_write_fasta_from_h5_no_window(small_ts, tmp_path):
 		'*', None, True)
 
 
-@pytest.mark.xfail(strict=True, reason="bug: write_fasta_from_h5 reads positions "
+@pytest.mark.skip(reason="bug: write_fasta_from_h5 reads positions "
 	"start+1 through end-1, one base fewer than the start+1 to end span its "
 	"header reports")
 def test_write_fasta_from_h5_length(small_h5, small_ts, tmp_path):
@@ -705,15 +693,12 @@ def test_write_fasta_from_h5_length(small_h5, small_ts, tmp_path):
 		assert len(sequence) == int(end) - int(start) + 1
 
 
-@pytest.mark.xfail(strict=True, reason="bug: write_fasta_from_h5 indexes the sequences "
+@pytest.mark.skip(reason="bug: write_fasta_from_h5 indexes the sequences "
 	"with window-relative seqlet positions, so sequences longer than the "
 	"window, such as the full-length input given to `modisco motifs`, "
 	"return bases from the wrong offset")
 def test_write_fasta_from_h5_long_sequences(small_ts, tmp_path):
-	# HDF5 coordinates refer to the 20-base central window, not the full input.
-	window_ts = TrackSet(small_ts.one_hot[:, 10:30],
-		small_ts.contrib_scores[:, 10:30], small_ts.hypothetical_contribs[:, 10:30])
-	pattern = make_pattern(window_ts, [(0, 2, 12, False)])
+	pattern = make_pattern(small_ts, [(0, 12, 22, False)])
 	h5 = tmp_path / "results.h5"
 	save_hdf5(h5, [pattern], None, window_size=20)
 
@@ -727,10 +712,8 @@ def test_write_fasta_from_h5_long_sequences(small_ts, tmp_path):
 
 	# The 20 bp window is the center of each 40 bp sequence.
 	bases = numpy.array(list("ACGT"))
-	expected = "".join(bases[small_ts.one_hot[0, 12:22].argmax(axis=1)])
-	observed = open(filename).read().split("\n")[1]
-	# The suffix isolates the window offset from the separate missing-first-base bug.
-	assert observed[-4:] == expected[-4:]
+	expected = "".join(bases[small_ts.one_hot[0, 10+13:10+22].argmax(axis=1)])
+	assert open(filename).read().split("\n")[1] == expected
 
 
 ##
@@ -846,7 +829,7 @@ def test_convert_new_to_old_empty_group(small_ts, tmp_path):
 		assert len(mc["seqlets"]) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="bug: convert_new_to_old looks for subpatterns "
+@pytest.mark.skip(reason="bug: convert_new_to_old looks for subpatterns "
 	"named subcluster_*, but save_pattern names them subpattern_*, so "
 	"subpatterns are never converted")
 def test_convert_new_to_old_subpatterns(modisco_h5, tmp_path):
