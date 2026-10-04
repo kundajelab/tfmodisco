@@ -46,11 +46,6 @@ def pytest_sessionstart(session):
 	X = numpy.array([[[0, 0, 1.0], [1, 1, 1.0]]])
 	gapped_kmer._extract_gkmers(X, 2, 2, 1, 2, 1)
 
-	data = numpy.ones(1)
-	indices = numpy.zeros(1, dtype='int64')
-	indptr = numpy.array([0, 1], dtype='int64')
-	affinitymat._sparse_mm_dot(data, indices, indptr, data, indices, indptr, 1)
-
 	# tomtom compiles separately for C- and F-ordered queries; transposed
 	# PPMs are F-ordered unless they are a single position long.
 	pwm = numpy.random.RandomState(0).dirichlet(numpy.ones(4), size=6).T
