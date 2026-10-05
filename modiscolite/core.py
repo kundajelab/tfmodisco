@@ -47,6 +47,20 @@ class TrackSet(object):
 		float32 (N, L, 4) arrays of one shape, a coordinate outside them, or
 		a NaN among the values."""
 
+		return self._coordinate_sums(
+			[seqlet.example_idx for seqlet in seqlets],
+			[seqlet.start for seqlet in seqlets],
+			[seqlet.is_revcomp for seqlet in seqlets], length, sums)
+
+	def _coordinate_sums(self, example_idx, starts, revcomp, length, sums):
+		"""_add_seqlet_sums for seqlets given by their coordinates rather
+		than as Seqlet objects: their example indices, starts and strands
+		(each seqlet's example_idx, start and is_revcomp, in seqlet order;
+		the strands may also be a uint8 array of their truth values), for
+		seqlets that are `length` long and whose arrays would be the views
+		create_seqlets makes at those coordinates. The same checks, the same
+		kernel and the same result."""
+
 		tracks = (self.one_hot, self.contrib_scores, self.hypothetical_contribs)
 		for track in tracks:
 			if not (isinstance(track, np.ndarray) and track.dtype == np.float32
@@ -54,14 +68,14 @@ class TrackSet(object):
 					and track.shape[2] == 4):
 				return False
 
-		if len(seqlets) == 0 or sums[0].shape != (length, 4):
+		if len(example_idx) == 0 or sums[0].shape != (length, 4):
 			return False
 
-		example_idx = np.array([seqlet.example_idx for seqlet in seqlets],
-			dtype=np.int64)
-		starts = np.array([seqlet.start for seqlet in seqlets], dtype=np.int64)
-		revcomp = np.array([bool(seqlet.is_revcomp) for seqlet in seqlets],
-			dtype=np.uint8)
+		example_idx = np.array(example_idx, dtype=np.int64)
+		starts = np.array(starts, dtype=np.int64)
+		if not (isinstance(revcomp, np.ndarray) and revcomp.dtype == np.uint8):
+			revcomp = np.array([bool(is_revcomp) for is_revcomp in revcomp],
+				dtype=np.uint8)
 
 		n_examples, track_length, _ = tracks[0].shape
 		if (example_idx.min() < 0 or example_idx.max() >= n_examples
@@ -87,8 +101,6 @@ class Seqlet(object):
 		self.contrib_scores = None
 		self.hypothetical_contribs = None
 
-		super(Seqlet, self).__init__()
-
 	def __str__(self):
 		return ("example:"+str(self.example_idx)
 				+",start:"+str(self.start)+",end:"+str(self.end)
@@ -97,9 +109,12 @@ class Seqlet(object):
 	def __len__(self):
 		return self.end - self.start
 
+	# str() of each coordinate, joined by underscores. aggregator's
+	# coordinate-only expansions (_expanded, _trimmed) build the same key
+	# with the same expression.
 	@property
 	def string(self):
-		return str(self.example_idx)+"_"+str(self.start)+"_"+str(self.end)
+		return f"{self.example_idx!s}_{self.start!s}_{self.end!s}"
 
 	def revcomp(self):
 		new_seqlet = Seqlet(
@@ -324,6 +339,12 @@ class SeqletSet():
 		return SeqletSet(seqlets=[seqlet for seqlet in self.seqlets])
 
 	def trim_to_support(self, min_frac, min_num):
+		left_idx, right_idx = self._support_window(min_frac, min_num)
+		return self.trim_to_idx(start_idx=left_idx, end_idx=right_idx) 
+
+	def _support_window(self, min_frac, min_num):
+		"""The (start_idx, end_idx) that trim_to_support trims to."""
+
 		max_support = max(self.per_position_counts)
 		num = min(min_num, max_support*min_frac)
 		
@@ -334,8 +355,8 @@ class SeqletSet():
 		right_idx = len(self.per_position_counts)
 		while self.per_position_counts[right_idx-1] < num:
 			right_idx -= 1
-		
-		return self.trim_to_idx(start_idx=left_idx, end_idx=right_idx) 
+
+		return left_idx, right_idx
 
 	def trim_to_idx(self, start_idx, end_idx):
 		new_seqlets = []

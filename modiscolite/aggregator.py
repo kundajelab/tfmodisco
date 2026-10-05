@@ -148,6 +148,11 @@ def _roc_auc_sorted(neg_sorted, pos_sorted):
 
 
 def polish_pattern(pattern, min_frac, min_num, track_set, flank, window_size, bg_freq):
+	polished = _polish_coordinates(pattern, min_frac, min_num, track_set,
+		flank, window_size, bg_freq)
+	if polished is not _NOT_APPLICABLE:
+		return polished
+
 	pattern = pattern.trim_to_support(min_frac=min_frac, min_num=min_num)
 
 	pattern = _expand_seqlets_to_fill_pattern(pattern, 
@@ -201,6 +206,283 @@ def _expand_seqlets_to_fill_pattern(pattern, track_set, left_flank_to_add,
 		return core.SeqletSet(seqlets=new_seqlets, track_set=track_set)
 	else:
 		return None
+
+
+# Pattern expansions and trims without the seqlets.
+#
+# Merging a seqlet into a pattern can expand the whole pattern, which makes
+# every one of its seqlets again (_expand_seqlets_to_fill_pattern), and
+# polishing trims, expands, trims and expands again; of all the seqlets
+# these steps make, only the last step's are kept. Here those steps are
+# taken on the seqlets' coordinates: a "shell" is a SeqletSet (made by
+# SeqletSet._assemble) whose `seqlets` hold (example_idx, start, end,
+# is_revcomp) tuples where the steps above would hold the Seqlet objects
+# made at those coordinates, and whose unique_seqlets maps each one's string
+# to its tuple. Its length, counts and running sums are the ones the
+# SeqletSet would have, so its averages are too. A shell never leaves this
+# module: _materialize makes it into the SeqletSet itself, with the Seqlet
+# objects, made by create_seqlets as the steps above make them.
+#
+# The coordinates are computed by the same expressions on the same values as
+# the steps they stand for (so they are the same objects of the same types),
+# and kept as SeqletSet keeps seqlets: the first of each string, in order.
+# Every seqlet of a shell spans it: an expansion makes every seqlet as long
+# as the expanded pattern, and a trim as long as its window.
+
+_NOT_APPLICABLE = object()
+
+
+def _expanded(entries, length, track_length, left, right):
+	"""The seqlets that _expand_seqlets_to_fill_pattern makes from a pattern
+	`length` long holding `entries` (Seqlet objects, or the tuples of a
+	shell, which span it), as SeqletSet keeps them: (kept, unique, all_kept),
+	the coordinate tuples kept, the dict from each one's string to it, and
+	whether every entry was kept (none fell off the track or repeated a
+	string)."""
+
+	kept, unique = [], {}
+	for entry in entries:
+		if type(entry) is tuple:
+			example_idx, start, end, is_revcomp = entry
+			n = length
+		else:
+			example_idx, start, end = entry.example_idx, entry.start, entry.end
+			is_revcomp = entry.is_revcomp
+			n = len(entry)
+
+		right_expansion = length - n + right
+		if is_revcomp == False:
+			start = start - left
+			end = end + right_expansion
+		else:
+			start = start - right_expansion
+			end = end + left
+
+		if start >= 0 and end <= track_length:
+			key = f"{example_idx!s}_{start!s}_{end!s}"
+			if key not in unique:
+				coordinates = (example_idx, start, end, is_revcomp)
+				unique[key] = coordinates
+				kept.append(coordinates)
+
+	return kept, unique, len(kept) == len(entries)
+
+
+def _trimmed(entries, start_idx, end_idx):
+	"""The seqlets that SeqletSet.trim_to_idx(start_idx, end_idx) keeps from
+	`entries` (Seqlet objects or a shell's tuples), as _expanded returns
+	them. Seqlet.trim's coordinates; trim_to_idx keeps the first of each
+	string in both of its paths."""
+
+	kept, unique = [], {}
+	for entry in entries:
+		if type(entry) is tuple:
+			example_idx, start, end, is_revcomp = entry
+		else:
+			example_idx, start, end = entry.example_idx, entry.start, entry.end
+			is_revcomp = entry.is_revcomp
+
+		if is_revcomp == False:
+			new_start = start + start_idx
+			new_end = start + end_idx
+		else:
+			new_start = end - end_idx
+			new_end = end - start_idx
+
+		key = f"{example_idx!s}_{new_start!s}_{new_end!s}"
+		if key not in unique:
+			coordinates = (example_idx, new_start, new_end, is_revcomp)
+			unique[key] = coordinates
+			kept.append(coordinates)
+
+	return kept, unique, len(kept) == len(entries)
+
+
+def _flank_sums(track_set, kept, length, interior, left, right):
+	"""The running sums of the seqlets at the coordinates `kept`, each
+	`length` long, whose values at positions left .. length - right are
+	those of seqlets whose running sums are `interior` (in the same order),
+	or None when the kernel does not apply.
+
+	SeqletSet adds each position's values one seqlet after another, from
+	0.0, and the kernel (TrackSet._coordinate_sums) does the same; the
+	additions at one position do not depend on any other position. So the
+	interior positions take the same additions as `interior` did, and only
+	the flanks are added up here: the left flank as seqlets `left` long and
+	the right flank as seqlets `right` long, at the starts that give the
+	same track positions (the reverse strand reads its seqlet backwards, so
+	its left flank is the end of its window)."""
+
+	example_idx = np.array([coordinates[0] for coordinates in kept],
+		dtype=np.int64)
+	starts = np.array([coordinates[1] for coordinates in kept], dtype=np.int64)
+	revcomp = np.array([bool(coordinates[3]) for coordinates in kept],
+		dtype=np.uint8)
+	strand = revcomp.astype(bool)
+
+	sums = tuple(np.zeros((length, 4), dtype='float') for _ in range(3))
+	middle = length - right
+	for total, inner in zip(sums, interior):
+		total[left:middle] = inner
+
+	for n, flank_starts, rows in (
+			(left, np.where(strand, starts + (length - left), starts),
+				slice(0, left)),
+			(right, np.where(strand, starts, starts + middle),
+				slice(middle, length))):
+		if n == 0:
+			continue
+
+		flank = tuple(np.zeros((n, 4), dtype='float') for _ in range(3))
+		if not track_set._coordinate_sums(example_idx, flank_starts, revcomp,
+				n, flank):
+			return None
+
+		for total, part in zip(sums, flank):
+			total[rows] = part
+
+	return sums
+
+
+def _coordinate_set(track_set, kept, unique, length, reuse=None):
+	"""The shell of SeqletSet(seqlets, track_set=track_set) for seqlets of
+	this length at the coordinates `kept` (as _expanded returns them), or
+	_NOT_APPLICABLE when the kernel does not apply, which SeqletSet would
+	then not use either. reuse: (interior sums, left, right) from the
+	pattern these seqlets were expanded from (_flank_sums), when every one
+	of its seqlets was kept, in order, and its sums are the kernel's for
+	them."""
+
+	if reuse is not None:
+		interior, left, right = reuse
+		if any(np.isnan(inner).any() for inner in interior):
+			reuse = None
+
+	sums = None
+	if reuse is not None:
+		sums = _flank_sums(track_set, kept, length, interior, left, right)
+
+	if sums is None:
+		sums = tuple(np.zeros((length, 4), dtype='float') for _ in range(3))
+		if not track_set._coordinate_sums([coordinates[0] for coordinates in
+				kept], [coordinates[1] for coordinates in kept],
+				[coordinates[3] for coordinates in kept], length, sums):
+			return _NOT_APPLICABLE
+
+	per_position_counts = np.zeros((length,))
+	per_position_counts += len(kept)
+	return core.SeqletSet._assemble(kept, unique, length, per_position_counts,
+		sums)
+
+
+def _materialize(shell, track_set):
+	"""The SeqletSet a shell stands for: each coordinate tuple made into a
+	Seqlet with the views create_seqlets gives it, the Seqlet objects
+	already there kept, and the same counts and sums."""
+
+	made = iter(track_set.create_seqlets([core.Seqlet(example_idx=entry[0],
+		start=entry[1], end=entry[2], is_revcomp=entry[3])
+		for entry in shell.seqlets if type(entry) is tuple]))
+	seqlets = [next(made) if type(entry) is tuple else entry
+		for entry in shell.seqlets]
+
+	unique_seqlets = dict(zip(shell.unique_seqlets, seqlets))
+	assert len(unique_seqlets) == len(seqlets) == len(shell.unique_seqlets)
+	return core.SeqletSet._assemble(seqlets, unique_seqlets, shell.length,
+		shell.per_position_counts, shell._sums())
+
+
+def _expand_shell(pattern, track_set, left_flank_to_add, right_flank_to_add,
+	reusable):
+	"""_expand_seqlets_to_fill_pattern(pattern, ...) as a shell: None where
+	it returns None, and _NOT_APPLICABLE where its SeqletSet would not add
+	its sums up with the kernel. `pattern` is a SeqletSet or a shell;
+	`reusable` says that its running sums are the kernel's for its seqlets
+	(each spanning it) at their coordinates, so that an expansion that
+	keeps all of them adds up only the new flanks."""
+
+	length = len(pattern)
+	kept, unique, all_kept = _expanded(pattern.seqlets, length,
+		track_set.length, left_flank_to_add, right_flank_to_add)
+	if not kept:
+		return None
+
+	# Every seqlet made is length + left + right long; SeqletSet's length is
+	# the longest one's len().
+	new_length = len(core.Seqlet(*kept[0]))
+	reuse = None
+	if reusable and all_kept and new_length == (length + left_flank_to_add +
+			right_flank_to_add):
+		reuse = (pattern._sums(), left_flank_to_add, right_flank_to_add)
+
+	return _coordinate_set(track_set, kept, unique, new_length, reuse)
+
+
+def _polish_coordinates(pattern, min_frac, min_num, track_set, flank,
+	window_size, bg_freq):
+	"""polish_pattern's result, with its two trims and its first expansion
+	taken on coordinates (shells), or _NOT_APPLICABLE when any step would
+	not take the path these follow, for polish_pattern to run as it is."""
+
+	start_idx, end_idx = pattern._support_window(min_frac, min_num)
+
+	# trim_to_support's pattern: its seqlets, each end_idx - start_idx long.
+	# trim_to_idx adds up that pattern's sums from the seqlets' arrays, which
+	# fails where they are shorter than the window; these sums are never
+	# read, so here the seqlets must span the pattern instead.
+	if not (start_idx < end_idx and pattern.seqlets
+			and pattern._spans_length()):
+		return _NOT_APPLICABLE
+
+	kept, _, _ = _trimmed(pattern.seqlets, start_idx, end_idx)
+	length = len(core.Seqlet(*kept[0]))
+
+	kept, unique, _ = _expanded(kept, length, track_set.length, flank, flank)
+	if not kept:
+		return None
+
+	length = len(core.Seqlet(*kept[0]))
+	expanded = _coordinate_set(track_set, kept, unique, length)
+	if expanded is _NOT_APPLICABLE:
+		return _NOT_APPLICABLE
+
+	# Trim by IC
+	ppm = expanded.sequence
+	per_pos_ic = util.compute_per_position_ic(
+		ppm=ppm, background=bg_freq, pseudocount=0.001)
+
+	if len(per_pos_ic) < window_size:
+		return _NOT_APPLICABLE
+
+	start_idx = np.argmax(util.cpu_sliding_window_sum(
+		arr=per_pos_ic, window_size=window_size))
+
+	end_idx = start_idx + window_size
+	if not (0 <= start_idx < end_idx <= len(expanded)):
+		return _NOT_APPLICABLE
+
+	kept, _, trim_kept = _trimmed(expanded.seqlets, start_idx, end_idx)
+	length = len(core.Seqlet(*kept[0]))
+
+	kept, unique, all_kept = _expanded(kept, length, track_set.length, flank,
+		flank)
+	if not kept:
+		return None
+
+	# The trim's seqlets are the expanded pattern's at its rows start_idx to
+	# end_idx: when the trim and this expansion keep all of them, the
+	# interior of this pattern's sums is those rows of the expanded one's.
+	new_length = len(core.Seqlet(*kept[0]))
+	reuse = None
+	if trim_kept and all_kept and new_length == length + 2 * flank:
+		reuse = (tuple(total[start_idx:end_idx] for total in
+			expanded._sums()), flank, flank)
+
+	polished = _coordinate_set(track_set, kept, unique, new_length, reuse)
+	if polished is _NOT_APPLICABLE:
+		return _NOT_APPLICABLE
+
+	return _materialize(polished, track_set)
 
 
 def _fwd_data(pattern, transformer, include_hypothetical):
@@ -318,6 +600,14 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 		include_hypothetical)
 	fwd_data_parent = None
 
+	# Once the parent has been expanded it is held as a shell (_expand_shell),
+	# and its seqlets are made once, when it is returned. `reusable`: the
+	# shell's sums are the kernel's for its seqlets, each spanning it, so its
+	# next expansion adds up only the new flanks. A seqlet added below is
+	# made by create_seqlets at coordinates inside the track, so it keeps
+	# that true as long as it spans the parent too.
+	shell, reusable = False, False
+
 	for seqlet, (fwd_data_child, rev_data_child) in zip(seqlets_to_merge,
 			seqlets_data):
 		if fwd_data_parent is None:
@@ -356,10 +646,21 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 										 - len(parent_pattern))
 
 		if (parent_left_expansion > 0) or (parent_right_expansion > 0):
-			candidate_parent_pattern = _expand_seqlets_to_fill_pattern(
-				parent_pattern, track_set=track_set, 
-				left_flank_to_add=parent_left_expansion,
-				right_flank_to_add=parent_right_expansion)
+			candidate_parent_pattern = _expand_shell(parent_pattern,
+				track_set, parent_left_expansion, parent_right_expansion,
+				shell and reusable)
+
+			if candidate_parent_pattern is _NOT_APPLICABLE:
+				if shell:
+					parent_pattern = _materialize(parent_pattern, track_set)
+				shell, reusable = False, False
+
+				candidate_parent_pattern = _expand_seqlets_to_fill_pattern(
+					parent_pattern, track_set=track_set, 
+					left_flank_to_add=parent_left_expansion,
+					right_flank_to_add=parent_right_expansion)
+			elif candidate_parent_pattern is not None:
+				shell, reusable = True, True
 
 			if candidate_parent_pattern is not None:
 				parent_pattern = candidate_parent_pattern
@@ -370,9 +671,13 @@ def merge_in_seqlets_filledges(parent_pattern, seqlets_to_merge,
 		#add the seqlet in at alignment 0, assuming it's not already
 		# part of the pattern
 		if seqlet.string not in parent_pattern.unique_seqlets:
+			if len(seqlet) != len(parent_pattern):
+				reusable = False
 			parent_pattern._add_seqlet(seqlet=seqlet)
 			fwd_data_parent = None
 
+	if shell:
+		parent_pattern = _materialize(parent_pattern, track_set)
 	return parent_pattern
 
 
