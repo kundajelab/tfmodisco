@@ -8,6 +8,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
 from numba import njit
+from numba import uint64
 import numba
 
 from . import precompile
@@ -51,7 +52,10 @@ def _gkmer_rows(X, lo, hi, min_k, max_k, max_gap, max_len, keys, scores):
 	order = np.empty(2048, dtype=np.float64)
 	heap = np.empty(max_entries, dtype=np.int64)
 
+	# Every index below is non-negative; unsigned casts spare numba's
+	# negative-index fix-up on each access.
 	for xi in range(lo, hi):
+		xi = uint64(xi)
 		for i in range(n):
 			prev_ptr[i] = i
 			prev_idx[i] = i
@@ -68,6 +72,7 @@ def _gkmer_rows(X, lo, hi, min_k, max_k, max_gap, max_len, keys, scores):
 				n_prev = prev_ptr[j+1] - prev_ptr[j]
 
 				for i in range(j+1, n):
+					i = uint64(i)
 					position = X[xi, i, 0]
 					base = int(X[xi, i, 1])
 					attr = X[xi, i, 2]
@@ -120,7 +125,8 @@ def _gkmer_rows(X, lo, hi, min_k, max_k, max_gap, max_len, keys, scores):
 					step = (base+1) * (5 ** length)
 
 					for g in range(prev_ptr[j], prev_ptr[j+1]):
-						last_position = X[xi, prev_idx[g], 0]
+						g = uint64(g)
+						last_position = X[xi, uint64(prev_idx[g]), 0]
 						if last_position >= position:
 							break
 
@@ -131,26 +137,26 @@ def _gkmer_rows(X, lo, hi, min_k, max_k, max_gap, max_len, keys, scores):
 						new_gkmer_attr = prev_attr[g] + attr
 
 						if k < max_k:
-							next_idx[cnt] = i
-							next_attr[cnt] = new_gkmer_attr
-							next_hash[cnt] = new_gkmer_hash
+							next_idx[uint64(cnt)] = i
+							next_attr[uint64(cnt)] = new_gkmer_attr
+							next_hash[uint64(cnt)] = new_gkmer_hash
 							cnt += 1
 
 						if k >= min_k:
 							value = new_gkmer_attr / k
 							slot = np.int64((np.uint64(new_gkmer_hash) * _FIBONACCI) >> shift)
 							while True:
-								rank = table[slot]
+								rank = table[uint64(slot)]
 								if rank == 0:
-									ukeys[nu] = new_gkmer_hash
-									usums[nu] = 0.0 + value
-									uslot[nu] = slot
+									ukeys[uint64(nu)] = new_gkmer_hash
+									usums[uint64(nu)] = 0.0 + value
+									uslot[uint64(nu)] = slot
 									nu += 1
-									table[slot] = nu
+									table[uint64(slot)] = nu
 									break
 
-								if ukeys[rank - 1] == new_gkmer_hash:
-									usums[rank - 1] = usums[rank - 1] + value
+								if ukeys[uint64(rank - 1)] == new_gkmer_hash:
+									usums[uint64(rank - 1)] = usums[uint64(rank - 1)] + value
 									break
 
 								slot = (slot + 1) & mask

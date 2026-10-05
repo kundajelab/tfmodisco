@@ -158,6 +158,118 @@ _TOP_SPARE = 8
 # Rows of `_sparse_mm_dot` per task of its thread pool.
 _KNN_ROWS = 16
 
+# `_sparse_mm_dot_rows` asks for the first _PREFETCH_LINES cache lines of
+# the posting list of the column _PREFETCH_COLS ahead of the one it adds.
+_PREFETCH_COLS = 8
+_PREFETCH_LINES = 4
+
+# The spellings of LLVM's prefetch intrinsic tried, in order, and the one
+# this LLVM takes (`_prefetch_name`).
+_PREFETCH_NAMES = ('llvm.prefetch.p0', 'llvm.prefetch.p0i8', 'llvm.prefetch')
+_prefetch_names = {}
+
+
+def _prefetch_name():
+	"""The first of _PREFETCH_NAMES that this LLVM reads as its prefetch
+	intrinsic, or None. A name is taken when a module calling it parses and
+	verifies and LLVM gives the declaration an intrinsic's attributes (an
+	unknown llvm.* name parses too, with none). Checked once per process,
+	when a kernel calling `_prefetch` is first compiled."""
+
+	if _PREFETCH_NAMES not in _prefetch_names:
+		found = None
+		try:
+			from llvmlite import ir, binding
+
+			i8p = ir.IntType(8).as_pointer()
+			i32 = ir.IntType(32)
+			for name in _PREFETCH_NAMES:
+				module = ir.Module()
+				fn = ir.Function(module, ir.FunctionType(ir.VoidType(), 
+					[i8p, i32, i32, i32]), name)
+				caller = ir.Function(module, ir.FunctionType(ir.VoidType(), 
+					[i8p]), 'caller')
+				builder = ir.IRBuilder(caller.append_basic_block())
+				builder.call(fn, [caller.args[0], ir.Constant(i32, 0), 
+					ir.Constant(i32, 3), ir.Constant(i32, 1)])
+				builder.ret_void()
+
+				try:
+					parsed = binding.parse_assembly(str(module))
+					parsed.verify()
+				except Exception:
+					continue
+
+				if any(f.is_declaration and f.name.startswith('llvm.prefetch')
+						and any(True for _ in f.attributes)
+						for f in parsed.functions):
+					found = name
+					break
+		except Exception:
+			found = None
+
+		_prefetch_names[_PREFETCH_NAMES] = found
+
+	return _prefetch_names[_PREFETCH_NAMES]
+
+
+def _make_prefetch():
+	"""A function `_prefetch(arr, idx)` for numba code that asks the CPU to
+	bring the cache line holding element idx of a C-contiguous array into
+	its data caches, counting elements in C order from the first (for a
+	1-d array, arr[idx]): llvm.prefetch, a read, kept in every level. A
+	hint only: it reads and writes no value, and an address past the
+	array's end is allowed and does not fault. Where this LLVM does not
+	take the intrinsic (`_prefetch_name`), it compiles to nothing; where
+	this numba cannot build one, it is a function that does nothing."""
+
+	try:
+		from numba.core import cgutils, types
+		from numba.extending import intrinsic
+	except ImportError:
+		intrinsic = None
+
+	if intrinsic is not None:
+		@intrinsic
+		def _prefetch(typingctx, arr, idx):
+			if not (isinstance(arr, types.Array) and arr.layout == 'C' and
+					isinstance(idx, types.Integer)):
+				return None
+
+			def codegen(context, builder, signature, args):
+				name = _prefetch_name()
+				if name is not None:
+					from llvmlite import ir
+
+					aryty = signature.args[0]
+					ary = context.make_array(aryty)(context, builder, args[0])
+					i = context.cast(builder, args[1], signature.args[1],
+						types.intp)
+					ptr = builder.gep(ary.data, [i])
+					i8p = ir.IntType(8).as_pointer()
+					i32 = ir.IntType(32)
+					fn = cgutils.get_or_insert_function(builder.module,
+						ir.FunctionType(ir.VoidType(), [i8p, i32, i32, i32]),
+						name)
+					builder.call(fn, [builder.bitcast(ptr, i8p),
+						ir.Constant(i32, 0), ir.Constant(i32, 3),
+						ir.Constant(i32, 1)])
+				return context.get_dummy_value()
+
+			return types.void(arr, idx), codegen
+
+		return _prefetch
+
+	@njit(nogil=True)
+	def _prefetch(arr, idx):
+		pass
+
+	return _prefetch
+
+
+# Used by `_sparse_mm_dot_rows` and `_fwd_rev_best8`.
+_prefetch = _make_prefetch()
+
 
 @njit
 def _merge_sort(keys, vals, keys_tmp, vals_tmp):
@@ -210,20 +322,24 @@ def _merge_sort(keys, vals, keys_tmp, vals_tmp):
 
 
 @njit(nogil=True)
-def _sparse_mm_dot_rows(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, 
-	Xt_data, Yt_indptr, Yt_rows, Yt_data, k, lo, hi, neighbors, sims):
+def _sparse_mm_dot_rows(X_data, X_indptr, X_cols, Z_indptr, Z_rows, Z_data, 
+	k, lo, hi, neighbors, sims):
 	"""Rows lo to hi of `_sparse_mm_dot`, written into neighbors and sims:
 	for each row i of X, the k rows j with the largest max(X_i.X_j,
 	X_i.Y_j) and those values, in the order of a stable argsort of the
 	negated values.
 
 	X is in CSR form with its columns renumbered to a compact range
-	(`X_cols`); Xt and Yt are X and Y in CSC form over the same compact
-	columns. Every product X_i[c] * X_j[c] is added to dot[j] while walking
-	row i's columns in ascending order, so each dot is summed over the
-	shared columns in the same order, from the same +0.0, as the pairwise
-	merge join of two sorted rows, and is bitwise equal to it. Only pairs
-	that share a column cost anything.
+	(`X_cols`). Z holds X's and Y's posting lists over the same compact
+	columns, merged: column c's entries are Z_indptr[c] to Z_indptr[c+1],
+	X's first (target j, X_j[c]) and then Y's (target n + j, Y_j[c]). Each
+	product X_i[c] * Z[q] is added to acc[target] while walking row i's
+	columns in ascending order, so acc[j] is X_i.X_j and acc[n + j] is
+	X_i.Y_j, each summed over the shared columns in the same order, from
+	the same +0.0, as the pairwise merge join of two sorted rows, and
+	bitwise equal to it. Only pairs that share a column cost anything. The
+	posting list _PREFETCH_COLS columns ahead is prefetched, which changes
+	no value.
 
 	The top k are those that come first in the order the argsort would give
 	(value descending, NaN last, ties by ascending index), written out best
@@ -241,37 +357,39 @@ def _sparse_mm_dot_rows(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows,
 
 	n_rows = len(X_indptr) - 1
 
-	dot = np.empty(n_rows, dtype=np.float64)
-	ydot = np.empty(n_rows, dtype=np.float64)
-	bits = dot.view(np.uint64)
+	acc = np.empty(2 * n_rows, dtype=np.float64)
+	dot = acc[:n_rows]
+	bits = acc.view(np.uint64)
 	hist = np.empty(_TOP_BUCKETS + _TOP_SPARE, dtype=np.int64)
 
 	for i in range(lo, hi):
-		for j in range(n_rows):
-			dot[j] = 0.0
-			ydot[j] = 0.0
+		for j in range(2 * n_rows):
+			acc[j] = 0.0
 
 		# Every index here is non-negative; unsigned casts spare numba's
 		# negative-index fix-up on each access.
-		for p in range(X_indptr[i], X_indptr[i+1]):
+		p_end = X_indptr[i+1]
+		for p in range(X_indptr[i], p_end):
+			if p + _PREFETCH_COLS < p_end:
+				a = uint64(Z_indptr[uint64(X_cols[uint64(p + _PREFETCH_COLS)])])
+				for line in range(_PREFETCH_LINES):
+					_prefetch(Z_rows, a + uint64(16 * line))
+					_prefetch(Z_data, a + uint64(8 * line))
+
 			p = uint64(p)
 			c = uint64(X_cols[p])
 			x_data = X_data[p]
 
-			for q in range(Xt_indptr[c], Xt_indptr[c + uint64(1)]):
+			for q in range(Z_indptr[c], Z_indptr[c + uint64(1)]):
 				q = uint64(q)
-				dot[uint64(Xt_rows[q])] += x_data * Xt_data[q]
-
-			for q in range(Yt_indptr[c], Yt_indptr[c + uint64(1)]):
-				q = uint64(q)
-				ydot[uint64(Yt_rows[q])] += x_data * Yt_data[q]
+				acc[uint64(Z_rows[q])] += x_data * Z_data[q]
 
 		# The row's values, and the largest of their bits as unsigned
 		# integers: at most +inf's exactly when every value is +0.0,
 		# positive or +inf.
 		top = uint64(0)
 		for j in range(n_rows):
-			dot[j] = max(dot[j], ydot[j])
+			acc[j] = max(acc[j], acc[n_rows + j])
 			top = max(top, bits[j])
 
 		done = False
@@ -312,15 +430,14 @@ def _sparse_mm_dot_rows(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows,
 				for t in range(k):
 					j = cand[t]
 					neighbors[i, t] = j
-					sims[i, t] = dot[j]
+					sims[i, t] = acc[j]
 				done = True
 
 		if not done:
 			_top_k_heap(dot, k, neighbors[i], sims[i])
 
 
-def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
-	Yt_indptr, Yt_rows, Yt_data, k):
+def _sparse_mm_dot(X_data, X_indptr, X_cols, Z_indptr, Z_rows, Z_data, k):
 	"""(sims, neighbors) of `_sparse_mm_dot_rows` for every row of X.
 
 	Blocks of _KNN_ROWS rows are handed out one at a time to
@@ -340,9 +457,8 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 	n_threads = max(1, numba.get_num_threads())
 
 	def run(lo):
-		_sparse_mm_dot_rows(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows,
-			Xt_data, Yt_indptr, Yt_rows, Yt_data, k, lo, 
-			min(lo + _KNN_ROWS, n_rows), neighbors, sims)
+		_sparse_mm_dot_rows(X_data, X_indptr, X_cols, Z_indptr, Z_rows,
+			Z_data, k, lo, min(lo + _KNN_ROWS, n_rows), neighbors, sims)
 
 	with ThreadPoolExecutor(n_threads) as pool:
 		list(pool.map(run, range(0, n_rows, _KNN_ROWS)))
@@ -418,13 +534,14 @@ def _sparse_knn(matrices, k):
 	as it is no longer needed. A caller that keeps no other reference to X
 	and Y has that memory back before the kernel runs.
 
-	The CSC forms are built with numpy calls that release the GIL, run by
-	numba.get_num_threads() threads: Y's column sort beside X's, then
-	searches and gathers over blocks of the sorted entries, each writing
-	its own slice of arrays allocated here (gapped_kmer.BLOCK says why), so
-	every array is the one a single thread would build. Y's CSC form is
-	built before X's, so that Y's sort is freed before X's CSC arrays are
-	made.
+	The posting lists (X's and Y's CSC forms, merged per column) are built
+	with numpy calls that release the GIL, run by numba.get_num_threads()
+	threads: Y's column sort beside X's, then searches, gathers and
+	scatters over blocks of the sorted entries, each writing its own
+	entries of arrays allocated here (gapped_kmer.BLOCK says why), so every
+	array is the one a single thread would build. Y's CSC form is built
+	first, so that Y's sort is freed before the merged lists are made, and
+	then moved into them, before X's entries are.
 	"""
 
 	X, Y = matrices
@@ -479,10 +596,14 @@ def _sparse_knn(matrices, k):
 		map_blocks(y_search, nnz_y)
 		del sorted_y, cols_end
 
+		# Y's targets in the merged lists are n + j, so they need to hold 2n.
+		rows_dtype = np.int32 if 2 * n <= np.iinfo(np.int32).max else np.int64
+
 		y_offsets = _block_offsets(keep, step)
 		n_kept = y_offsets[-1]
-		rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(Y_indptr))
-		Yt_rows = np.empty(n_kept, dtype=np.int32)
+		rows = np.repeat(np.arange(n, 2 * n, dtype=rows_dtype), 
+			np.diff(Y_indptr))
+		Yt_rows = np.empty(n_kept, dtype=rows_dtype)
 		Yt_data = np.empty(n_kept, dtype=np.float64)
 		Yt_cols = np.empty(n_kept, dtype=pos.dtype)
 
@@ -507,17 +628,33 @@ def _sparse_knn(matrices, k):
 			Yt_indptr[lo:hi] = np.searchsorted(Yt_cols, needles[lo:hi])
 
 		map_blocks(y_indptr, m + 1)
-		del Yt_cols, needles
+		del needles
 
-		# X in CSR form over the new columns (X_cols) and in CSC form. The
-		# new column of the sorted entry q is the number of first entries
-		# up to q, less one.
-		x_offsets = _block_offsets(first, step)
+		# The merged lists: column c's entries start at Z_indptr[c] =
+		# Xt_indptr[c] + Yt_indptr[c], X's first and then Y's, so X's
+		# sorted entry q (column c) goes to q + Yt_indptr[c] and Y's kept
+		# entry r (column c) to r + Xt_indptr[c+1]. Xt_indptr[c] is the
+		# number of X's entries whose column is below c.
 		Xt_indptr = np.append(np.flatnonzero(first), nnz)
-		rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(X_indptr))
+		Z_rows = np.empty(nnz + n_kept, dtype=rows_dtype)
+		Z_data = np.empty(nnz + n_kept, dtype=np.float64)
+
+		def y_merge(lo):
+			hi = min(lo + step, n_kept)
+			dest = np.take(Xt_indptr, Yt_cols[lo:hi] + 1, mode='clip')
+			dest += np.arange(lo, hi)
+			Z_rows[dest] = Yt_rows[lo:hi]
+			Z_data[dest] = Yt_data[lo:hi]
+
+		map_blocks(y_merge, n_kept)
+		del Yt_rows, Yt_data, Yt_cols
+
+		# X in CSR form over the new columns (X_cols), and its entries in
+		# the merged lists. The new column of the sorted entry q is the
+		# number of first entries up to q, less one.
+		x_offsets = _block_offsets(first, step)
+		rows = np.repeat(np.arange(n, dtype=rows_dtype), np.diff(X_indptr))
 		X_cols = np.empty(nnz, dtype=np.int64)
-		Xt_rows = np.empty(nnz, dtype=np.int32)
-		Xt_data = np.empty(nnz, dtype=np.float64)
 
 		def x_block(lo):
 			hi = min(lo + step, nnz)
@@ -525,14 +662,20 @@ def _sparse_knn(matrices, k):
 			ranks = np.cumsum(first[lo:hi], dtype=np.int64)
 			ranks += x_offsets[lo // step] - 1
 			X_cols[order] = ranks
-			np.take(rows, order, out=Xt_rows[lo:hi], mode='clip')
-			np.take(X_data, order, out=Xt_data[lo:hi], mode='clip')
+			dest = np.take(Yt_indptr, ranks, mode='clip')
+			dest += np.arange(lo, hi)
+			Z_rows[dest] = np.take(rows, order, mode='clip')
+			Z_data[dest] = np.take(X_data, order, mode='clip')
 
 		map_blocks(x_block, nnz)
 		del order_x, first, rows
 
+	Z_indptr = Xt_indptr
+	Z_indptr += Yt_indptr
+	del Xt_indptr, Yt_indptr
+
 	return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
-		X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, Yt_data, k)
+		X_cols, Z_indptr, Z_rows, Z_data, k)
 
 
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
@@ -612,6 +755,22 @@ _FWD_REV_STRIDE = 128
 
 # Rows of Y per parallel task, and so per slice of the scratch arrays.
 _FWD_REV_ROWS = 16
+
+# `_fwd_rev_best8` prefetches the two rows (both strands) of the neighbour
+# this many pairs ahead of the pair it scores. At 50,000 seqlets X_fwd and
+# X_rev hold 96 MB, more than a level-3 cache, and a row read on demand
+# waits for memory.
+_FWD_REV_AHEAD = 2
+
+
+def _aligned_rows(n_rows, n_cols):
+	"""np.empty((n_rows, n_cols)) of float64 whose first element lies on a
+	64-byte boundary, so that with n_cols a multiple of 8 every row starts a
+	cache line."""
+
+	raw = np.empty(n_rows * n_cols + 8)
+	k = (-raw.ctypes.data % 64) // 8
+	return raw[k:k + n_rows * n_cols].reshape(n_rows, n_cols)
 
 
 def _noalias(dispatcher):
@@ -726,9 +885,11 @@ def _jaccard_fwd_rev(X_fwd, X_rev, Y, seqlet_neighbors, min_overlap):
 	neighbors = np.ascontiguousarray(seqlet_neighbors.astype('int32'))
 
 	# One row of each accumulator per task, 64 bytes longer than it needs
-	# to be so that no two tasks write to one cache line.
+	# to be so that no two tasks write to one cache line. Rows start cache
+	# lines: a vector load or store of an accumulator then touches one line,
+	# not two, and is forwarded from the store before it whole.
 	n_tasks = (ny + _FWD_REV_ROWS - 1) // _FWD_REV_ROWS
-	sums = [np.empty((n_tasks, n_offsets + 8)) for _ in range(4)]
+	sums = [_aligned_rows(n_tasks, n_offsets + 8) for _ in range(4)]
 
 	best = np.empty((ny, n_neighbors), dtype='float32')
 	flags = np.zeros(ny, dtype='uint8')
@@ -1505,6 +1666,8 @@ def _fwd_rev_best8(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
 	  clamp(t, -0, +0), a zero.
 	- A sum starts at +0.0, so it is never -0.0, and adding a zero of
 	  either sign to it changes no bit.
+	- While it scores a pair, the rows of the neighbour `_FWD_REV_AHEAD`
+	  pairs on are prefetched, which changes no value.
 
 	The result depends neither on the number of threads nor on how the
 	tasks are shared: each row is scored by one task, and each task owns
@@ -1519,6 +1682,7 @@ def _fwd_rev_best8(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
 	L_pad = d - 1 + n_offsets
 	W = _FWD_REV_STRIDE
 	R = _FWD_REV_ROWS
+	AHEAD = _FWD_REV_AHEAD
 
 	for b in range(b0, b1):
 		# Rows 3k, 3k+1 and 3k+2 of the buffer hold y, -y and |y| for
@@ -1539,6 +1703,25 @@ def _fwd_rev_best8(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
 			flag = 0
 			for i in range(n_neighbors):
 				nb = neighbors[l, i]
+
+				# Prefetch both rows of the neighbour AHEAD pairs on, which
+				# may belong to the next row of Y.
+				ia = i + AHEAD
+				la = l
+				while ia >= n_neighbors:
+					ia -= n_neighbors
+					la += 1
+				if la < ny:
+					# Row na starts at element na * d * m of Xf and of Xr.
+					# 16 float32 to a 64-byte line; the last element too,
+					# for a row that does not start a line.
+					row = neighbors[la, ia] * (d * m)
+					for e in range(0, d * m, 16):
+						_prefetch(Xf, row + e)
+						_prefetch(Xr, row + e)
+					_prefetch(Xf, row + d * m - 1)
+					_prefetch(Xr, row + d * m - 1)
+
 				for idx in range(n_offsets):
 					min_f[b, idx] = 0.0
 					max_f[b, idx] = 0.0

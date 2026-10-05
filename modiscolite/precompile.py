@@ -110,8 +110,7 @@ def _kernels():
 		[(affinitymat._sparse_mm_dot_rows, (A(types.float64, 1, 'C'),
 			A(types.int64, 1, 'C'), A(types.int64, 1, 'C'),
 			A(types.int64, 1, 'C'), A(types.int32, 1, 'C'),
-			A(types.float64, 1, 'C'), A(types.int64, 1, 'C'),
-			A(types.int32, 1, 'C'), A(types.float64, 1, 'C'), i8, i8, i8,
+			A(types.float64, 1, 'C'), i8, i8, i8,
 			A(types.int32, 2, 'C'), A(types.float64, 2, 'C')))],
 		# The kernel jaccard_from_seqlets will run (_fwd_rev_best8 stands in
 		# for _fwd_rev_best whenever it can be compiled noalias).
