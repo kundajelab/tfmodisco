@@ -890,11 +890,7 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 	# not when it is imported, so that the children above are forked sooner.
 	# Importing them here, while the children compile, puts that time before
 	# the run's first wait for a compiled kernel instead of later in the run.
-	import sklearn.isotonic
-	import sklearn.preprocessing
-	import sklearn.manifold
-	import igraph
-	import leidenalg
+	_import_dependencies()
 
 	contrib_scores = np.multiply(one_hot, hypothetical_contribs)
 
@@ -1002,3 +998,15 @@ def TFMoDISco(one_hot, hypothetical_contribs, sliding_window_size=21,
 		neg_patterns = None
 
 	return pos_patterns, neg_patterns
+
+
+def _import_dependencies():
+	"""Import the modules a run of TFMoDISco uses that the package does not
+	import when it is imported. TFMoDISco calls this as it starts; the
+	motifs command calls it earlier, while its inputs are read."""
+
+	import sklearn.isotonic
+	import sklearn.preprocessing
+	import sklearn.manifold
+	import igraph
+	import leidenalg

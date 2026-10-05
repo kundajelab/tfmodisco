@@ -1,12 +1,20 @@
 # tf-modisco command-line tool
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>, Ivy Raine <ivy.ember.raine@gmail.com>
 
+import io
+import struct
+import zipfile
+import zlib
+
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Literal, Union, Optional
 
 import click
 import h5py
+import numba
 import numpy as np
+from numpy.lib import format as npy_format
 
 import modiscolite
 from modiscolite import precompile
@@ -16,6 +24,81 @@ from modiscolite.util import calculate_window_offsets, MemeDataType
 def _split_chroms(chroms: str) -> Union[List[str], Literal["*"]]:
     """Convert comma-delimited ``chroms`` argument to a list or '*' literal."""
     return "*" if chroms == "*" else chroms.split(",")
+
+
+def _read_npz_member(path, key):
+    """The array np.load(path)[key] returns, when the archive's member
+    `key`.npy (and no member named `key`) is a version 1.0 or 2.0 .npy file
+    of a dtype without Python objects, stored or deflated; otherwise None.
+
+    np.load inflates a member 256 KB at a time and takes the GIL back for
+    each piece. Here the member's bytes are read with one call and inflated
+    with another, into a buffer of the exact size, and its CRC is checked as
+    zipfile checks it, so that the read runs on a thread beside other work.
+    The array has np.load's dtype, shape, strides and bytes; it is a
+    read-only view of the inflated bytes."""
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if key in names or key + ".npy" not in names:
+                return None
+            info = archive.getinfo(key + ".npy")
+
+        if info.flag_bits & 0x1 or info.compress_type not in (
+                zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            return None
+
+        with open(path, "rb") as handle:
+            handle.seek(info.header_offset)
+            header = handle.read(30)
+            if len(header) != 30 or header[:4] != b"PK\x03\x04":
+                return None
+            name_length, extra_length = struct.unpack("<HH", header[26:30])
+            handle.seek(info.header_offset + 30 + name_length + extra_length)
+            data = handle.read(info.compress_size)
+
+        if len(data) != info.compress_size:
+            return None
+        if info.compress_type == zipfile.ZIP_DEFLATED:
+            data = zlib.decompress(data, -15, max(info.file_size, 1))
+        if len(data) != info.file_size or zlib.crc32(data) != info.CRC:
+            return None
+
+        stream = io.BytesIO(data)
+        version = npy_format.read_magic(stream)
+        if version == (1, 0):
+            shape, fortran_order, dtype = npy_format.read_array_header_1_0(
+                stream)
+        elif version == (2, 0):
+            shape, fortran_order, dtype = npy_format.read_array_header_2_0(
+                stream)
+        else:
+            return None
+
+        count = 1
+        for length in shape:
+            count *= length
+        offset = stream.tell()
+        if dtype.hasobject or offset + count * dtype.itemsize != len(data):
+            return None
+
+        array = np.frombuffer(data, dtype=dtype, count=count, offset=offset)
+        if fortran_order:
+            return array.reshape(shape[::-1]).transpose()
+        return array.reshape(shape)
+    except Exception:
+        return None
+
+
+def _load_input(path):
+    """np.load(path)["arr_0"] for an .npz file and np.load(path) for any
+    other, as the motifs command reads its inputs."""
+
+    if path.suffix == ".npz":
+        array = _read_npz_member(path, "arr_0")
+        return np.load(path)["arr_0"] if array is None else array
+    return np.load(path)
 
 
 @click.group(
@@ -161,16 +244,22 @@ def motifs(
     else:
         seq_path = Path(seq_path)
         attr_path = Path(attr_path)
-        sequences = (
-            np.load(seq_path)["arr_0"]
-            if seq_path.suffix == ".npz"
-            else np.load(seq_path)
-        )
-        attributions = (
-            np.load(attr_path)["arr_0"]
-            if attr_path.suffix == ".npz"
-            else np.load(attr_path)
-        )
+
+        # The two inputs are read on threads, when numba's thread count
+        # allows, which spend their time in file reads, zlib and numpy copies,
+        # all releasing the GIL, while this thread imports the modules
+        # TFMoDISco would import when it starts.
+        if numba.get_num_threads() > 1:
+            with ThreadPoolExecutor(2) as pool:
+                sequences = pool.submit(_load_input, seq_path)
+                attributions = pool.submit(_load_input, attr_path)
+                modiscolite.tfmodisco._import_dependencies()
+                sequences = sequences.result()
+                attributions = attributions.result()
+        else:
+            sequences = _load_input(seq_path)
+            attributions = _load_input(attr_path)
+
         center = sequences.shape[2] // 2
         start, end = calculate_window_offsets(center, window)
         sequences = sequences[:, :, start:end].transpose(0, 2, 1)
