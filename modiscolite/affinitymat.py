@@ -107,6 +107,55 @@ def _sift_down(heap, size, dot):
 			break
 
 
+@njit
+def _top_k_heap(dot, k, neighbors, sims):
+	"""The k indices of dot that come first in the order of a stable
+	argsort of -dot (value descending, NaN last, ties by ascending index),
+	best first, and their values, into `neighbors` and `sims`. A heap holds
+	the best k seen so far, with the one that comes last at its root."""
+
+	n = dot.shape[0]
+
+	heap = np.empty(k, dtype=np.int64)
+	for j in range(k):
+		heap[j] = j
+		pos = j
+		while pos > 0:
+			parent = (pos - 1) // 2
+			if _after(heap[pos], heap[parent], dot):
+				tmp = heap[pos]
+				heap[pos] = heap[parent]
+				heap[parent] = tmp
+				pos = parent
+			else:
+				break
+
+	# j is larger than every index in the heap, so it enters exactly when
+	# its value sorts strictly before the root's.
+	for j in range(k, n):
+		if _lt(-dot[j], -dot[heap[0]]):
+			heap[0] = j
+			_sift_down(heap, k, dot)
+
+	for size in range(k, 0, -1):
+		neighbors[size-1] = heap[0]
+		sims[size-1] = dot[heap[0]]
+		heap[0] = heap[size-1]
+		_sift_down(heap, size-1, dot)
+
+
+# The bits of +inf; with no sign bit set, a float64 at or below them is
+# +0.0, positive or +inf, and such floats order as their bits do.
+_INF_BITS = 0x7FF0000000000000
+
+# `_sparse_mm_dot`'s top-k histogram: 1024 buckets of 2**46 consecutive bit
+# patterns below a row's largest value (64 to a binade, 16 binades), and 8
+# buckets for the values below them.
+_TOP_SHIFT = 46
+_TOP_BUCKETS = 1024
+_TOP_SPARE = 8
+
+
 @njit(parallel=True)
 def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 	Yt_indptr, Yt_rows, Yt_data, k):
@@ -122,9 +171,18 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 	merge join of two sorted rows, and is bitwise equal to it. Only pairs
 	that share a column cost anything.
 
-	The top k are kept in a heap whose root is the entry that comes last in
-	the order the argsort would give (value descending, NaN last, ties by
-	ascending index), then written out best first.
+	The top k are those that come first in the order the argsort would give
+	(value descending, NaN last, ties by ascending index), written out best
+	first. When every value of a row is +0.0, positive or +inf (no NaN, no
+	negative value, no -0.0), that order is the order of the values' bits
+	as integers, descending, ties by index, and a histogram of the bits
+	finds a threshold above which at least k and few more values lie; only
+	those are sorted, by a stable sort of their negated bits taken in
+	ascending index. Every value below the threshold is strictly smaller
+	than at least k others, so the k picked are the same. Other rows, and
+	rows whose k-th value lies more than 16 binades below their largest
+	(`_TOP_SHIFT`), go through `_top_k_heap`, the heap scan over the whole
+	row. Either way the result is the same k in the same order.
 	"""
 
 	n_rows = len(X_indptr) - 1
@@ -151,35 +209,56 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 				q = uint64(q)
 				ydot[uint64(Yt_rows[q])] += x_data * Yt_data[q]
 
+		# The row's values, and the largest of their bits as unsigned
+		# integers: at most +inf's exactly when every value is +0.0,
+		# positive or +inf.
+		bits = dot.view(np.uint64)
+		top = uint64(0)
 		for j in range(n_rows):
 			dot[j] = max(dot[j], ydot[j])
+			top = max(top, bits[j])
 
-		heap = np.empty(k, dtype=np.int64)
-		for j in range(k):
-			heap[j] = j
-			pos = j
-			while pos > 0:
-				parent = (pos - 1) // 2
-				if _after(heap[pos], heap[parent], dot):
-					tmp = heap[pos]
-					heap[pos] = heap[parent]
-					heap[parent] = tmp
-					pos = parent
-				else:
+		done = False
+		if top <= uint64(_INF_BITS):
+			# Bucket b holds the values whose bits lie between top - (b+1)
+			# << _TOP_SHIFT (excluded) and top - b << _TOP_SHIFT; values
+			# further down are spread over _TOP_SPARE overflow buckets so
+			# that their counts do not form one chain of increments.
+			top_ = np.int64(top)
+			hist = np.zeros(_TOP_BUCKETS + _TOP_SPARE, dtype=np.int64)
+			for j in range(n_rows):
+				d = (top_ - np.int64(bits[j])) >> _TOP_SHIFT
+				b = d if d < _TOP_BUCKETS else _TOP_BUCKETS + (j & (_TOP_SPARE - 1))
+				hist[b] += 1
+
+			# The first bucket by which k values are counted.
+			n_cand = 0
+			last = 0
+			while last < _TOP_BUCKETS:
+				n_cand += hist[last]
+				if n_cand >= k:
 					break
+				last += 1
 
-		# j is larger than every index in the heap, so it enters exactly when
-		# its value sorts strictly before the root's.
-		for j in range(k, n_rows):
-			if _lt(-dot[j], -dot[heap[0]]):
-				heap[0] = j
-				_sift_down(heap, k, dot)
+			if last < _TOP_BUCKETS:
+				cand = np.empty(n_cand, dtype=np.int64)
+				keys = np.empty(n_cand, dtype=np.int64)
+				c = 0
+				for j in range(n_rows):
+					if (top_ - np.int64(bits[j])) >> _TOP_SHIFT <= last:
+						cand[c] = j
+						keys[c] = -np.int64(bits[j])
+						c += 1
 
-		for size in range(k, 0, -1):
-			neighbors[i, size-1] = heap[0]
-			sims[i, size-1] = dot[heap[0]]
-			heap[0] = heap[size-1]
-			_sift_down(heap, size-1, dot)
+				order = np.argsort(keys, kind='mergesort')
+				for t in range(k):
+					j = cand[order[t]]
+					neighbors[i, t] = j
+					sims[i, t] = dot[j]
+				done = True
+
+		if not done:
+			_top_k_heap(dot, k, neighbors[i], sims[i])
 
 	return sims, neighbors
 
