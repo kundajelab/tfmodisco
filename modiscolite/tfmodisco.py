@@ -795,11 +795,17 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 	# The patterns are subclustered independently of each other, so this runs
 	# in forked workers (forked.map_tasks). A worker sends back each
 	# pattern's membership, and the subpatterns are built from it here, as
-	# compute_subpatterns would.
+	# compute_subpatterns would. When the largest pattern's Leiden runs are
+	# expected to finish last (forked.finishes_last), its affinity matrix is
+	# computed first, with the whole thread budget, before the workers are
+	# forked (prepare).
+	affinities = {}
+
 	def subcluster(patternidx):
 		pattern = patterns[patternidx]
-		pattern.compute_subpatterns(subcluster_perplexity, 
-			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations)
+		pattern.compute_subpatterns(subcluster_perplexity,
+			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations,
+			affinity=affinities.pop(patternidx, None))
 		return pattern.subclusters
 
 	def attach(packed):
@@ -807,10 +813,16 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 			patterns[patternidx]._set_subclusters(subclusters)
 		return packed
 
+	def prepare(patternidx, loads, budgets):
+		if forked.finishes_last(loads, budgets, n_leiden_runs):
+			affinities[patternidx] = patterns[patternidx]._subpattern_affinity(
+				subcluster_perplexity)
+
 	forked.map_tasks(subcluster, range(len(patterns)),
 		weights=[len(pattern.seqlets) ** 2 for pattern in patterns],
 		unpack=attach,
-		before_fork=lambda: patterns[0]._compile_subpattern_kernels())
+		before_fork=lambda: patterns[0]._compile_subpattern_kernels(),
+		prepare=prepare)
 
 	return patterns
 

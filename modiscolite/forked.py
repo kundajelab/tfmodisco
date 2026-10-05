@@ -17,6 +17,7 @@ it, and anything it forks in turn (the Leiden seeds) stays within it.
 import os
 import sys
 import pickle
+import contextlib
 import signal
 import tempfile
 import warnings
@@ -76,6 +77,20 @@ def _set_budget(n, n_threads=None):
 	global _budget
 	_budget = n
 	numba.set_num_threads(n if n_threads is None else n_threads)
+
+
+@contextlib.contextmanager
+def budget_of(n):
+	"""Run the block with this process's budget and numba's thread count set
+	to n, as forked_map runs this process's own share, and restore both
+	afterwards."""
+
+	saved = _budget, numba.get_num_threads()
+	try:
+		_set_budget(n)
+		yield
+	finally:
+		_set_budget(*saved)
 
 
 class _Result:
@@ -409,6 +424,21 @@ def _plan(weights, n_budget):
 	return bins, loads
 
 
+def finishes_last(loads, budgets, n_runs):
+	"""Whether share 0 of a plan (this process's) is expected to finish
+	last, by at least twice as long as any other share, for tasks whose
+	weight is the time of each of n_runs single-threaded runs (Leiden's
+	seeds), which a share runs min(its budget, n_runs) at a time. Work done
+	ahead for share 0, or beside it, then shortens the whole map; when a
+	child's share is as long, it would only delay that child."""
+
+	def time(k):
+		at_once = max(1, min(budgets[k], n_runs))
+		return loads[k] * -(-n_runs // at_once)
+
+	return all(2 * time(k) <= time(0) for k in range(1, len(loads)))
+
+
 def _plan_even(weights, n_budget, min_child_weight):
 	"""Group many small tasks into shares of about equal weight, one per
 	process: as many processes as the budget has threads, but no more than
@@ -439,7 +469,7 @@ def _split_budget(loads, n_budget):
 
 
 def map_tasks(func, tasks, weights, pack=None, unpack=None, before_fork=None,
-		min_child_weight=None):
+		min_child_weight=None, prepare=None):
 	"""Return {task: func(task)} for every task, spreading the tasks over
 	forked children when that is worth it and safe.
 
@@ -451,7 +481,12 @@ def map_tasks(func, tasks, weights, pack=None, unpack=None, before_fork=None,
 	attach state to this process's objects, standing in for what func(task)
 	changed in the child. When forking, before_fork() runs first, in
 	this process (for example, to compile a numba kernel once rather than in
-	every child).
+	every child), and then prepare(task, loads, budgets) for the heaviest
+	task, the first this process runs itself, with the plan's weight and
+	thread budget of each share, while this process still has the whole
+	budget and no child is running: it may compute part of that task's
+	work ahead, with more threads than its share has, and leave it on
+	objects of that task for func(task) to use (see `finishes_last`).
 
 	Tasks are grouped by `_plan` from their weights, or, when
 	`min_child_weight` is given, by `_plan_even` (many small tasks spread
@@ -475,7 +510,18 @@ def map_tasks(func, tasks, weights, pack=None, unpack=None, before_fork=None,
 		before_fork()
 
 	budgets = _split_budget(loads, n_budget)
+	if prepare is not None:
+		prepare(tasks[bins[0][0]], loads, budgets)
+
 	shares = [[tasks[j] for j in b] for b in bins]
+	return map_shares(func, shares, budgets, pack=pack, unpack=unpack)
+
+
+def map_shares(func, shares, budgets, pack=None, unpack=None):
+	"""Return {task: func(task)} for every task of every share: shares[0]
+	computed here with budgets[0], and each other share in a forked child
+	with its budget (forked_map), for shares and budgets planned as
+	map_tasks plans them. pack and unpack are map_tasks'."""
 
 	def run(share):
 		return {task: func(task) for task in share}

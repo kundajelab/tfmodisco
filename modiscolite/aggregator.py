@@ -411,19 +411,21 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
 	n_seeds, max_seqlets_subsample=1000):
 
+	def collapse(patterns, known_pairs=None):
+		return SimilarPatternsCollapser(patterns=patterns, 
+			track_set=track_set, min_overlap=min_overlap, 
+			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
+			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
+			min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
+			bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample,
+			known_pairs=known_pairs)
+
 	def refine(i):
 		pattern = patterns[i]
 		pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds)
 
 		subpatterns = pattern.subcluster_to_subpattern.values()
-		refined_subpatterns = SimilarPatternsCollapser(patterns=subpatterns, 
-			track_set=track_set, min_overlap=min_overlap, 
-			prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
-			prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
-			min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-			bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
-
-		return refined_subpatterns[0]
+		return collapse(subpatterns)[0]
 
 	# Each pattern is subclustered and its subpatterns merged independently
 	# of the others, so this runs in forked workers (forked.map_tasks). A
@@ -437,37 +439,110 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 			seqlet.end, seqlet.is_revcomp) for seqlet in pattern.seqlets]
 			for pattern in refined]
 
+	def rebuild(packed):
+		return {i: [core.SeqletSet(track_set.create_seqlets([
+			core.Seqlet(example_idx=example_idx, start=start, end=end,
+				is_revcomp=is_revcomp)
+			for example_idx, start, end, is_revcomp in coordinates]),
+			track_set=track_set) for coordinates in refined]
+			for i, (_, refined) in packed.items()}
+
 	def unpack(packed):
-		results = {}
-		for i, (subclusters, refined) in packed.items():
+		for i, (subclusters, _) in packed.items():
 			patterns[i]._set_subclusters(subclusters)
-			results[i] = [core.SeqletSet(track_set.create_seqlets([
-				core.Seqlet(example_idx=example_idx, start=start, end=end,
-					is_revcomp=is_revcomp)
-				for example_idx, start, end, is_revcomp in coordinates]),
-				track_set=track_set) for coordinates in refined]
-		return results
+		return rebuild(packed)
+
+	def listed(refined, skip=None):
+		"""The final collapser's input: each pattern's refined subpatterns,
+		or the pattern itself when it was not refined, in pattern order,
+		leaving out pattern `skip`."""
+
+		to_return = []
+		for i, pattern in enumerate(patterns):
+			if i == skip:
+				continue
+			if i in refined:
+				to_return.extend(refined[i]) 
+			else:
+				to_return.append(pattern)
+		return to_return
 
 	to_refine = [i for i, pattern in enumerate(patterns)
 		if len(pattern.seqlets) > min_in_subcluster]
-	refined = forked.map_tasks(refine, to_refine,
-		weights=[len(patterns[i].seqlets) ** 2 for i in to_refine],
-		pack=pack, unpack=unpack, before_fork=lambda:
-			patterns[to_refine[0]]._compile_subpattern_kernels())
+	weights = [len(patterns[i].seqlets) ** 2 for i in to_refine]
 
-	to_return = []
-	for i, pattern in enumerate(patterns):
-		if i in refined:
-			to_return.extend(refined[i]) 
-		else:
-			to_return.append(pattern)
-	
-	return SimilarPatternsCollapser(patterns=to_return, 
-				track_set=track_set, min_overlap=min_overlap, 
-				prob_and_pertrack_sim_merge_thresholds=prob_and_pertrack_sim_merge_thresholds,
-				prob_and_pertrack_sim_dealbreaker_thresholds=prob_and_pertrack_sim_dealbreaker_thresholds,
-				min_frac=min_frac, min_num=min_num, flank_to_add=flank_to_add, window_size=window_size, 
-				bg_freq=bg_freq, max_seqlets_subsample=max_seqlets_subsample)
+	# When nothing is forked, when the plan does not give the heaviest
+	# pattern a share of its own, or when that share is not expected to
+	# finish last (forked.finishes_last), forked.map_tasks runs the tasks
+	# as planned.
+	n_budget = forked.budget()
+	bins, loads = forked._plan(weights, n_budget)
+	if (len(bins) < 2 or len(bins[0]) > 1 or not forked.numba_fork_safe()
+			or not forked.finishes_last(loads, forked._split_budget(loads,
+				n_budget), n_seeds)):
+		refined = forked.map_tasks(refine, to_refine, weights=weights,
+			pack=pack, unpack=unpack, before_fork=lambda:
+				patterns[to_refine[0]]._compile_subpattern_kernels())
+		return collapse(listed(refined))
+
+	# The heaviest pattern's subclustering is the last to finish (its Leiden
+	# runs are the longest, twice as long as any other share's), and
+	# forked.map_tasks's plan gives it a share of its own, run by this
+	# process. Its affinity matrix is computed first, with the whole thread
+	# budget, and then its Leiden runs and its merging with the share's
+	# threads. The other shares run beside it as map_tasks would run them,
+	# with the same threads, under one forked child (forked.Background)
+	# that computes the first of them itself and forks the rest. That child
+	# then also computes, while this process is still in its Leiden runs,
+	# the final collapser's first entries for every pair of the patterns it
+	# holds (each refined subpattern of the other patterns, and each pattern
+	# too small to refine): an entry depends only on its two patterns, so
+	# the collapser takes them as known_pairs and computes only the pairs
+	# that involve the heaviest pattern's subpatterns. The child computes
+	# them on the patterns as this process rebuilds them (rebuild), and if
+	# it fails, result() computes the same here.
+	budgets = forked._split_budget(loads, n_budget)
+	critical = to_refine[bins[0][0]]
+	others = [to_refine[j] for b in bins[1:] for j in b]
+
+	def beside():
+		refined = forked.map_shares(refine, [[to_refine[j] for j in b]
+			for b in bins[1:]], budgets[1:], pack=pack, unpack=unpack)
+		packed = {i: pack(i, refined[i]) for i in others}
+		return packed, _first_pair_stats(listed(rebuild(packed),
+			skip=critical), track_set, min_overlap, max_seqlets_subsample)
+
+	affinity = patterns[critical]._subpattern_affinity(perplexity)
+
+	helper = forked.Background(beside)
+	helper.start(n_budget - budgets[0])
+	try:
+		with forked.budget_of(budgets[0]):
+			patterns[critical].compute_subpatterns(perplexity=perplexity,
+				n_seeds=n_seeds, affinity=affinity)
+			del affinity
+
+			refined_critical = collapse(
+				patterns[critical].subcluster_to_subpattern.values())[0]
+	except BaseException:
+		helper.kill()
+		raise
+
+	packed, table = helper.result()
+	refined = unpack(packed)
+	refined[critical] = refined_critical
+
+	# The index in the final collapser's input of each pattern the child
+	# listed: those before the heaviest pattern's subpatterns keep theirs,
+	# the others move up by the number of its subpatterns.
+	n_before = sum(len(refined[i]) if i in refined else 1
+		for i in range(critical))
+	final = [a if a < n_before else a + len(refined_critical)
+		for a in range(len(table))]
+	known_pairs = {(final[a], final[b]): (table[a, b, 0], table[a, b, 1])
+		for a in range(len(table)) for b in range(len(table)) if a != b}
+
+	return collapse(listed(refined), known_pairs=known_pairs)
 
 # The least estimated work, in seconds on one thread, that is worth giving
 # a forked worker in SimilarPatternsCollapser: about four forks of a process
@@ -492,11 +567,153 @@ def _pair_seconds(n_i, n_j, length_i):
 		+ 1.9e-9 * n_i * n_i)
 
 
+def _subsamples(patterns, max_seqlets_subsample):
+	"""The seqlets SimilarPatternsCollapser scores for each pattern: all of
+	them, or, for a pattern with more than max_seqlets_subsample, a
+	subsample drawn from a fresh RandomState(1234). Only a subsample's
+	seqlets are used: the ones core.SeqletSet(seqlets=subsample) would keep,
+	the first of each string, without its running sums."""
+
+	subsample_patterns = []
+	for pattern in patterns:
+		if len(pattern.seqlets) > max_seqlets_subsample:
+			subsample = np.random.RandomState(1234).choice(
+				a=pattern.seqlets, replace=False, size=max_seqlets_subsample)
+			kept = {}
+			for seqlet in subsample:
+				kept.setdefault(seqlet.string, seqlet)
+			pattern = _Seqlets(list(kept.values()))
+
+		subsample_patterns.append(pattern)
+
+	return subsample_patterns
+
+
+def _pair_map(patterns, subsample_patterns, pattern1_cache, pairs, track_set,
+	min_overlap):
+	"""{(i, j): (aligner similarity, AUROC)} for each pair, the
+	pairwise_sims and pairwise_aurocs entries SimilarPatternsCollapser
+	fills in for it.
+
+	Pattern i's flattened subsample data and its within-pattern Jaccard
+	depend only on pattern i, so they are computed once per pattern object
+	rather than once per (i, j) pair, and kept in pattern1_cache. The
+	within-pattern scores are used only by the AUROC, which sorts them, so
+	they are kept sorted, and a pair sorts only its between-pattern scores,
+	in place: a forked worker then allocates no more than one copy of
+	those. The key is the object itself (identity hash, and the dict keeps
+	it alive so its id is not reused)."""
+
+	def pattern1_data(i):
+		if patterns[i] not in pattern1_cache:
+			pattern1_fwdseqdata, _ =\
+			  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
+
+			flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
+				(len(pattern1_fwdseqdata), -1))
+
+			within_pattern1_sims = affinitymat.jaccard(
+				flat_pattern1_fwdseqdata[:, :, None],
+				flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
+			within_pattern1_sims.sort()
+
+			pattern1_cache[patterns[i]] = (flat_pattern1_fwdseqdata,
+				within_pattern1_sims)
+
+		return pattern1_cache[patterns[i]]
+
+	def pair_stats(pair):
+		"""The pairwise_sims and pairwise_aurocs entries of (i, j)."""
+
+		i, j = pair
+
+		#Compute best alignment between pattern pair
+		alnmt, rc, aligner_sim =\
+			_align_patterns(parent_pattern=patterns[i],
+				child_pattern=patterns[j],
+				metric=affinitymat.pearson_correlation,
+				min_overlap=min_overlap,
+				include_hypothetical=False,
+				transformer='magnitude')
+
+		#get realigned pattern2
+		pattern2_coords = subsample_patterns[j].seqlets
+		if rc: #flip strand if needed to align
+			pattern2_coords  = [x.revcomp() for x in pattern2_coords]
+
+		#now apply the alignment
+		pattern2_coords = [x.shift((1 if x.is_revcomp else -1)*alnmt)
+			for x in pattern2_coords]
+
+		# Filter out bad seqlets
+		pattern2_coords = [seqlet for seqlet in pattern2_coords
+			if seqlet.start >= 0 and seqlet.end < track_set.length]
+
+		if len(pattern2_coords) == 0:
+			return 0.0, 0.5
+
+		pattern2_shifted_seqlets = track_set.create_seqlets(
+			seqlets=pattern2_coords)
+
+		flat_pattern1_fwdseqdata, within_pattern1_sims = pattern1_data(i)
+
+		pattern2_fwdseqdata, _ =\
+		  util.get_2d_data_from_patterns(pattern2_shifted_seqlets)
+
+		#Flatten, compute continjacc sim at this alignment
+		flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
+			(len(pattern2_fwdseqdata), -1))
+
+		between_pattern_sims = affinitymat.jaccard(
+			flat_pattern1_fwdseqdata[:, :, None],
+			flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()
+		between_pattern_sims.sort()
+
+		auroc = _roc_auc_sorted(between_pattern_sims,
+			within_pattern1_sims)
+
+		return aligner_sim, auroc
+
+	# Each pair's entries depend only on the two patterns, their
+	# subsamples and the track set, so the pairs are computed in forked
+	# workers (forked.map_tasks) when there is enough work. A worker
+	# sends back each pair's two float64s as raw bytes. Pattern i's
+	# cached data is computed here before forking, so that the workers
+	# share it and it is kept for the next while iteration.
+	return forked.map_tasks(pair_stats, pairs,
+		weights=[_pair_seconds(len(subsample_patterns[i].seqlets),
+			len(subsample_patterns[j].seqlets), len(patterns[i]))
+			for i, j in pairs],
+		pack=lambda pair, values: np.array(values,
+			dtype=np.float64).tobytes(),
+		unpack=lambda packed: {pair: tuple(np.frombuffer(values,
+			dtype=np.float64)) for pair, values in packed.items()},
+		before_fork=lambda: [pattern1_data(i) for i in
+			sorted(set(i for i, _ in pairs))],
+		min_child_weight=PAIR_MIN_CHILD_SECONDS)
+
+
+def _first_pair_stats(patterns, track_set, min_overlap, max_seqlets_subsample):
+	"""The entries SimilarPatternsCollapser computes for every pair (i, j),
+	i != j, of `patterns` in its first iteration, as an (n, n, 2) float64
+	array of (aligner similarity, AUROC); the diagonal is not used."""
+
+	n = len(patterns)
+	pairs = [(i, j) for i in range(n) for j in range(n) if i != j]
+	stats = _pair_map(patterns, _subsamples(patterns, max_seqlets_subsample),
+		{}, pairs, track_set, min_overlap)
+
+	table = np.zeros((n, n, 2), dtype=np.float64)
+	for (i, j), values in stats.items():
+		table[i, j] = values
+	return table
+
+
 def SimilarPatternsCollapser(patterns, track_set,
 	min_overlap, prob_and_pertrack_sim_merge_thresholds,
 	prob_and_pertrack_sim_dealbreaker_thresholds,
 	min_frac, min_num, flank_to_add, window_size, bg_freq,
-	max_seqlets_subsample=1000):
+	max_seqlets_subsample=1000, known_pairs=None):
 	patterns = [x.copy() for x in patterns]
 
 	merge_hierarchy_levels = []        
@@ -512,17 +729,11 @@ def SimilarPatternsCollapser(patterns, track_set,
 	pairwise_aurocs = -np.ones((len(patterns), len(patterns)))
 	pairwise_sims = np.zeros((len(patterns), len(patterns)))
 
-	# Pattern i's flattened subsample data and its within-pattern Jaccard
-	# depend only on pattern i, so they are computed once per pattern object
-	# rather than once per (i, j) pair. The within-pattern scores are used
-	# only by the AUROC, which sorts them, so they are kept sorted, and a
-	# pair sorts only its between-pattern scores, in place: a forked worker
-	# then allocates no more than one copy of those. The key is the object
-	# itself (identity hash, and the dict keeps it alive so its id is not
-	# reused). An object's subsample is the same in every while iteration:
-	# its seqlets are never changed once it is in `patterns` (merging copies
-	# the parent first), and the subsample is drawn from a fresh
-	# RandomState(1234) each time.
+	# Pattern i's subsample data and within-pattern scores, by pattern
+	# object (_pair_map). An object's subsample is the same in every while
+	# iteration: its seqlets are never changed once it is in `patterns`
+	# (merging copies the parent first), and the subsample is drawn from a
+	# fresh RandomState(1234) each time.
 	pattern1_cache = {}
 
 	#loop until no more patterns get merged
@@ -535,90 +746,7 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 		#Let's subsample 'patterns' to prevent runtime from being too
 		# large in calculating pairwise sims. 
-		# Only a subsample's seqlets are used: the ones core.SeqletSet(
-		# seqlets=subsample) would keep, the first of each string, without
-		# its running sums.
-		subsample_patterns = []
-		for pattern in patterns:
-			if len(pattern.seqlets) > max_seqlets_subsample:
-				subsample = np.random.RandomState(1234).choice(
-					a=pattern.seqlets, replace=False, size=max_seqlets_subsample)
-				kept = {}
-				for seqlet in subsample:
-					kept.setdefault(seqlet.string, seqlet)
-				pattern = _Seqlets(list(kept.values()))
-
-			subsample_patterns.append(pattern)
-
-		def pattern1_data(i):
-			if patterns[i] not in pattern1_cache:
-				pattern1_fwdseqdata, _ =\
-				  util.get_2d_data_from_patterns(subsample_patterns[i].seqlets)
-
-				flat_pattern1_fwdseqdata = pattern1_fwdseqdata.reshape(
-					(len(pattern1_fwdseqdata), -1))
-
-				within_pattern1_sims = affinitymat.jaccard(
-					flat_pattern1_fwdseqdata[:, :, None],
-					flat_pattern1_fwdseqdata[:, :, None])[:, :, 0].flatten()
-				within_pattern1_sims.sort()
-
-				pattern1_cache[patterns[i]] = (flat_pattern1_fwdseqdata,
-					within_pattern1_sims)
-
-			return pattern1_cache[patterns[i]]
-
-		def pair_stats(pair):
-			"""The pairwise_sims and pairwise_aurocs entries of (i, j)."""
-
-			i, j = pair
-
-			#Compute best alignment between pattern pair
-			alnmt, rc, aligner_sim =\
-				_align_patterns(parent_pattern=patterns[i],
-					child_pattern=patterns[j],
-					metric=affinitymat.pearson_correlation,
-					min_overlap=min_overlap,
-					include_hypothetical=False,
-					transformer='magnitude')
-
-			#get realigned pattern2
-			pattern2_coords = subsample_patterns[j].seqlets
-			if rc: #flip strand if needed to align
-				pattern2_coords  = [x.revcomp() for x in pattern2_coords]
-
-			#now apply the alignment
-			pattern2_coords = [x.shift((1 if x.is_revcomp else -1)*alnmt)
-				for x in pattern2_coords]
-
-			# Filter out bad seqlets
-			pattern2_coords = [seqlet for seqlet in pattern2_coords
-				if seqlet.start >= 0 and seqlet.end < track_set.length]
-
-			if len(pattern2_coords) == 0:
-				return 0.0, 0.5
-
-			pattern2_shifted_seqlets = track_set.create_seqlets(
-				seqlets=pattern2_coords)
-
-			flat_pattern1_fwdseqdata, within_pattern1_sims = pattern1_data(i)
-
-			pattern2_fwdseqdata, _ =\
-			  util.get_2d_data_from_patterns(pattern2_shifted_seqlets)
-
-			#Flatten, compute continjacc sim at this alignment
-			flat_pattern2_fwdseqdata = pattern2_fwdseqdata.reshape(
-				(len(pattern2_fwdseqdata), -1))
-
-			between_pattern_sims = affinitymat.jaccard(
-				flat_pattern1_fwdseqdata[:, :, None],
-				flat_pattern2_fwdseqdata[:, :, None])[:, :, 0].flatten()
-			between_pattern_sims.sort()
-
-			auroc = _roc_auc_sorted(between_pattern_sims,
-				within_pattern1_sims)
-
-			return aligner_sim, auroc
+		subsample_patterns = _subsamples(patterns, max_seqlets_subsample)
 
 		n = len(patterns)
 		pairs = []
@@ -638,23 +766,19 @@ def SimilarPatternsCollapser(patterns, track_set,
 
 				pairs.append((i, j))
 
-		# Each pair's entries depend only on the two patterns, their
-		# subsamples and the track set, so the pairs are computed in forked
-		# workers (forked.map_tasks) when there is enough work. A worker
-		# sends back each pair's two float64s as raw bytes. Pattern i's
-		# cached data is computed here before forking, so that the workers
-		# share it and it is kept for the next while iteration.
-		stats = forked.map_tasks(pair_stats, pairs,
-			weights=[_pair_seconds(len(subsample_patterns[i].seqlets),
-				len(subsample_patterns[j].seqlets), len(patterns[i]))
-				for i, j in pairs],
-			pack=lambda pair, values: np.array(values,
-				dtype=np.float64).tobytes(),
-			unpack=lambda packed: {pair: tuple(np.frombuffer(values,
-				dtype=np.float64)) for pair, values in packed.items()},
-			before_fork=lambda: [pattern1_data(i) for i in
-				sorted(set(i for i, _ in pairs))],
-			min_child_weight=PAIR_MIN_CHILD_SECONDS)
+		# Pairs of the first iteration whose entries the caller computed
+		# already (known_pairs, keyed by the indices of `patterns` as given):
+		# the same values _pair_map would compute here.
+		if known_pairs is not None:
+			for i, j in pairs:
+				if (i, j) in known_pairs:
+					pairwise_sims[i, j], pairwise_aurocs[i, j] =\
+						known_pairs[(i, j)]
+			pairs = [pair for pair in pairs if pair not in known_pairs]
+			known_pairs = None
+
+		stats = _pair_map(patterns, subsample_patterns, pattern1_cache, pairs,
+			track_set, min_overlap)
 
 		for i, j in pairs:
 			#The symmetrization over i,j and j,i is done later

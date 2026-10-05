@@ -191,7 +191,24 @@ class SeqletSet():
 		self.subclusters = None
 		self.subcluster_to_subpattern = None
 
-	def compute_subpatterns(self, perplexity, n_seeds, n_iterations=-1):
+	def compute_subpatterns(self, perplexity, n_seeds, n_iterations=-1,
+		affinity=None):
+		"""Subcluster the seqlets: Leiden on the density-adapted affinity
+		matrix (`_subpattern_affinity`, or `affinity` when the caller has
+		already computed it for this pattern and this perplexity)."""
+
+		if affinity is None:
+			affinity = self._subpattern_affinity(perplexity)
+
+		#Do Leiden clustering
+		self._set_subclusters(cluster.LeidenCluster(affinity,
+			n_seeds=n_seeds, n_leiden_iterations=n_iterations))
+
+	def _subpattern_affinity(self, perplexity):
+		"""The density-adapted affinity matrix that compute_subpatterns
+		clusters: the first half of compute_subpatterns, which a caller may
+		run on its own, with more threads than the Leiden part gets."""
+
 		#this method assumes all the seqlets have been expanded so they
 		# all start at 0
 		X = util.get_2d_data_from_patterns(self.seqlets)[0]
@@ -211,10 +228,7 @@ class SeqletSet():
 
 		sp_density_adapted_affmat += sp_density_adapted_affmat.T
 		sp_density_adapted_affmat /= np.sum(sp_density_adapted_affmat.data)
-
-		#Do Leiden clustering
-		self._set_subclusters(cluster.LeidenCluster(sp_density_adapted_affmat,
-			n_seeds=n_seeds, n_leiden_iterations=n_iterations))
+		return sp_density_adapted_affmat
 
 	def _compile_subpattern_kernels(self):
 		"""Compile the numba kernel compute_subpatterns calls, for the
