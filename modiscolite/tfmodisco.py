@@ -419,7 +419,8 @@ def _patterns_from_clusters(seqlets, track_set, min_overlap,
 					track_set.create_seqlets([core.Seqlet(
 						example_idx=example_idx, start=start, end=end,
 						is_revcomp=is_revcomp) for example_idx, start, end,
-						is_revcomp in pattern])) for pattern in coordinates]
+						is_revcomp in pattern]), track_set=track_set)
+					for pattern in coordinates]
 
 			shares = forked.forked_map(build_share, bins,
 				budgets=[n_threads] * len(bins), pack=pack_share,
@@ -805,12 +806,13 @@ def seqlets_to_patterns(seqlets, track_set, track_signs=None,
 		pattern = patterns[patternidx]
 		pattern.compute_subpatterns(subcluster_perplexity,
 			n_seeds=n_leiden_runs, n_iterations=n_leiden_iterations,
-			affinity=affinities.pop(patternidx, None))
+			affinity=affinities.pop(patternidx, None), track_set=track_set)
 		return pattern.subclusters
 
 	def attach(packed):
 		for patternidx, subclusters in packed.items():
-			patterns[patternidx]._set_subclusters(subclusters)
+			patterns[patternidx]._set_subclusters(subclusters,
+				track_set=track_set)
 		return packed
 
 	def prepare(patternidx, loads, budgets):
@@ -855,9 +857,10 @@ def _unpack_patterns(packed, track_set):
 		pattern = core.SeqletSet(track_set.create_seqlets([core.Seqlet(
 			example_idx=example_idx, start=start, end=end,
 			is_revcomp=is_revcomp)
-			for example_idx, start, end, is_revcomp in coordinates]))
+			for example_idx, start, end, is_revcomp in coordinates]),
+			track_set=track_set)
 		if subclusters is not None:
-			pattern._set_subclusters(subclusters)
+			pattern._set_subclusters(subclusters, track_set=track_set)
 		patterns.append(pattern)
 
 	return patterns

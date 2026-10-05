@@ -207,17 +207,19 @@ class SeqletSet():
 		self.subcluster_to_subpattern = None
 
 	def compute_subpatterns(self, perplexity, n_seeds, n_iterations=-1,
-		affinity=None):
+		affinity=None, track_set=None):
 		"""Subcluster the seqlets: Leiden on the density-adapted affinity
 		matrix (`_subpattern_affinity`, or `affinity` when the caller has
-		already computed it for this pattern and this perplexity)."""
+		already computed it for this pattern and this perplexity).
+		track_set: as for _set_subclusters."""
 
 		if affinity is None:
 			affinity = self._subpattern_affinity(perplexity)
 
 		#Do Leiden clustering
 		self._set_subclusters(cluster.LeidenCluster(affinity,
-			n_seeds=n_seeds, n_leiden_iterations=n_iterations))
+			n_seeds=n_seeds, n_leiden_iterations=n_iterations),
+			track_set=track_set)
 
 	def _subpattern_affinity(self, perplexity):
 		"""The density-adapted affinity matrix that compute_subpatterns
@@ -258,11 +260,13 @@ class SeqletSet():
 		except Exception:
 			pass
 
-	def _set_subclusters(self, subclusters):
+	def _set_subclusters(self, subclusters, track_set=None):
 		"""Store the subcluster of each seqlet (the Leiden membership) and
 		build the subpatterns from it: the second half of
 		compute_subpatterns, also used to attach a membership computed in a
-		forked worker."""
+		forked worker. track_set: the TrackSet whose create_seqlets made
+		this pattern's seqlets, when the caller knows it, for the
+		subpatterns' sums (SeqletSet)."""
 
 		self.subclusters = subclusters
 
@@ -276,7 +280,7 @@ class SeqletSet():
 			subcluster_to_seqletsandalignments[subcluster].append(seqlet)
 
 		subcluster_to_subpattern = OrderedDict([
-			(subcluster, SeqletSet(seqletsandalignments))
+			(subcluster, SeqletSet(seqletsandalignments, track_set=track_set))
 			for subcluster,seqletsandalignments in
 			subcluster_to_seqletsandalignments.items()])
 

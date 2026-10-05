@@ -727,7 +727,8 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 
 	def refine(i):
 		pattern = patterns[i]
-		pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds)
+		pattern.compute_subpatterns(perplexity=perplexity, n_seeds=n_seeds,
+			track_set=track_set)
 
 		subpatterns = pattern.subcluster_to_subpattern.values()
 		return collapse(subpatterns)[0]
@@ -754,7 +755,7 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 
 	def unpack(packed):
 		for i, (subclusters, _) in packed.items():
-			patterns[i]._set_subclusters(subclusters)
+			patterns[i]._set_subclusters(subclusters, track_set=track_set)
 		return rebuild(packed)
 
 	def listed(refined, skip=None):
@@ -824,7 +825,7 @@ def _detect_spurious_merging(patterns, track_set, perplexity,
 	try:
 		with forked.budget_of(budgets[0]):
 			patterns[critical].compute_subpatterns(perplexity=perplexity,
-				n_seeds=n_seeds, affinity=affinity)
+				n_seeds=n_seeds, affinity=affinity, track_set=track_set)
 			del affinity
 
 			refined_critical = collapse(
