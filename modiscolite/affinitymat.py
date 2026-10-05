@@ -148,18 +148,72 @@ def _top_k_heap(dot, k, neighbors, sims):
 # +0.0, positive or +inf, and such floats order as their bits do.
 _INF_BITS = 0x7FF0000000000000
 
-# `_sparse_mm_dot`'s top-k histogram: 1024 buckets of 2**46 consecutive bit
-# patterns below a row's largest value (64 to a binade, 16 binades), and 8
-# buckets for the values below them.
+# `_sparse_mm_dot_rows`' top-k histogram: 1024 buckets of 2**46 consecutive
+# bit patterns below a row's largest value (64 to a binade, 16 binades), and
+# 8 buckets for the values below them.
 _TOP_SHIFT = 46
 _TOP_BUCKETS = 1024
 _TOP_SPARE = 8
 
+# Rows of `_sparse_mm_dot` per task of its thread pool.
+_KNN_ROWS = 16
 
-@njit(parallel=True)
-def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
-	Yt_indptr, Yt_rows, Yt_data, k):
-	"""For each row i of X, the k rows j with the largest max(X_i.X_j,
+
+@njit
+def _merge_sort(keys, vals, keys_tmp, vals_tmp):
+	"""Sort keys ascending, carrying vals along, stably (equal keys keep
+	their order), by bottom-up merge passes; keys_tmp and vals_tmp are
+	scratch of the same length."""
+
+	n = keys.shape[0]
+	src_k, src_v, dst_k, dst_v = keys, vals, keys_tmp, vals_tmp
+	flipped = False
+
+	width = 1
+	while width < n:
+		for lo in range(0, n, 2 * width):
+			mid = min(lo + width, n)
+			hi = min(lo + 2 * width, n)
+			a, b, o = lo, mid, lo
+			while a < mid and b < hi:
+				if src_k[b] < src_k[a]:
+					dst_k[o] = src_k[b]
+					dst_v[o] = src_v[b]
+					b += 1
+				else:
+					dst_k[o] = src_k[a]
+					dst_v[o] = src_v[a]
+					a += 1
+				o += 1
+
+			while a < mid:
+				dst_k[o] = src_k[a]
+				dst_v[o] = src_v[a]
+				a += 1
+				o += 1
+
+			while b < hi:
+				dst_k[o] = src_k[b]
+				dst_v[o] = src_v[b]
+				b += 1
+				o += 1
+
+		src_k, dst_k = dst_k, src_k
+		src_v, dst_v = dst_v, src_v
+		flipped = not flipped
+		width *= 2
+
+	if flipped:
+		for o in range(n):
+			keys[o] = src_k[o]
+			vals[o] = src_v[o]
+
+
+@njit(nogil=True)
+def _sparse_mm_dot_rows(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, 
+	Xt_data, Yt_indptr, Yt_rows, Yt_data, k, lo, hi, neighbors, sims):
+	"""Rows lo to hi of `_sparse_mm_dot`, written into neighbors and sims:
+	for each row i of X, the k rows j with the largest max(X_i.X_j,
 	X_i.Y_j) and those values, in the order of a stable argsort of the
 	negated values.
 
@@ -187,12 +241,15 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 
 	n_rows = len(X_indptr) - 1
 
-	neighbors = np.empty((n_rows, k), dtype='int32')
-	sims = np.empty((n_rows, k), dtype='float64')
+	dot = np.empty(n_rows, dtype=np.float64)
+	ydot = np.empty(n_rows, dtype=np.float64)
+	bits = dot.view(np.uint64)
+	hist = np.empty(_TOP_BUCKETS + _TOP_SPARE, dtype=np.int64)
 
-	for i in prange(n_rows):
-		dot = np.zeros(n_rows, dtype='float64')
-		ydot = np.zeros(n_rows, dtype='float64')
+	for i in range(lo, hi):
+		for j in range(n_rows):
+			dot[j] = 0.0
+			ydot[j] = 0.0
 
 		# Every index here is non-negative; unsigned casts spare numba's
 		# negative-index fix-up on each access.
@@ -212,7 +269,6 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 		# The row's values, and the largest of their bits as unsigned
 		# integers: at most +inf's exactly when every value is +0.0,
 		# positive or +inf.
-		bits = dot.view(np.uint64)
 		top = uint64(0)
 		for j in range(n_rows):
 			dot[j] = max(dot[j], ydot[j])
@@ -225,7 +281,8 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 			# further down are spread over _TOP_SPARE overflow buckets so
 			# that their counts do not form one chain of increments.
 			top_ = np.int64(top)
-			hist = np.zeros(_TOP_BUCKETS + _TOP_SPARE, dtype=np.int64)
+			for b in range(_TOP_BUCKETS + _TOP_SPARE):
+				hist[b] = 0
 			for j in range(n_rows):
 				d = (top_ - np.int64(bits[j])) >> _TOP_SHIFT
 				b = d if d < _TOP_BUCKETS else _TOP_BUCKETS + (j & (_TOP_SPARE - 1))
@@ -250,15 +307,45 @@ def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
 						keys[c] = -np.int64(bits[j])
 						c += 1
 
-				order = np.argsort(keys, kind='mergesort')
+				_merge_sort(keys, cand, np.empty(n_cand, dtype=np.int64),
+					np.empty(n_cand, dtype=np.int64))
 				for t in range(k):
-					j = cand[order[t]]
+					j = cand[t]
 					neighbors[i, t] = j
 					sims[i, t] = dot[j]
 				done = True
 
 		if not done:
 			_top_k_heap(dot, k, neighbors[i], sims[i])
+
+
+def _sparse_mm_dot(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows, Xt_data,
+	Yt_indptr, Yt_rows, Yt_data, k):
+	"""(sims, neighbors) of `_sparse_mm_dot_rows` for every row of X.
+
+	Blocks of _KNN_ROWS rows are handed out one at a time to
+	numba.get_num_threads() threads, which run `_sparse_mm_dot_rows`
+	without the GIL: rows differ widely in cost, and small blocks keep every
+	thread busy. Each row is computed by one thread on its own, so the
+	result does not depend on the block size or the thread count. A serial
+	kernel run by threads compiles in about half the time of the same
+	kernel under prange.
+	"""
+
+	n_rows = len(X_indptr) - 1
+	neighbors = np.empty((n_rows, k), dtype='int32')
+	sims = np.empty((n_rows, k), dtype='float64')
+
+	precompile._reap()
+	n_threads = max(1, numba.get_num_threads())
+
+	def run(lo):
+		_sparse_mm_dot_rows(X_data, X_indptr, X_cols, Xt_indptr, Xt_rows,
+			Xt_data, Yt_indptr, Yt_rows, Yt_data, k, lo, 
+			min(lo + _KNN_ROWS, n_rows), neighbors, sims)
+
+	with ThreadPoolExecutor(n_threads) as pool:
+		list(pool.map(run, range(0, n_rows, _KNN_ROWS)))
 
 	return sims, neighbors
 
@@ -444,13 +531,8 @@ def _sparse_knn(matrices, k):
 		map_blocks(x_block, nnz)
 		del order_x, first, rows
 
-	# Rows differ widely in cost; small chunks keep every thread busy. Each
-	# row is computed by one thread on its own, so the result does not
-	# depend on the chunk size or the thread count.
-	with numba.parallel_chunksize(4):
-		return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
-			X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, 
-			Yt_data, k)
+	return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
+		X_cols, Xt_indptr, Xt_rows, Xt_data, Yt_indptr, Yt_rows, Yt_data, k)
 
 
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
