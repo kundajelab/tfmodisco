@@ -7,7 +7,7 @@ name = "modisco"
 version = "2.6.0"
 description = "Transcription Factor MOtif Discovery from Importance SCOres"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Jacob Schreiber", email = "jmschreiber91@gmail.com" }]
 dependencies = [

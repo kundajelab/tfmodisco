@@ -20,6 +20,12 @@ modisco
 	- GitHub Actions runs the full test suite, including the CLI tests, on
 	Python 3.9 through 3.13 for every pull request and push to master.
 
+	- Process scheduling and background compilation respect runtime thread
+	limits set with numba.set_num_threads(). Explicit worker budgets are retained.
+
+	- Require Python 3.9 or newer, matching the pinned Leiden/igraph dependencies
+	and the process APIs used by the optimized pipeline.
+
 
 
 Version 2.5.2

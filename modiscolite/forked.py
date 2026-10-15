@@ -8,8 +8,8 @@ on the way in, and sends its result back pickled (`_Result`). The work of a
 child that could not be forked or that failed is done again in the parent,
 so a result never depends on whether a child succeeded.
 
-The processes share one budget of threads, numba's thread count
-(`numba.config.NUMBA_NUM_THREADS`) in the top-level process. A child gets a
+The processes share one budget of threads, numba's effective thread count
+(`numba.get_num_threads()`) in the top-level process. A child gets a
 share of the budget: numba's parallel kernels run with that many threads in
 it, and anything it forks in turn (the Leiden seeds) stays within it.
 """
@@ -26,8 +26,8 @@ import threading
 import numba
 
 
-# The budget of this process: None in the top-level process, which has
-# numba's whole thread count, and the share it was given in a forked child
+# The budget of this process: None in the top-level process, which uses
+# numba's effective thread count, and the share it was given in a forked child
 # (or, in the parent, while it runs its own share).
 _budget = None
 
@@ -41,7 +41,15 @@ def budget():
 	"""The number of threads this process may keep busy."""
 
 	if _budget is None:
-		return numba.config.NUMBA_NUM_THREADS
+		# set_num_threads() initializes the threading layer. Before it exists,
+		# the effective limit is still the configured maximum; do not launch
+		# the pool just to read it, since precompile must fork before an
+		# OpenMP pool starts. Once initialized, honor the caller's runtime mask.
+		try:
+			numba.threading_layer()
+		except ValueError:
+			return numba.config.NUMBA_NUM_THREADS
+		return numba.get_num_threads()
 	return _budget
 
 
@@ -71,7 +79,7 @@ def numba_fork_safe():
 
 
 def _set_budget(n, n_threads=None):
-	"""Set this process's budget to n (None: numba's whole thread count)
+	"""Set this process's budget to n (None: numba's effective thread count)
 	and numba's thread count to n_threads, by default n."""
 
 	global _budget

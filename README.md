@@ -32,6 +32,9 @@ Related tools:
 
 ## Installation
 
+TF-MoDISco requires Python 3.9 or newer. Leiden is pinned to version 0.11.0
+to keep clustering results consistent; its igraph dependency requires Python 3.9 or newer.
+
 You can install TF-MoDISco using `pip install modisco`
 
 ## Running TF-MoDISco (test)
