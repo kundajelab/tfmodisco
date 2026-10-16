@@ -231,6 +231,8 @@ def write_meme_from_h5(filename: os.PathLike, datatype: util.MemeDataType, outpu
 		The name of the MEME file to write.
 	"""
 
+	import scipy.special
+
 	alphabet = 'ACGT'
 	writer = meme_writer.MEMEWriter(
 		memesuite_version='5',

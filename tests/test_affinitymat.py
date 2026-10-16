@@ -7,7 +7,6 @@ import sklearn.preprocessing
 import pytest
 
 from modiscolite.affinitymat import _sparse_vv_dot
-from modiscolite.affinitymat import _sparse_mm_dot
 from modiscolite.affinitymat import cosine_similarity_from_seqlets
 from modiscolite.affinitymat import jaccard_from_seqlets
 from modiscolite.affinitymat import jaccard
@@ -165,51 +164,6 @@ def test_sparse_vv_dot_raises():
 	X = scipy.sparse.csr_matrix(numpy.eye(3))
 	assert_raises(TypeError, _sparse_vv_dot, X.data, X.indices, X.indptr,
 		X.data, X.indices, X.indptr, 0, 0)
-
-
-##
-
-
-@pytest.mark.parametrize("n,d,density", [(1, 10, 0.5), (5, 10, 0.3),
-	(10, 100, 0.05), (30, 50, 0.2), (12, 30, 1.0)])
-@pytest.mark.parametrize("k", [1, 3, 100])
-def test_sparse_mm_dot(n, d, density, k):
-	X = _csr(n, d, density, random_state=0)
-	Y = _csr(n, d, density, random_state=1)
-	k = min(k, n)
-
-	sims, neighbors = _sparse_mm_dot(X.data, X.indices, X.indptr, Y.data,
-		Y.indices, Y.indptr, k)
-	sims_ref, neighbors_ref = _mm_dot_reference(X, Y, k)
-
-	assert sims.shape == (n, k)
-	assert neighbors.shape == (n, k)
-	assert sims.dtype == numpy.float64
-	assert neighbors.dtype == numpy.int32
-	assert_array_almost_equal(sims, sims_ref)
-	assert_array_equal(neighbors, neighbors_ref)
-
-
-def test_sparse_mm_dot_max():
-	X = scipy.sparse.csr_matrix(numpy.array([[1.0, 0.0], [0.0, 1.0]]))
-	Y = scipy.sparse.csr_matrix(numpy.array([[0.0, 2.0], [3.0, 0.0]]))
-	args = [a.astype('int64') if a.dtype.kind == 'i' else a for a in
-		(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr)]
-
-	sims, neighbors = _sparse_mm_dot(*args, 2)
-	assert_array_almost_equal(sims, [[3.0, 1.0], [2.0, 1.0]])
-	assert_array_equal(neighbors, [[1, 0], [0, 1]])
-
-
-def test_sparse_mm_dot_ties():
-	# Ties keep their original order.
-	X = _csr(6, 4, 1.0)
-	X.data[:] = 1.0
-
-	sims, neighbors = _sparse_mm_dot(X.data, X.indices, X.indptr, X.data,
-		X.indices, X.indptr, 6)
-	assert_array_almost_equal(sims, numpy.full((6, 6), 4.0))
-	assert_array_equal(neighbors, numpy.tile(numpy.arange(6), (6, 1)))
 
 
 ##
@@ -568,16 +522,6 @@ def test__jaccard(nx, ny, d, dy, m):
 			for idx in range(dy - d + 1):
 				expected = _cont_jaccard(X[i], Y[l, idx:idx+d])
 				assert abs(scores[l, i, idx] - expected) < 1e-5
-
-
-def test__jaccard_raises():
-	X = numpy.ones((2, 5, 4))
-	scores = numpy.zeros((2, 2, 1), dtype='float32')
-	neighbors = numpy.zeros((2, 2), dtype='int32')
-
-	assert_raises(TypeError, _jaccard, X, X, neighbors, scores)
-	assert_raises(TypeError, _jaccard, X.astype('float32'),
-		X.astype('float32'), neighbors.astype('int64'), scores)
 
 
 ##

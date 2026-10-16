@@ -2,19 +2,23 @@
 # Authors: Jacob Schreiber <jmschreiber91@gmail.com>
 # adapted from code written by Avanti Shrikumar 
 
-import sklearn
-import sklearn.manifold
+import math
+
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
 import scipy
 from scipy.sparse import coo_matrix
 
+import numba
 from numba import njit
 from numba import prange
+from numba import uint64
 
 from . import util
 from . import gapped_kmer
+from . import precompile
 
 
 @njit('float64(float64[:], int64[:], int64[:], float64[:], int64[:], int64[:], int64, int64)')
@@ -44,7 +48,11 @@ def _sparse_vv_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, i, 
 	return dot
 
 @njit(parallel=True)
-def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
+def _sparse_mm_dot_merge(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
+	"""The pairwise merge-join version of `_sparse_mm_dot`, used only when a
+	row of X or Y is not in canonical form (sorted, no duplicate columns),
+	where the inverted index would not reproduce the merge join."""
+
 	n_rows = len(Y_indptr) - 1
 
 	neighbors = np.empty((n_rows, k), dtype='int32')
@@ -64,22 +72,643 @@ def _sparse_mm_dot(X_data, X_indices, X_indptr, Y_data, Y_indices, Y_indptr, k):
 
 	return sims, neighbors
 
+
+@njit
+def _lt(a, b):
+	"""numba's float `<` for sorting: NaN after every number."""
+	return a < b or (np.isnan(b) and not np.isnan(a))
+
+
+@njit
+def _after(a, b, dot):
+	"""Whether index `a` comes after index `b` in the stable argsort of -dot."""
+	va = -dot[a]
+	vb = -dot[b]
+	return _lt(vb, va) or (not _lt(va, vb) and a > b)
+
+
+@njit
+def _sift_down(heap, size, dot):
+	pos = 0
+	while True:
+		child = 2 * pos + 1
+		if child >= size:
+			break
+
+		if child + 1 < size and _after(heap[child + 1], heap[child], dot):
+			child += 1
+
+		if _after(heap[child], heap[pos], dot):
+			tmp = heap[pos]
+			heap[pos] = heap[child]
+			heap[child] = tmp
+			pos = child
+		else:
+			break
+
+
+@njit
+def _top_k_heap(dot, k, neighbors, sims):
+	"""The k indices of dot that come first in the order of a stable
+	argsort of -dot (value descending, NaN last, ties by ascending index),
+	best first, and their values, into `neighbors` and `sims`. A heap holds
+	the best k seen so far, with the one that comes last at its root."""
+
+	n = dot.shape[0]
+
+	heap = np.empty(k, dtype=np.int64)
+	for j in range(k):
+		heap[j] = j
+		pos = j
+		while pos > 0:
+			parent = (pos - 1) // 2
+			if _after(heap[pos], heap[parent], dot):
+				tmp = heap[pos]
+				heap[pos] = heap[parent]
+				heap[parent] = tmp
+				pos = parent
+			else:
+				break
+
+	# j is larger than every index in the heap, so it enters exactly when
+	# its value sorts strictly before the root's.
+	for j in range(k, n):
+		if _lt(-dot[j], -dot[heap[0]]):
+			heap[0] = j
+			_sift_down(heap, k, dot)
+
+	for size in range(k, 0, -1):
+		neighbors[size-1] = heap[0]
+		sims[size-1] = dot[heap[0]]
+		heap[0] = heap[size-1]
+		_sift_down(heap, size-1, dot)
+
+
+# The bits of +inf; with no sign bit set, a float64 at or below them is
+# +0.0, positive or +inf, and such floats order as their bits do.
+_INF_BITS = 0x7FF0000000000000
+
+# `_sparse_mm_dot_rows`' top-k histogram: 1024 buckets of 2**46 consecutive
+# bit patterns below a row's largest value (64 to a binade, 16 binades), and
+# 8 buckets for the values below them.
+_TOP_SHIFT = 46
+_TOP_BUCKETS = 1024
+_TOP_SPARE = 8
+
+# Rows of `_sparse_mm_dot` per task of its thread pool.
+_KNN_ROWS = 16
+
+# `_sparse_mm_dot_rows` asks for the first _PREFETCH_LINES cache lines of
+# the posting list of the column _PREFETCH_COLS ahead of the one it adds.
+_PREFETCH_COLS = 8
+_PREFETCH_LINES = 4
+
+# The spellings of LLVM's prefetch intrinsic tried, in order, and the one
+# this LLVM takes (`_prefetch_name`).
+_PREFETCH_NAMES = ('llvm.prefetch.p0', 'llvm.prefetch.p0i8', 'llvm.prefetch')
+_prefetch_names = {}
+
+
+def _prefetch_name():
+	"""The first of _PREFETCH_NAMES that this LLVM reads as its prefetch
+	intrinsic, or None. A name is taken when a module calling it parses and
+	verifies and LLVM gives the declaration an intrinsic's attributes (an
+	unknown llvm.* name parses too, with none). Checked once per process,
+	when a kernel calling `_prefetch` is first compiled."""
+
+	if _PREFETCH_NAMES not in _prefetch_names:
+		found = None
+		try:
+			from llvmlite import ir, binding
+
+			i8p = ir.IntType(8).as_pointer()
+			i32 = ir.IntType(32)
+			for name in _PREFETCH_NAMES:
+				module = ir.Module()
+				fn = ir.Function(module, ir.FunctionType(ir.VoidType(), 
+					[i8p, i32, i32, i32]), name)
+				caller = ir.Function(module, ir.FunctionType(ir.VoidType(), 
+					[i8p]), 'caller')
+				builder = ir.IRBuilder(caller.append_basic_block())
+				builder.call(fn, [caller.args[0], ir.Constant(i32, 0), 
+					ir.Constant(i32, 3), ir.Constant(i32, 1)])
+				builder.ret_void()
+
+				try:
+					parsed = binding.parse_assembly(str(module))
+					parsed.verify()
+				except Exception:
+					continue
+
+				if any(f.is_declaration and f.name.startswith('llvm.prefetch')
+						and any(True for _ in f.attributes)
+						for f in parsed.functions):
+					found = name
+					break
+		except Exception:
+			found = None
+
+		_prefetch_names[_PREFETCH_NAMES] = found
+
+	return _prefetch_names[_PREFETCH_NAMES]
+
+
+def _make_prefetch():
+	"""A function `_prefetch(arr, idx)` for numba code that asks the CPU to
+	bring the cache line holding element idx of a C-contiguous array into
+	its data caches, counting elements in C order from the first (for a
+	1-d array, arr[idx]): llvm.prefetch, a read, kept in every level. A
+	hint only: it reads and writes no value, and an address past the
+	array's end is allowed and does not fault. Where this LLVM does not
+	take the intrinsic (`_prefetch_name`), it compiles to nothing; where
+	this numba cannot build one, it is a function that does nothing."""
+
+	try:
+		from numba.core import cgutils, types
+		from numba.extending import intrinsic
+	except ImportError:
+		intrinsic = None
+
+	if intrinsic is not None:
+		@intrinsic
+		def _prefetch(typingctx, arr, idx):
+			if not (isinstance(arr, types.Array) and arr.layout == 'C' and
+					isinstance(idx, types.Integer)):
+				return None
+
+			def codegen(context, builder, signature, args):
+				name = _prefetch_name()
+				if name is not None:
+					from llvmlite import ir
+
+					aryty = signature.args[0]
+					ary = context.make_array(aryty)(context, builder, args[0])
+					i = context.cast(builder, args[1], signature.args[1],
+						types.intp)
+					ptr = builder.gep(ary.data, [i])
+					i8p = ir.IntType(8).as_pointer()
+					i32 = ir.IntType(32)
+					fn = cgutils.get_or_insert_function(builder.module,
+						ir.FunctionType(ir.VoidType(), [i8p, i32, i32, i32]),
+						name)
+					builder.call(fn, [builder.bitcast(ptr, i8p),
+						ir.Constant(i32, 0), ir.Constant(i32, 3),
+						ir.Constant(i32, 1)])
+				return context.get_dummy_value()
+
+			return types.void(arr, idx), codegen
+
+		return _prefetch
+
+	@njit(nogil=True)
+	def _prefetch(arr, idx):
+		pass
+
+	return _prefetch
+
+
+# Used by `_sparse_mm_dot_rows` and `_fwd_rev_best8`.
+_prefetch = _make_prefetch()
+
+
+@njit
+def _merge_sort(keys, vals, keys_tmp, vals_tmp):
+	"""Sort keys ascending, carrying vals along, stably (equal keys keep
+	their order), by bottom-up merge passes; keys_tmp and vals_tmp are
+	scratch of the same length."""
+
+	n = keys.shape[0]
+	src_k, src_v, dst_k, dst_v = keys, vals, keys_tmp, vals_tmp
+	flipped = False
+
+	width = 1
+	while width < n:
+		for lo in range(0, n, 2 * width):
+			mid = min(lo + width, n)
+			hi = min(lo + 2 * width, n)
+			a, b, o = lo, mid, lo
+			while a < mid and b < hi:
+				if src_k[b] < src_k[a]:
+					dst_k[o] = src_k[b]
+					dst_v[o] = src_v[b]
+					b += 1
+				else:
+					dst_k[o] = src_k[a]
+					dst_v[o] = src_v[a]
+					a += 1
+				o += 1
+
+			while a < mid:
+				dst_k[o] = src_k[a]
+				dst_v[o] = src_v[a]
+				a += 1
+				o += 1
+
+			while b < hi:
+				dst_k[o] = src_k[b]
+				dst_v[o] = src_v[b]
+				b += 1
+				o += 1
+
+		src_k, dst_k = dst_k, src_k
+		src_v, dst_v = dst_v, src_v
+		flipped = not flipped
+		width *= 2
+
+	if flipped:
+		for o in range(n):
+			keys[o] = src_k[o]
+			vals[o] = src_v[o]
+
+
+@njit(nogil=True)
+def _sparse_mm_dot_rows(X_data, X_indptr, X_cols, Z_indptr, Z_rows, Z_data, 
+	k, lo, hi, neighbors, sims):
+	"""Rows lo to hi of `_sparse_mm_dot`, written into neighbors and sims:
+	for each row i of X, the k rows j with the largest max(X_i.X_j,
+	X_i.Y_j) and those values, in the order of a stable argsort of the
+	negated values.
+
+	X is in CSR form with its columns renumbered to a compact range
+	(`X_cols`). Z holds X's and Y's posting lists over the same compact
+	columns, merged: column c's entries are Z_indptr[c] to Z_indptr[c+1],
+	X's first (target j, X_j[c]) and then Y's (target n + j, Y_j[c]). Each
+	product X_i[c] * Z[q] is added to acc[target] while walking row i's
+	columns in ascending order, so acc[j] is X_i.X_j and acc[n + j] is
+	X_i.Y_j, each summed over the shared columns in the same order, from
+	the same +0.0, as the pairwise merge join of two sorted rows, and
+	bitwise equal to it. Only pairs that share a column cost anything. The
+	posting list _PREFETCH_COLS columns ahead is prefetched, which changes
+	no value.
+
+	The top k are those that come first in the order the argsort would give
+	(value descending, NaN last, ties by ascending index), written out best
+	first. When every value of a row is +0.0, positive or +inf (no NaN, no
+	negative value, no -0.0), that order is the order of the values' bits
+	as integers, descending, ties by index, and a histogram of the bits
+	finds a threshold above which at least k and few more values lie; only
+	those are sorted, by a stable sort of their negated bits taken in
+	ascending index. Every value below the threshold is strictly smaller
+	than at least k others, so the k picked are the same. Other rows, and
+	rows whose k-th value lies more than 16 binades below their largest
+	(`_TOP_SHIFT`), go through `_top_k_heap`, the heap scan over the whole
+	row. Either way the result is the same k in the same order.
+	"""
+
+	n_rows = len(X_indptr) - 1
+
+	acc = np.empty(2 * n_rows, dtype=np.float64)
+	dot = acc[:n_rows]
+	bits = acc.view(np.uint64)
+	hist = np.empty(_TOP_BUCKETS + _TOP_SPARE, dtype=np.int64)
+
+	for i in range(lo, hi):
+		for j in range(2 * n_rows):
+			acc[j] = 0.0
+
+		# Every index here is non-negative; unsigned casts spare numba's
+		# negative-index fix-up on each access.
+		p_end = X_indptr[i+1]
+		for p in range(X_indptr[i], p_end):
+			if p + _PREFETCH_COLS < p_end:
+				a = uint64(Z_indptr[uint64(X_cols[uint64(p + _PREFETCH_COLS)])])
+				for line in range(_PREFETCH_LINES):
+					_prefetch(Z_rows, a + uint64(16 * line))
+					_prefetch(Z_data, a + uint64(8 * line))
+
+			p = uint64(p)
+			c = uint64(X_cols[p])
+			x_data = X_data[p]
+
+			for q in range(Z_indptr[c], Z_indptr[c + uint64(1)]):
+				q = uint64(q)
+				acc[uint64(Z_rows[q])] += x_data * Z_data[q]
+
+		# The row's values, and the largest of their bits as unsigned
+		# integers: at most +inf's exactly when every value is +0.0,
+		# positive or +inf.
+		top = uint64(0)
+		for j in range(n_rows):
+			acc[j] = max(acc[j], acc[n_rows + j])
+			top = max(top, bits[j])
+
+		done = False
+		if top <= uint64(_INF_BITS):
+			# Bucket b holds the values whose bits lie between top - (b+1)
+			# << _TOP_SHIFT (excluded) and top - b << _TOP_SHIFT; values
+			# further down are spread over _TOP_SPARE overflow buckets so
+			# that their counts do not form one chain of increments.
+			top_ = np.int64(top)
+			for b in range(_TOP_BUCKETS + _TOP_SPARE):
+				hist[b] = 0
+			for j in range(n_rows):
+				d = (top_ - np.int64(bits[j])) >> _TOP_SHIFT
+				b = d if d < _TOP_BUCKETS else _TOP_BUCKETS + (j & (_TOP_SPARE - 1))
+				hist[b] += 1
+
+			# The first bucket by which k values are counted.
+			n_cand = 0
+			last = 0
+			while last < _TOP_BUCKETS:
+				n_cand += hist[last]
+				if n_cand >= k:
+					break
+				last += 1
+
+			if last < _TOP_BUCKETS:
+				cand = np.empty(n_cand, dtype=np.int64)
+				keys = np.empty(n_cand, dtype=np.int64)
+				c = 0
+				for j in range(n_rows):
+					if (top_ - np.int64(bits[j])) >> _TOP_SHIFT <= last:
+						cand[c] = j
+						keys[c] = -np.int64(bits[j])
+						c += 1
+
+				_merge_sort(keys, cand, np.empty(n_cand, dtype=np.int64),
+					np.empty(n_cand, dtype=np.int64))
+				for t in range(k):
+					j = cand[t]
+					neighbors[i, t] = j
+					sims[i, t] = acc[j]
+				done = True
+
+		if not done:
+			_top_k_heap(dot, k, neighbors[i], sims[i])
+
+
+def _sparse_mm_dot(X_data, X_indptr, X_cols, Z_indptr, Z_rows, Z_data, k):
+	"""(sims, neighbors) of `_sparse_mm_dot_rows` for every row of X.
+
+	Blocks of _KNN_ROWS rows are handed out one at a time to
+	numba.get_num_threads() threads, which run `_sparse_mm_dot_rows`
+	without the GIL: rows differ widely in cost, and small blocks keep every
+	thread busy. Each row is computed by one thread on its own, so the
+	result does not depend on the block size or the thread count. A serial
+	kernel run by threads compiles in about half the time of the same
+	kernel under prange.
+	"""
+
+	n_rows = len(X_indptr) - 1
+	neighbors = np.empty((n_rows, k), dtype='int32')
+	sims = np.empty((n_rows, k), dtype='float64')
+
+	precompile._reap()
+	n_threads = max(1, numba.get_num_threads())
+
+	def run(lo):
+		_sparse_mm_dot_rows(X_data, X_indptr, X_cols, Z_indptr, Z_rows,
+			Z_data, k, lo, min(lo + _KNN_ROWS, n_rows), neighbors, sims)
+
+	with ThreadPoolExecutor(n_threads) as pool:
+		list(pool.map(run, range(0, n_rows, _KNN_ROWS)))
+
+	return sims, neighbors
+
+
+def _sort_by_column(holder, n_cols, packed, order):
+	"""Sort the column indices (below n_cols) in the one-element list
+	`holder`, and find the permutation that sorts them, in the caller's
+	arrays: `order` holds 0..len(indices)-1 on entry and the permutation on
+	return, and `packed` the sorted indices. Each index is packed with its
+	position into one int64, index in the high bits, and the packed values
+	are sorted in place, which is several times faster than an argsort;
+	ties come out in position order. The list is emptied once the indices
+	are copied, so that they can be freed. Returns False, having changed
+	nothing, when the two do not fit in 63 bits. Callers must not depend on
+	the order of equal indices."""
+
+	nnz = len(holder[0])
+	shift = max(1, int(nnz).bit_length())
+	if nnz == 0 or max(1, int(n_cols - 1).bit_length()) + shift > 63:
+		return False
+
+	np.copyto(packed, holder.pop())
+	np.left_shift(packed, shift, out=packed)
+	np.bitwise_or(packed, order, out=packed)
+	packed.sort()
+
+	np.bitwise_and(packed, (1 << shift) - 1, out=order)
+	np.right_shift(packed, shift, out=packed)
+	return True
+
+
+def _sorted_by_column(holder, n_cols, pool=None):
+	"""(order, sorted indices) for the column indices in `holder`, by
+	`_sort_by_column`, run in `pool` when one is given (a Future is then
+	returned), or by np.argsort when they cannot be packed."""
+
+	nnz = len(holder[0])
+	packed, order = np.empty(nnz, dtype=np.int64), np.arange(nnz)
+
+	def run():
+		if _sort_by_column(holder, n_cols, packed, order):
+			return order, packed
+
+		indices = holder.pop()
+		order_ = np.argsort(indices)
+		return order_, indices[order_]
+
+	return run() if pool is None else pool.submit(run)
+
+
+def _block_offsets(mask, step):
+	"""The number of True entries of `mask` before each block of `step`
+	entries, and the total, as an array of len(range(0, len(mask), step))
+	+ 1 values."""
+
+	starts = np.arange(0, len(mask), step)
+	offsets = np.zeros(len(starts) + 1, dtype=np.int64)
+	if len(starts):
+		np.cumsum(np.add.reduceat(mask, starts, dtype=np.int64), 
+			out=offsets[1:])
+	return offsets
+
+
+def _sparse_knn(matrices, k):
+	"""The k nearest rows of X for each row of X by max(X_i.X_j, X_i.Y_j),
+	for two CSR matrices with the same number of rows, given as the list
+	[X, Y].
+
+	The list is emptied, and each of X's and Y's arrays is dropped as soon
+	as it is no longer needed. A caller that keeps no other reference to X
+	and Y has that memory back before the kernel runs.
+
+	The posting lists (X's and Y's CSC forms, merged per column) are built
+	with numpy calls that release the GIL, run by numba.get_num_threads()
+	threads: Y's column sort beside X's, then searches, gathers and
+	scatters over blocks of the sorted entries, each writing its own
+	entries of arrays allocated here (gapped_kmer.BLOCK says why), so every
+	array is the one a single thread would build. Y's CSC form is built
+	first, so that Y's sort is freed before the merged lists are made, and
+	then moved into them, before X's entries are.
+	"""
+
+	X, Y = matrices
+	matrices.clear()
+
+	if not (X.has_canonical_format and Y.has_canonical_format):
+		return _sparse_mm_dot_merge(X.data, X.indices, X.indptr, Y.data, 
+			Y.indices, Y.indptr, k)
+
+	n, nnz, nnz_y, n_cols = X.shape[0], X.nnz, Y.nnz, X.shape[1]
+	X_data, X_indptr, x_indices = X.data, X.indptr, [X.indices]
+	Y_data, Y_indptr, y_indices = Y.data, Y.indptr, [Y.indices]
+	del X, Y
+
+	step = gapped_kmer.BLOCK
+
+	with ThreadPoolExecutor(max(2, numba.get_num_threads())) as pool:
+		def map_blocks(f, size):
+			list(pool.map(f, range(0, size, step)))
+
+		# Sort X's and Y's entries by column. A row holds each column at
+		# most once, so the order of the rows inside one column changes no
+		# sum and the sorts need not be stable.
+		y_sort = _sorted_by_column(y_indices, n_cols, pool)
+		order_x, sorted_x = _sorted_by_column(x_indices, n_cols)
+
+		# X's distinct columns renumber the hashed columns (up to 5**15) to
+		# 0..len(cols)-1.
+		first = np.empty(nnz, dtype=bool)
+		first[:1] = True
+		np.not_equal(sorted_x[1:], sorted_x[:-1], out=first[1:])
+		cols = sorted_x[first]
+		del sorted_x
+
+		# Y in CSC form over the same columns, without the columns X lacks,
+		# which no row of X visits: each entry's place among X's columns
+		# and whether it is there, then the kept entries.
+		order_y, sorted_y = y_sort.result()
+		del y_sort
+
+		m = len(cols)
+		pos = np.empty(nnz_y, dtype=np.int32 if m < 2**31 else np.int64)
+		keep = np.empty(nnz_y, dtype=bool)
+		# -1 is below every column index.
+		cols_end = np.append(cols, -1)
+
+		def y_search(lo):
+			hi = min(lo + step, nnz_y)
+			pos[lo:hi] = np.searchsorted(cols, sorted_y[lo:hi])
+			np.equal(cols_end[pos[lo:hi]], sorted_y[lo:hi], out=keep[lo:hi])
+
+		map_blocks(y_search, nnz_y)
+		del sorted_y, cols_end
+
+		# Y's targets in the merged lists are n + j, so they need to hold 2n.
+		rows_dtype = np.int32 if 2 * n <= np.iinfo(np.int32).max else np.int64
+
+		y_offsets = _block_offsets(keep, step)
+		n_kept = y_offsets[-1]
+		rows = np.repeat(np.arange(n, 2 * n, dtype=rows_dtype), 
+			np.diff(Y_indptr))
+		Yt_rows = np.empty(n_kept, dtype=rows_dtype)
+		Yt_data = np.empty(n_kept, dtype=np.float64)
+		Yt_cols = np.empty(n_kept, dtype=pos.dtype)
+
+		def y_gather(lo):
+			hi = min(lo + step, nnz_y)
+			a, z = y_offsets[lo // step], y_offsets[lo // step + 1]
+			order = order_y[lo:hi][keep[lo:hi]]
+			np.take(rows, order, out=Yt_rows[a:z], mode='clip')
+			np.take(Y_data, order, out=Yt_data[a:z], mode='clip')
+			np.compress(keep[lo:hi], pos[lo:hi], out=Yt_cols[a:z])
+
+		map_blocks(y_gather, nnz_y)
+		del order_y, pos, keep, rows, Y_data, Y_indptr
+
+		# Yt_indptr[c] is the number of kept entries whose column is below
+		# c; Yt_cols is sorted.
+		Yt_indptr = np.empty(m + 1, dtype=np.int64)
+		needles = np.arange(m + 1, dtype=Yt_cols.dtype)
+
+		def y_indptr(lo):
+			hi = min(lo + step, m + 1)
+			Yt_indptr[lo:hi] = np.searchsorted(Yt_cols, needles[lo:hi])
+
+		map_blocks(y_indptr, m + 1)
+		del needles
+
+		# The merged lists: column c's entries start at Z_indptr[c] =
+		# Xt_indptr[c] + Yt_indptr[c], X's first and then Y's, so X's
+		# sorted entry q (column c) goes to q + Yt_indptr[c] and Y's kept
+		# entry r (column c) to r + Xt_indptr[c+1]. Xt_indptr[c] is the
+		# number of X's entries whose column is below c.
+		Xt_indptr = np.append(np.flatnonzero(first), nnz)
+		Z_rows = np.empty(nnz + n_kept, dtype=rows_dtype)
+		Z_data = np.empty(nnz + n_kept, dtype=np.float64)
+
+		def y_merge(lo):
+			hi = min(lo + step, n_kept)
+			dest = np.take(Xt_indptr, Yt_cols[lo:hi] + 1, mode='clip')
+			dest += np.arange(lo, hi)
+			Z_rows[dest] = Yt_rows[lo:hi]
+			Z_data[dest] = Yt_data[lo:hi]
+
+		map_blocks(y_merge, n_kept)
+		del Yt_rows, Yt_data, Yt_cols
+
+		# X in CSR form over the new columns (X_cols), and its entries in
+		# the merged lists. The new column of the sorted entry q is the
+		# number of first entries up to q, less one.
+		x_offsets = _block_offsets(first, step)
+		rows = np.repeat(np.arange(n, dtype=rows_dtype), np.diff(X_indptr))
+		X_cols = np.empty(nnz, dtype=np.int64)
+
+		def x_block(lo):
+			hi = min(lo + step, nnz)
+			order = order_x[lo:hi]
+			ranks = np.cumsum(first[lo:hi], dtype=np.int64)
+			ranks += x_offsets[lo // step] - 1
+			X_cols[order] = ranks
+			dest = np.take(Yt_indptr, ranks, mode='clip')
+			dest += np.arange(lo, hi)
+			Z_rows[dest] = np.take(rows, order, mode='clip')
+			Z_data[dest] = np.take(X_data, order, mode='clip')
+
+		map_blocks(x_block, nnz)
+		del order_x, first, rows
+
+	Z_indptr = Xt_indptr
+	Z_indptr += Yt_indptr
+	del Xt_indptr, Yt_indptr
+
+	return _sparse_mm_dot(X_data, np.asarray(X_indptr, dtype=np.int64), 
+		X_cols, Z_indptr, Z_rows, Z_data, k)
+
+
 def cosine_similarity_from_seqlets(seqlets, n_neighbors, sign, topn=20, 
 	min_k=4, max_k=6, max_gap=15, max_len=15, max_entries=500, 
 	alphabet_size=4):
 
+	# The inputs of both passes, built for all seqlets at once when that is
+	# exact, else seqlet by seqlet.
+	Xs = gapped_kmer._gkmer_inputs(seqlets, topn, sign)
+	if Xs is None:
+		Xs = (gapped_kmer._gkmer_inputs_loop(seqlets, topn, True, sign), 
+			gapped_kmer._gkmer_inputs_loop(seqlets, topn, False, sign))
+
 	X_fwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, 
-		min_k, max_k, max_gap, max_len, max_entries, True, sign)
+		min_k, max_k, max_gap, max_len, max_entries, True, sign, X=Xs[0])
 
 	X_bwd = gapped_kmer._seqlet_to_gkmers(seqlets, topn, min_k, max_k, max_gap, 
-			max_len, max_entries, False, sign)
+			max_len, max_entries, False, sign, X=Xs[1])
+	del Xs
 
+	import sklearn.preprocessing
 	X = sklearn.preprocessing.normalize(X_fwd, norm='l2', axis=1)
 	Y = sklearn.preprocessing.normalize(X_bwd, norm='l2', axis=1)
+	del X_fwd, X_bwd
 
 	n, d = X.shape
 	k = min(n_neighbors+1, n)
-	return _sparse_mm_dot(X.data, X.indices, X.indptr, Y.data, Y.indices, Y.indptr, k)
+
+	# _sparse_knn frees X's and Y's arrays as it goes, once nothing here
+	# holds them.
+	matrices = [X, Y]
+	del X, Y
+	return _sparse_knn(matrices, k)
 
 
 def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None, 
@@ -98,6 +727,11 @@ def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None,
 		seqlet_neighbors = [list(range(len(filter_seqlets)))
 							for x in seqlets] 
 
+	affmat = _jaccard_fwd_rev(filters_all_fwd_data, filters_all_rev_data,
+		all_fwd_data, seqlet_neighbors, min_overlap)
+	if affmat is not None:
+		return affmat
+
 	#apply the cross metric
 	affmat_fwd = jaccard(seqlet_neighbors=seqlet_neighbors, 
 		X=filters_all_fwd_data,
@@ -113,26 +747,237 @@ def jaccard_from_seqlets(seqlets, min_overlap, filter_seqlets=None,
 	return affmat
 
 
+# `_fwd_rev_best` keeps each row of Y in a buffer whose rows are this many
+# float64 apart, a constant, so that every load of one pass is at a
+# constant distance from one base address. Offsets that need longer rows
+# take the two `jaccard` calls instead.
+_FWD_REV_STRIDE = 128
+
+# Rows of Y per parallel task, and so per slice of the scratch arrays.
+_FWD_REV_ROWS = 16
+
+# `_fwd_rev_best8` prefetches the two rows (both strands) of the neighbour
+# this many pairs ahead of the pair it scores. At 50,000 seqlets X_fwd and
+# X_rev hold 96 MB, more than a level-3 cache, and a row read on demand
+# waits for memory.
+_FWD_REV_AHEAD = 2
+
+
+def _aligned_rows(n_rows, n_cols):
+	"""np.empty((n_rows, n_cols)) of float64 whose first element lies on a
+	64-byte boundary, so that with n_cols a multiple of 8 every row starts a
+	cache line."""
+
+	raw = np.empty(n_rows * n_cols + 8)
+	k = (-raw.ctypes.data % 64) // 8
+	return raw[k:k + n_rows * n_cols].reshape(n_rows, n_cols)
+
+
+def _noalias(dispatcher):
+	"""Have numba compile the dispatcher with its array arguments marked
+	noalias, as it marks those of the function it makes of a parallel
+	loop's body. Otherwise LLVM would have to check at run time that no
+	array a vector loop writes overlaps one it reads, and with more than a
+	few such pairs it leaves the loop scalar. The flag is not one of
+	numba's public options, so it is set through the dispatcher's
+	compiler, when this numba has both; the dispatcher is then marked
+	`_modisco_noalias`."""
+
+	try:
+		from numba.core.compiler import Flags
+	except ImportError:
+		return dispatcher
+
+	compiler = getattr(dispatcher, '_compiler', None)
+	customize = getattr(compiler, '_customize_flags', None)
+	if customize is None or not hasattr(Flags, 'noalias'):
+		return dispatcher
+
+	def _customize_flags(flags):
+		flags = customize(flags)
+		flags.noalias = True
+		return flags
+
+	compiler._customize_flags = _customize_flags
+	dispatcher._modisco_noalias = True
+	return dispatcher
+
+
+def _one_hot_contribs(X):
+	"""Whether no position of any row of X, 8 channels, holds more than one
+	nonzero value among channels 4 to 7."""
+
+	nonzero = np.ascontiguousarray(X[:, :, 4:] != 0)
+	words = nonzero.view(np.uint32)
+	return bool(((words & (words - np.uint32(1))) == 0).all())
+
+
+def _fwd_rev_threads(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, sums):
+	"""Run `_fwd_rev_best8` over every task, sharing blocks of tasks among
+	numba.get_num_threads() threads."""
+
+	# A first call on no tasks, here in the main thread, waits for the
+	# kernel's compile and hands back the threads of the compile children
+	# that have finished, before the thread count is read.
+	_fwd_rev_best8(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums, 0, 0)
+
+	n_tasks = sums[0].shape[0]
+	n_threads = numba.get_num_threads()
+	n_blocks = max(1, min(n_tasks, 32 * n_threads))
+	bounds = [n_tasks * b // n_blocks for b in range(n_blocks + 1)]
+
+	def run(b):
+		_fwd_rev_best8(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums,
+			bounds[b], bounds[b+1])
+
+	if n_threads == 1 or n_blocks == 1:
+		for b in range(n_blocks):
+			run(b)
+	else:
+		with ThreadPoolExecutor(min(n_threads, n_blocks)) as pool:
+			list(pool.map(run, range(n_blocks)))
+
+
+def _jaccard_fwd_rev(X_fwd, X_rev, Y, seqlet_neighbors, min_overlap):
+	"""The array jaccard_from_seqlets returns, np.maximum of
+	jaccard(X_fwd, Y) and jaccard(X_rev, Y) with func=int and
+	return_sparse=True, computed by one kernel that scores both strands of
+	each neighbour against a row of Y while that row is in cache:
+	`_fwd_rev_best8`, on a pool of threads, for the 8 channels of
+	`util.get_2d_data_from_patterns` whose channels 4 to 7 are one-hot
+	sparse, else `_fwd_rev_best`. Returns None when neither applies, and
+	the caller then makes the two calls: channels not a multiple of 4, offsets that do not fit the
+	kernel's row buffer, a value that is not finite, any score that is a
+	NaN or a -0.0 (for those, as in `jaccard`, numpy's max decides which
+	bits come back), and the arguments on which `jaccard` itself raises.
+
+	Without a NaN or a -0.0 among the scores the largest score is unique in
+	its bits, so the maximum over offsets and strands is the value the two
+	calls and np.maximum give."""
+
+	if not isinstance(seqlet_neighbors, np.ndarray) or seqlet_neighbors.ndim != 2:
+		return None
+
+	if X_fwd.ndim != 3 or X_rev.shape != X_fwd.shape or Y.ndim != 3:
+		return None
+
+	nx, d, m = X_fwd.shape
+	ny, Ly, my = Y.shape
+	n_neighbors = seqlet_neighbors.shape[1]
+
+	# As `jaccard` pads Y with func=int.
+	n_pad = 0 if min_overlap is None else int(int(d*(1-min_overlap)))
+	len_output = Ly + 2*n_pad - d + 1
+	n_offsets = (len_output + 7) // 8 * 8
+
+	if (n_pad < 0 or len_output < 1 or m == 0 or m % 4 != 0 or my != m
+			or d - 1 + n_offsets > _FWD_REV_STRIDE or ny == 0 or nx == 0
+			or n_neighbors == 0 or seqlet_neighbors.shape[0] != ny):
+		return None
+
+	X_fwd = np.ascontiguousarray(X_fwd, dtype='float32')
+	X_rev = np.ascontiguousarray(X_rev, dtype='float32')
+	Y = X_fwd if Y is X_fwd else np.ascontiguousarray(Y, dtype='float32')
+	for array in (X_fwd, X_rev) if Y is X_fwd else (X_fwd, X_rev, Y):
+		if not np.isfinite(array).all():
+			return None
+
+	neighbors = np.ascontiguousarray(seqlet_neighbors.astype('int32'))
+
+	# One row of each accumulator per task, 64 bytes longer than it needs
+	# to be so that no two tasks write to one cache line. Rows start cache
+	# lines: a vector load or store of an accumulator then touches one line,
+	# not two, and is forwarded from the store before it whole.
+	n_tasks = (ny + _FWD_REV_ROWS - 1) // _FWD_REV_ROWS
+	sums = [_aligned_rows(n_tasks, n_offsets + 8) for _ in range(4)]
+
+	best = np.empty((ny, n_neighbors), dtype='float32')
+	flags = np.zeros(ny, dtype='uint8')
+	if (_FWD_REV_SERIAL and m == 8 and _one_hot_contribs(X_fwd)
+			and _one_hot_contribs(X_rev)):
+		_fwd_rev_threads(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, sums)
+	else:
+		_fwd_rev_best(X_fwd, X_rev, Y, neighbors, n_pad, best, flags, *sums)
+
+	if flags.any():
+		return None
+	return best
+
+
 def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil, 
 	return_sparse=False):
 
-	if seqlet_neighbors is None:
-		seqlet_neighbors = np.tile(np.arange(X.shape[0]), (Y.shape[0], 1))
+	all_neighbors = seqlet_neighbors is None
 
 	if min_overlap is not None:
 		n_pad = int(func(X.shape[1]*(1-min_overlap)))
-		pad_width = ((0,0), (n_pad, n_pad), (0,0)) 
-		Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
+		if n_pad >= 0 and isinstance(Y, np.ndarray) and Y.ndim == 3:
+			# np.pad(mode="constant") without its Python overhead, as in
+			# pearson_correlations: zeros of Y's dtype around a copy of Y.
+			m, l, k = Y.shape
+			Y_padded = np.zeros((m, l + 2*n_pad, k), dtype=Y.dtype)
+			Y_padded[:, n_pad:n_pad+l] = Y
+			Y = Y_padded
+		else:
+			pad_width = ((0,0), (n_pad, n_pad), (0,0)) 
+			Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 	else:
 		n_pad = 0 
 
 	len_output = 1 + Y.shape[1] - X.shape[1] 
 
-	X = X.astype('float32')
-	Y = Y.astype('float32')
+	X = np.ascontiguousarray(X, dtype='float32')
+	Y = np.ascontiguousarray(Y, dtype='float32')
 
-	seqlet_neighbors = seqlet_neighbors.astype('int32')
-	scores = np.zeros((Y.shape[0], seqlet_neighbors.shape[1], len_output), dtype='float32')
+	size = X.shape[1] * X.shape[2]
+	if all_neighbors and len_output == 1 and X.shape[2] == Y.shape[2] and size > 0:
+		# Every row of Y against every row of X at the one offset, as
+		# SimilarPatternsCollapser calls it: the scores `_jaccard_best`
+		# would give with neighbours 0..nx-1, from a kernel whose loop over
+		# the neighbours vectorizes. A row flattens to its positions and
+		# channels in (j, k) order, the order each score is summed in.
+		# Empty rows, and inputs holding a NaN or an infinity (the kernel
+		# returns 0), stay on the path below.
+		n, k = Y.shape[0], X.shape[0]
+		best = np.empty((n, k), dtype='float32')
+		if _jaccard_all(X.reshape(k, size), Y.reshape(n, size), best):
+			if return_sparse != True:
+				results = np.zeros((n, k, 2))
+				results[:, :, 0] = best
+				results[:, :, 1] = -n_pad
+				return results
+
+			# As below: a NaN or -0.0 score sends the call to numpy's max.
+			if not (np.isnan(best) | ((best == 0) & np.signbit(best))).any():
+				return best
+
+	if all_neighbors:
+		seqlet_neighbors = np.tile(np.arange(X.shape[0]), (Y.shape[0], 1))
+
+	seqlet_neighbors = np.ascontiguousarray(seqlet_neighbors.astype('int32'))
+	n, k = Y.shape[0], seqlet_neighbors.shape[1]
+
+	if len_output == 1 or (len_output > 1 and X.shape[2] % 2 == 0):
+		best = np.empty((n, k), dtype='float32')
+		best_idx = np.empty((n, k), dtype='int64')
+		flags = np.zeros(n, dtype='uint8')
+		# One row of Y (aggregator._best_alignment, once per seqlet) runs
+		# on this thread: the same scores without a parallel launch.
+		kernel = _jaccard_best_serial if n == 1 else _jaccard_best
+		kernel(X, Y, seqlet_neighbors, best, best_idx, flags)
+
+		if return_sparse != True:
+			results = np.zeros((n, k, 2))
+			results[:, :, 0] = best
+			results[:, :, 1] = best_idx - n_pad
+			return results
+
+		# The largest score is unique in its bits unless a row holds a NaN
+		# or a -0.0; for those, numpy's max decides which bits come back.
+		if not flags.any():
+			return best
+
+	scores = np.zeros((n, k, len_output), dtype='float32')
 	_jaccard(X, Y, seqlet_neighbors, scores)
 
 	if return_sparse == True:
@@ -147,43 +992,196 @@ def jaccard(X, Y, min_overlap=None, seqlet_neighbors=None, func=np.ceil,
 
 	return results
 
-@njit(parallel=True)
-def pairwise_jaccard(X, k):
+# The columns of pairwise_jaccard's inner loop taken per pass: a tile's two
+# float64 running sums (16 KB) and its slices of the signs and magnitudes
+# (8 KB) stay in L1 while the loop over features runs.
+_PAIRWISE_TILE = 1024
+
+
+@njit
+def _ranks_after(values, a, b):
+	"""Whether index a comes after index b in the stable descending order of
+	values: a smaller value, or an equal one at a later index."""
+
+	return values[a] < values[b] or (values[a] == values[b] and a > b)
+
+
+@njit
+def _top_k_sift_down(values, heap, size, pos, index):
+	"""Place index at heap[pos], moving it down past children that come
+	after it, so that the root of heap[:size] is the one that comes last."""
+
+	while True:
+		child = 2 * pos + 1
+		if child >= size:
+			break
+		if (child + 1 < size and
+				_ranks_after(values, heap[child + 1], heap[child])):
+			child += 1
+		if _ranks_after(values, heap[child], index):
+			heap[pos] = heap[child]
+			pos = child
+		else:
+			break
+	heap[pos] = index
+
+
+@njit
+def _top_k(values, k):
+	"""np.argsort(-values, kind='mergesort')[:k] for values holding no NaN
+	and 0 < k <= len(values): the indices of the k largest values, largest
+	first, equal values in index order.
+
+	That stable sort orders the indices by (value descending, index
+	ascending), a strict order on distinct indices (-0.0 and 0.0 compare
+	equal, as in the sort), so its first k are the k first in that order,
+	in that order. A heap of k holds the best seen so far with the one that
+	comes last at its root; an index read later replaces the root only with
+	a larger value, since among equal values the earlier index comes first.
+	Taking the root out k times gives the k from last to first."""
+
+	n = values.shape[0]
+	heap = np.empty(k, dtype=np.int64)
+
+	for size in range(k):
+		pos = size
+		while pos > 0:
+			parent = (pos - 1) >> 1
+			if _ranks_after(values, size, heap[parent]):
+				heap[pos] = heap[parent]
+				pos = parent
+			else:
+				break
+		heap[pos] = size
+
+	for j in range(k, n):
+		if values[j] > values[heap[0]]:
+			_top_k_sift_down(values, heap, k, 0, j)
+
+	top = np.empty(k, dtype=np.int64)
+	for size in range(k, 0, -1):
+		top[size - 1] = heap[0]
+		if size > 1:
+			_top_k_sift_down(values, heap, size - 1, 0, heap[size - 1])
+
+	return top
+
+
+@njit(nogil=True)
+def _signs_magnitudes(X, signs, magnitudes):
+	"""np.sign and abs of every element of X, transposed."""
+
 	n, m = X.shape
+	for j in range(n):
+		for l in range(m):
+			signs[l, j] = np.sign(X[j, l])
+			magnitudes[l, j] = abs(X[j, l])
 
-	jaccards = np.empty((n, k), dtype='float64')
-	neighbors = np.empty((n, k), dtype='int32')
 
-	for i in prange(n):
-		jaccard_ = np.empty(n, dtype='float64')
+# The numpy error model, as numba uses in the parallel loop this replaced:
+# 0 / 0 gives NaN rather than raising.
+@njit(nogil=True, error_model='numpy')
+def _pairwise_jaccard_rows(X, signs, magnitudes, k, start, stop, jaccards,
+	neighbors):
+	"""pairwise_jaccard's rows start to stop, written into jaccards and
+	neighbors."""
 
-		for j in range(n):
-			min_sum = 0.0
-			max_sum = 0.0
+	n, m = X.shape
+	min_sums = np.empty(n, dtype=np.float64)
+	max_sums = np.empty(n, dtype=np.float64)
+	jaccard_ = np.empty(n, dtype=np.float64)
+
+	for i in range(start, stop):
+		min_sums[:] = 0.0
+		max_sums[:] = 0.0
+
+		for j0 in range(0, n, _PAIRWISE_TILE):
+			j1 = min(j0 + _PAIRWISE_TILE, n)
+			min_tile = min_sums[j0:j1]
+			max_tile = max_sums[j0:j1]
 
 			for l in range(m):
-				sign = np.sign(X[i, l]) * np.sign(X[j, l])
+				si = np.sign(X[i, l])
 				xi = abs(X[i, l])
-				xj = abs(X[j, l])
+				signs_l = signs[l, j0:j1]
+				magnitudes_l = magnitudes[l, j0:j1]
 
-				if xi > xj:
-					min_sum += xj * sign
-					max_sum += xi
-				else:
-					min_sum += xi * sign
-					max_sum += xj 
+				for j in range(j1 - j0):
+					sign = si * signs_l[j]
+					xj = magnitudes_l[j]
 
-			jaccard_[j] = min_sum / max_sum
+					larger = xi > xj
+					lo = xj if larger else xi
+					hi = xi if larger else xj
+					min_tile[j] += lo * sign
+					max_tile[j] += hi
 
-		idxs = np.argsort(-jaccard_, kind='mergesort')[:k]
+		has_nan = False
+		for j in range(n):
+			jaccard_[j] = min_sums[j] / max_sums[j]
+			has_nan |= np.isnan(jaccard_[j])
 
-		jaccards[i] = jaccard_[idxs]
-		neighbors[i] = idxs
+		if has_nan or k >= n:
+			idxs = np.argsort(-jaccard_, kind='mergesort')[:k]
+		else:
+			idxs = _top_k(jaccard_, k)
+
+		for c in range(k):
+			jaccards[i, c] = jaccard_[idxs[c]]
+			neighbors[i, c] = idxs[c]
+
+
+def pairwise_jaccard(X, k):
+	"""The continuous Jaccard similarity of every row of X with every row,
+	and for each row the k largest, largest first (ties in row order), with
+	their row indices: (n, k) float64 similarities and int32 indices.
+
+	Row i's similarity with row j sums, over the features l in order, the
+	smaller magnitude times the product of the two signs, and the larger
+	magnitude, in two float64 running sums, and divides them. Here row i
+	is scored against every row j at once: the loop over j is innermost, so
+	it vectorizes, and each j keeps its own two running sums, which receive
+	the same terms in the same order of l as one pair at a time would. The
+	signs and magnitudes of X's columns are laid out once, transposed, for
+	that loop. The k largest come from `_top_k`, or from the stable sort
+	they stand in for when a row holds a NaN or k is every row.
+
+	Rows are independent, so contiguous blocks of them are shared among
+	numba.get_num_threads() threads running `_pairwise_jaccard_rows`, which
+	releases the GIL (a serial kernel compiles in a fraction of the time a
+	parallel one takes). The result does not depend on the number of
+	threads or blocks.
+	"""
+
+	n, m = X.shape
+	jaccards = np.empty((n, k), dtype='float64')
+	neighbors = np.empty((n, k), dtype='int32')
+	signs = np.empty((m, n), dtype=X.dtype)
+	magnitudes = np.empty((m, n), dtype=X.dtype)
+	_signs_magnitudes(X, signs, magnitudes)
+
+	n_threads = numba.get_num_threads()
+	n_blocks = max(1, min(n, 4 * n_threads))
+	bounds = [n * b // n_blocks for b in range(n_blocks + 1)]
+
+	def run(b):
+		_pairwise_jaccard_rows(X, signs, magnitudes, k, bounds[b],
+			bounds[b+1], jaccards, neighbors)
+
+	if n_threads == 1 or n_blocks == 1:
+		for b in range(n_blocks):
+			run(b)
+	else:
+		with ThreadPoolExecutor(min(n_threads, n_blocks)) as pool:
+			list(pool.map(run, range(n_blocks)))
 
 	return jaccards, neighbors
 
 
-@njit('void(float32[:, :, :], float32[:, :, :], int32[:, :], float32[:, :, :])', parallel=True)
+# Every score at every offset. `jaccard` uses it only where `_jaccard_best`
+# cannot stand in (a NaN or -0.0 score under return_sparse, an odd number of
+# channels), so it is compiled on first use.
+@njit(parallel=True)
 def _jaccard(X, Y, neighbors, scores):
 	nx, d, m = X.shape
 	ny = Y.shape[0]
@@ -215,33 +1213,841 @@ def _jaccard(X, Y, neighbors, scores):
 				scores[l, i, idx] = min_sum / max_sum
 
 
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], int32[:, ::1], float32[:, ::1], int64[:, ::1], uint8[::1])')
+@njit(parallel=True)
+def _jaccard_best(X, Y, neighbors, best, best_idx, flags):
+	"""For each (l, i), the largest score over all offsets and the first
+	offset that reaches it, as `np.argmax` picks it (a NaN wins), without
+	storing every offset's score. Each score is summed in the same order as
+	in `_jaccard` and rounded to float32 before the comparison, so both are
+	bit-identical to taking them from `_jaccard`'s scores. flags[l] is set
+	when row l holds a NaN or a -0.0 score. With more than one offset, the
+	number of channels must be even."""
+
+	nx, d, m = X.shape
+	ny, L, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = L - d + 1
+
+	# The offsets are padded to a multiple of 8 so the vectorized loop over
+	# them has no scalar remainder; the padding offsets are never read.
+	n_offsets = (len_output + 7) // 8 * 8
+	L_pad = d - 1 + n_offsets
+
+	for l in prange(ny):
+		flag = 0
+
+		if len_output == 1:
+			for i in range(n_neighbors):
+				min_sum = 0.0
+				max_sum = 0.0
+				neighbor_li = neighbors[l, i]
+
+				for j in range(d):
+					for k in range(m):
+						sign = np.sign(X[neighbor_li, j, k]) * np.sign(Y[l, j, k])
+
+						x = abs(X[neighbor_li, j, k])
+						y = abs(Y[l, j, k])
+
+						if y > x:
+							min_sum += x * sign
+							max_sum += y
+						else:
+							min_sum += y * sign
+							max_sum += x
+
+				score = np.float32(min_sum / max_sum)
+				if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+					flag = 1
+
+				best[l, i] = score
+				best_idx[l, i] = 0
+
+		else:
+			# |Y| and sign(Y) for this row, channel-major, so that the
+			# offsets of one (position, channel) pair are contiguous. Zero
+			# past the end.
+			abs_Y = np.empty((m, L_pad), dtype=np.float32)
+			sign_Y = np.empty((m, L_pad), dtype=np.float32)
+			for j in range(L):
+				for k in range(m):
+					abs_Y[k, j] = abs(Y[l, j, k])
+					sign_Y[k, j] = np.sign(Y[l, j, k])
+			for k in range(m):
+				for j in range(L, L_pad):
+					abs_Y[k, j] = 0.0
+					sign_Y[k, j] = 0.0
+
+			min_sums = np.empty(n_offsets, dtype=np.float64)
+			max_sums = np.empty(n_offsets, dtype=np.float64)
+
+			for i in range(n_neighbors):
+				neighbor_li = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_sums[idx] = 0.0
+					max_sums[idx] = 0.0
+
+				# Offsets innermost, two channels per pass: each offset's
+				# sums still take their terms in (j, k) order.
+				for j in range(d):
+					for k in range(0, m, 2):
+						x0 = abs(X[neighbor_li, j, k])
+						x1 = abs(X[neighbor_li, j, k+1])
+						sign_x0 = np.sign(X[neighbor_li, j, k])
+						sign_x1 = np.sign(X[neighbor_li, j, k+1])
+
+						for idx in range(n_offsets):
+							min_sum = min_sums[idx]
+							max_sum = max_sums[idx]
+
+							y = abs_Y[k, j + idx]
+							sign = sign_x0 * sign_Y[k, j + idx]
+							gt = y > x0
+							min_sum += (x0 if gt else y) * sign
+							max_sum += y if gt else x0
+
+							y = abs_Y[k+1, j + idx]
+							sign = sign_x1 * sign_Y[k+1, j + idx]
+							gt = y > x1
+							min_sum += (x1 if gt else y) * sign
+							max_sum += y if gt else x1
+
+							min_sums[idx] = min_sum
+							max_sums[idx] = max_sum
+
+				best_score = np.float32(0.0)
+				best_offset = 0
+				for idx in range(len_output):
+					score = np.float32(min_sums[idx] / max_sums[idx])
+					if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+						flag = 1
+
+					if idx == 0 or (best_score == best_score and not (score <= best_score)):
+						best_score = score
+						best_offset = idx
+
+				best[l, i] = best_score
+				best_idx[l, i] = best_offset
+
+		flags[l] = flag
+
+
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], int32[:, ::1], float32[:, ::1], int64[:, ::1], uint8[::1])')
+@njit(nogil=True, error_model='numpy')
+def _jaccard_best_serial(X, Y, neighbors, best, best_idx, flags):
+	"""`_jaccard_best` without `prange`: the same statements, rows one
+	after another on the calling thread. For the one-row calls of
+	`aggregator._best_alignment` (one per seqlet merged into a pattern), a
+	parallel launch for a single row costs more than the row's work. Each
+	score is the same float64 sums, taken in the same order, as in
+	`_jaccard_best`, so the outputs are bit-identical to its outputs. The
+	numpy error model is the one numba gives a prange body, so 0 / 0 is a
+	NaN here too, not a ZeroDivisionError."""
+
+	nx, d, m = X.shape
+	ny, L, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = L - d + 1
+
+	# The offsets are padded to a multiple of 8 so the vectorized loop over
+	# them has no scalar remainder; the padding offsets are never read.
+	n_offsets = (len_output + 7) // 8 * 8
+	L_pad = d - 1 + n_offsets
+
+	for l in range(ny):
+		flag = 0
+
+		if len_output == 1:
+			for i in range(n_neighbors):
+				min_sum = 0.0
+				max_sum = 0.0
+				neighbor_li = neighbors[l, i]
+
+				for j in range(d):
+					for k in range(m):
+						sign = np.sign(X[neighbor_li, j, k]) * np.sign(Y[l, j, k])
+
+						x = abs(X[neighbor_li, j, k])
+						y = abs(Y[l, j, k])
+
+						if y > x:
+							min_sum += x * sign
+							max_sum += y
+						else:
+							min_sum += y * sign
+							max_sum += x
+
+				score = np.float32(min_sum / max_sum)
+				if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+					flag = 1
+
+				best[l, i] = score
+				best_idx[l, i] = 0
+
+		else:
+			# |Y| and sign(Y) for this row, channel-major, so that the
+			# offsets of one (position, channel) pair are contiguous. Zero
+			# past the end.
+			abs_Y = np.empty((m, L_pad), dtype=np.float32)
+			sign_Y = np.empty((m, L_pad), dtype=np.float32)
+			for j in range(L):
+				for k in range(m):
+					abs_Y[k, j] = abs(Y[l, j, k])
+					sign_Y[k, j] = np.sign(Y[l, j, k])
+			for k in range(m):
+				for j in range(L, L_pad):
+					abs_Y[k, j] = 0.0
+					sign_Y[k, j] = 0.0
+
+			min_sums = np.empty(n_offsets, dtype=np.float64)
+			max_sums = np.empty(n_offsets, dtype=np.float64)
+
+			for i in range(n_neighbors):
+				neighbor_li = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_sums[idx] = 0.0
+					max_sums[idx] = 0.0
+
+				# Offsets innermost, two channels per pass: each offset's
+				# sums still take their terms in (j, k) order.
+				for j in range(d):
+					for k in range(0, m, 2):
+						x0 = abs(X[neighbor_li, j, k])
+						x1 = abs(X[neighbor_li, j, k+1])
+						sign_x0 = np.sign(X[neighbor_li, j, k])
+						sign_x1 = np.sign(X[neighbor_li, j, k+1])
+
+						for idx in range(n_offsets):
+							min_sum = min_sums[idx]
+							max_sum = max_sums[idx]
+
+							y = abs_Y[k, j + idx]
+							sign = sign_x0 * sign_Y[k, j + idx]
+							gt = y > x0
+							min_sum += (x0 if gt else y) * sign
+							max_sum += y if gt else x0
+
+							y = abs_Y[k+1, j + idx]
+							sign = sign_x1 * sign_Y[k+1, j + idx]
+							gt = y > x1
+							min_sum += (x1 if gt else y) * sign
+							max_sum += y if gt else x1
+
+							min_sums[idx] = min_sum
+							max_sums[idx] = max_sum
+
+				best_score = np.float32(0.0)
+				best_offset = 0
+				for idx in range(len_output):
+					score = np.float32(min_sums[idx] / max_sums[idx])
+					if score != score or (score == 0 and math.copysign(1.0, score) < 0):
+						flag = 1
+
+					if idx == 0 or (best_score == best_score and not (score <= best_score)):
+						best_score = score
+						best_offset = idx
+
+				best[l, i] = best_score
+				best_idx[l, i] = best_offset
+
+		flags[l] = flag
+
+
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], '
+	'float32[:, :, ::1], int32[:, ::1], int64, float32[:, ::1], uint8[::1], '
+	'float64[:, ::1], float64[:, ::1], float64[:, ::1], float64[:, ::1])')
+@njit(parallel=True, error_model='numpy')
+def _fwd_rev_best(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
+	min_r, max_r):
+	"""best[l, i]: the largest score, over every offset and both strands,
+	of row l of Y (zero-padded by n_pad on each side) against rows
+	neighbors[l, i] of Xf and of Xr. flags[l] is set when row l holds a NaN
+	or a -0.0 score. Each score is the one `_jaccard_best` gives, bit for
+	bit, for finite inputs whose number of channels is a multiple of 4:
+
+	`_jaccard_best` adds, for each offset and in (j, k) order, the float32
+	values min(|x|, |y|) * sign(x) * sign(y) and max(|x|, |y|), each
+	converted exactly to float64. Here the same float64 values are added in
+	the same order, formed from float64 copies. The first is
+	clamp(sign(x) * y, -|x|, |x|), which equals it whenever it is nonzero;
+	when it is zero its sign may differ, and adding a zero of either sign
+	to a sum that starts at +0.0, and so is never -0.0, changes no bit.
+	sign(x) * y is y or -y, read from one of two rows of the buffer.
+
+	The offsets are innermost and padded to a multiple of 8, as in
+	`_jaccard_best`; four channels of both strands are added per pass over
+	them. The per-task accumulators are arguments rather than allocated
+	here, so the compiler knows they share no memory with the row buffer
+	and the inputs, and the vector loop needs no runtime overlap checks.
+	Each row is scored by one task and each task owns its scratch, so the
+	result does not depend on the number of threads."""
+
+	nx, d, m = Xf.shape
+	ny, Ly, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = Ly + 2 * n_pad - d + 1
+	n_offsets = (len_output + 7) // 8 * 8
+	n_vectors = n_offsets // 8
+	L_pad = d - 1 + n_offsets
+	W = _FWD_REV_STRIDE
+	R = _FWD_REV_ROWS
+	n_tasks = (ny + R - 1) // R
+
+	for b in prange(n_tasks):
+		# Rows 3k, 3k+1 and 3k+2 of the buffer hold y, -y and |y| for
+		# channel k, zero past either end of the row.
+		ybuf = np.empty(3 * m * W, dtype=np.float64)
+
+		for l in range(b * R, min(ny, (b + 1) * R)):
+			for k in range(m):
+				for p in range(L_pad):
+					j = p - n_pad
+					v = 0.0
+					if j >= 0 and j < Ly:
+						v = np.float64(Y[l, j, k])
+					ybuf[(3*k)*W + p] = v
+					ybuf[(3*k+1)*W + p] = -v
+					ybuf[(3*k+2)*W + p] = abs(v)
+
+			flag = 0
+			for i in range(n_neighbors):
+				nb = neighbors[l, i]
+				for idx in range(n_offsets):
+					min_f[b, idx] = 0.0
+					max_f[b, idx] = 0.0
+					min_r[b, idx] = 0.0
+					max_r[b, idx] = 0.0
+
+				for j in range(d):
+					for k in range(0, m, 4):
+						# Per channel and strand: |x|, -|x|, and the buffer
+						# row holding sign(x) * y, less the offset index.
+						# (Unsigned indices spare the negative-index checks.)
+						base = 3*k*W + j
+
+						x = np.float64(Xf[nb, j, np.uint64(k)])
+						af0 = abs(x)
+						nf0 = -af0
+						of0 = base + (1 if x < 0 else 0)*W
+						x = np.float64(Xr[nb, j, np.uint64(k)])
+						ar0 = abs(x)
+						nr0 = -ar0
+						or0 = base + (1 if x < 0 else 0)*W
+
+						x = np.float64(Xf[nb, j, np.uint64(k+1)])
+						af1 = abs(x)
+						nf1 = -af1
+						of1 = base + (3 + (1 if x < 0 else 0))*W
+						x = np.float64(Xr[nb, j, np.uint64(k+1)])
+						ar1 = abs(x)
+						nr1 = -ar1
+						or1 = base + (3 + (1 if x < 0 else 0))*W
+
+						x = np.float64(Xf[nb, j, np.uint64(k+2)])
+						af2 = abs(x)
+						nf2 = -af2
+						of2 = base + (6 + (1 if x < 0 else 0))*W
+						x = np.float64(Xr[nb, j, np.uint64(k+2)])
+						ar2 = abs(x)
+						nr2 = -ar2
+						or2 = base + (6 + (1 if x < 0 else 0))*W
+
+						x = np.float64(Xf[nb, j, np.uint64(k+3)])
+						af3 = abs(x)
+						nf3 = -af3
+						of3 = base + (9 + (1 if x < 0 else 0))*W
+						x = np.float64(Xr[nb, j, np.uint64(k+3)])
+						ar3 = abs(x)
+						nr3 = -ar3
+						or3 = base + (9 + (1 if x < 0 else 0))*W
+
+						# Split into vectors of 8 offsets, so that the loop has no
+						# remainder to keep scalars alive for.
+						for vec in range(n_vectors):
+							for q in range(8):
+								idx = vec * 8 + q
+								mf = min_f[b, idx]
+								Mf = max_f[b, idx]
+								mr = min_r[b, idx]
+								Mr = max_r[b, idx]
+
+								ya = ybuf[np.uint64(base + 2*W + idx)]
+								t = ybuf[np.uint64(of0 + idx)]
+								t = t if t > nf0 else nf0
+								mf += t if t < af0 else af0
+								Mf += ya if ya > af0 else af0
+								t = ybuf[np.uint64(or0 + idx)]
+								t = t if t > nr0 else nr0
+								mr += t if t < ar0 else ar0
+								Mr += ya if ya > ar0 else ar0
+
+								ya = ybuf[np.uint64(base + 5*W + idx)]
+								t = ybuf[np.uint64(of1 + idx)]
+								t = t if t > nf1 else nf1
+								mf += t if t < af1 else af1
+								Mf += ya if ya > af1 else af1
+								t = ybuf[np.uint64(or1 + idx)]
+								t = t if t > nr1 else nr1
+								mr += t if t < ar1 else ar1
+								Mr += ya if ya > ar1 else ar1
+
+								ya = ybuf[np.uint64(base + 8*W + idx)]
+								t = ybuf[np.uint64(of2 + idx)]
+								t = t if t > nf2 else nf2
+								mf += t if t < af2 else af2
+								Mf += ya if ya > af2 else af2
+								t = ybuf[np.uint64(or2 + idx)]
+								t = t if t > nr2 else nr2
+								mr += t if t < ar2 else ar2
+								Mr += ya if ya > ar2 else ar2
+
+								ya = ybuf[np.uint64(base + 11*W + idx)]
+								t = ybuf[np.uint64(of3 + idx)]
+								t = t if t > nf3 else nf3
+								mf += t if t < af3 else af3
+								Mf += ya if ya > af3 else af3
+								t = ybuf[np.uint64(or3 + idx)]
+								t = t if t > nr3 else nr3
+								mr += t if t < ar3 else ar3
+								Mr += ya if ya > ar3 else ar3
+
+								min_f[b, idx] = mf
+								max_f[b, idx] = Mf
+								min_r[b, idx] = mr
+								max_r[b, idx] = Mr
+
+				# With no NaN and no -0.0 among the scores, equal scores
+				# have equal bits, so any maximum is the one numpy's gives.
+				best_score = np.float32(0.0)
+				for idx in range(len_output):
+					s_f = np.float32(min_f[b, idx] / max_f[b, idx])
+					s_r = np.float32(min_r[b, idx] / max_r[b, idx])
+					if s_f != s_f or (s_f == 0 and math.copysign(1.0, s_f) < 0):
+						flag = 1
+					if s_r != s_r or (s_r == 0 and math.copysign(1.0, s_r) < 0):
+						flag = 1
+
+					s = s_f if s_f > s_r else s_r
+					if idx == 0 or s > best_score:
+						best_score = s
+
+				best[l, i] = best_score
+			flags[l] = flag
+
+
+@precompile.signature('void(float32[:, :, ::1], float32[:, :, ::1], '
+	'float32[:, :, ::1], int32[:, ::1], int64, float32[:, ::1], uint8[::1], '
+	'float64[:, ::1], float64[:, ::1], float64[:, ::1], float64[:, ::1], '
+	'int64, int64)')
+@_noalias
+@njit(nogil=True, error_model='numpy')
+def _fwd_rev_best8(Xf, Xr, Y, neighbors, n_pad, best, flags, min_f, max_f,
+	min_r, max_r, b0, b1):
+	"""`_fwd_rev_best`, for the rows of Y in tasks b0 to b1 - 1, when there
+	are 8 channels and in channels 4 to 7 no position of any row of Xf or
+	Xr holds more than one nonzero value: the layout of
+	`util.get_2d_data_from_patterns`, whose channels 4 to 7 are the
+	contribution scores, the hypothetical ones masked by a one-hot
+	sequence. Serial and without the GIL, for a pool of threads to share
+	the tasks: it compiles in half the time a parallel loop takes. Each
+	score's two sums take the float64 values `_fwd_rev_best`'s take, in
+	the same order, less zeros:
+
+	- One pass over the offsets per position adds all 8 channels' terms of
+	  both strands, in channel order.
+	- Channels 0 to 3: the min term is copysign(min(|y|, |x|), t), where
+	  t = sign(x) * y is read from the y or the -y row. Its magnitude is
+	  min(|t|, |x|) and its sign that of t, so it equals clamp(t, -|x|,
+	  |x|), the term `_fwd_rev_best` adds, but for the sign of a zero.
+	- Channels 4 to 7: the max terms of all four are added. Of the min
+	  terms, only the nonzero channel's is added (none is, and channel 4's
+	  row serves, when all four are zero): each other one is
+	  clamp(t, -0, +0), a zero.
+	- A sum starts at +0.0, so it is never -0.0, and adding a zero of
+	  either sign to it changes no bit.
+	- While it scores a pair, the rows of the neighbour `_FWD_REV_AHEAD`
+	  pairs on are prefetched, which changes no value.
+
+	The result depends neither on the number of threads nor on how the
+	tasks are shared: each row is scored by one task, and each task owns
+	its rows of the accumulators."""
+
+	nx, d, m = Xf.shape
+	ny, Ly, _ = Y.shape
+	n_neighbors = neighbors.shape[1]
+	len_output = Ly + 2 * n_pad - d + 1
+	n_offsets = (len_output + 7) // 8 * 8
+	n_vectors = n_offsets // 8
+	L_pad = d - 1 + n_offsets
+	W = _FWD_REV_STRIDE
+	R = _FWD_REV_ROWS
+	AHEAD = _FWD_REV_AHEAD
+
+	for b in range(b0, b1):
+		# Rows 3k, 3k+1 and 3k+2 of the buffer hold y, -y and |y| for
+		# channel k, zero past either end of the row.
+		ybuf = np.empty(3 * m * W, dtype=np.float64)
+
+		for l in range(b * R, min(ny, (b + 1) * R)):
+			for k in range(m):
+				for p in range(L_pad):
+					j = p - n_pad
+					v = 0.0
+					if j >= 0 and j < Ly:
+						v = np.float64(Y[l, j, k])
+					ybuf[(3*k)*W + p] = v
+					ybuf[(3*k+1)*W + p] = -v
+					ybuf[(3*k+2)*W + p] = abs(v)
+
+			flag = 0
+			for i in range(n_neighbors):
+				nb = neighbors[l, i]
+
+				# Prefetch both rows of the neighbour AHEAD pairs on, which
+				# may belong to the next row of Y.
+				ia = i + AHEAD
+				la = l
+				while ia >= n_neighbors:
+					ia -= n_neighbors
+					la += 1
+				if la < ny:
+					# Row na starts at element na * d * m of Xf and of Xr.
+					# 16 float32 to a 64-byte line; the last element too,
+					# for a row that does not start a line.
+					row = neighbors[la, ia] * (d * m)
+					for e in range(0, d * m, 16):
+						_prefetch(Xf, row + e)
+						_prefetch(Xr, row + e)
+					_prefetch(Xf, row + d * m - 1)
+					_prefetch(Xr, row + d * m - 1)
+
+				for idx in range(n_offsets):
+					min_f[b, idx] = 0.0
+					max_f[b, idx] = 0.0
+					min_r[b, idx] = 0.0
+					max_r[b, idx] = 0.0
+
+				for j in range(d):
+					# Channels 0 to 3, both strands: |x| and the buffer row
+					# holding sign(x) * y. (Unsigned indices spare the
+					# negative-index checks.)
+					base = j
+					x = np.float64(Xf[nb, j, np.uint64(0)])
+					af0 = abs(x)
+					of0 = base + (0 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(0)])
+					ar0 = abs(x)
+					or0 = base + (0 + (1 if x < 0 else 0))*W
+					x = np.float64(Xf[nb, j, np.uint64(1)])
+					af1 = abs(x)
+					of1 = base + (3 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(1)])
+					ar1 = abs(x)
+					or1 = base + (3 + (1 if x < 0 else 0))*W
+					x = np.float64(Xf[nb, j, np.uint64(2)])
+					af2 = abs(x)
+					of2 = base + (6 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(2)])
+					ar2 = abs(x)
+					or2 = base + (6 + (1 if x < 0 else 0))*W
+					x = np.float64(Xf[nb, j, np.uint64(3)])
+					af3 = abs(x)
+					of3 = base + (9 + (1 if x < 0 else 0))*W
+					x = np.float64(Xr[nb, j, np.uint64(3)])
+					ar3 = abs(x)
+					or3 = base + (9 + (1 if x < 0 else 0))*W
+					# Channels 4 to 7: |x| of each, and of the one that may
+					# be nonzero, v (its value: a sum of it and zeros,
+					# exact), its channel c and the row holding sign(v) * y.
+					x0 = np.float64(Xf[nb, j, np.uint64(4)])
+					x1 = np.float64(Xf[nb, j, np.uint64(5)])
+					x2 = np.float64(Xf[nb, j, np.uint64(6)])
+					x3 = np.float64(Xf[nb, j, np.uint64(7)])
+					bf0 = abs(x0)
+					bf1 = abs(x1)
+					bf2 = abs(x2)
+					bf3 = abs(x3)
+					v = x0 + x1 + x2 + x3
+					c = (1 if x1 != 0 else 0) + (2 if x2 != 0 else 0) + (3 if x3 != 0 else 0)
+					avf = abs(v)
+					nvf = -avf
+					ovf = base + (12 + 3*c + (1 if v < 0 else 0))*W
+					x0 = np.float64(Xr[nb, j, np.uint64(4)])
+					x1 = np.float64(Xr[nb, j, np.uint64(5)])
+					x2 = np.float64(Xr[nb, j, np.uint64(6)])
+					x3 = np.float64(Xr[nb, j, np.uint64(7)])
+					br0 = abs(x0)
+					br1 = abs(x1)
+					br2 = abs(x2)
+					br3 = abs(x3)
+					v = x0 + x1 + x2 + x3
+					c = (1 if x1 != 0 else 0) + (2 if x2 != 0 else 0) + (3 if x3 != 0 else 0)
+					avr = abs(v)
+					nvr = -avr
+					ovr = base + (12 + 3*c + (1 if v < 0 else 0))*W
+
+					for vec in range(n_vectors):
+						for q in range(8):
+							idx = vec * 8 + q
+							mf = min_f[b, idx]
+							Mf = max_f[b, idx]
+							mr = min_r[b, idx]
+							Mr = max_r[b, idx]
+
+							ya = ybuf[np.uint64(base + 2*W + idx)]
+							t = ybuf[np.uint64(of0 + idx)]
+							u = ya if ya < af0 else af0
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af0 else af0
+							t = ybuf[np.uint64(or0 + idx)]
+							u = ya if ya < ar0 else ar0
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar0 else ar0
+
+							ya = ybuf[np.uint64(base + 5*W + idx)]
+							t = ybuf[np.uint64(of1 + idx)]
+							u = ya if ya < af1 else af1
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af1 else af1
+							t = ybuf[np.uint64(or1 + idx)]
+							u = ya if ya < ar1 else ar1
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar1 else ar1
+
+							ya = ybuf[np.uint64(base + 8*W + idx)]
+							t = ybuf[np.uint64(of2 + idx)]
+							u = ya if ya < af2 else af2
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af2 else af2
+							t = ybuf[np.uint64(or2 + idx)]
+							u = ya if ya < ar2 else ar2
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar2 else ar2
+
+							ya = ybuf[np.uint64(base + 11*W + idx)]
+							t = ybuf[np.uint64(of3 + idx)]
+							u = ya if ya < af3 else af3
+							mf += math.copysign(u, t)
+							Mf += ya if ya > af3 else af3
+							t = ybuf[np.uint64(or3 + idx)]
+							u = ya if ya < ar3 else ar3
+							mr += math.copysign(u, t)
+							Mr += ya if ya > ar3 else ar3
+
+							ya = ybuf[np.uint64(base + 14*W + idx)]
+							Mf += ya if ya > bf0 else bf0
+							Mr += ya if ya > br0 else br0
+
+							ya = ybuf[np.uint64(base + 17*W + idx)]
+							Mf += ya if ya > bf1 else bf1
+							Mr += ya if ya > br1 else br1
+
+							ya = ybuf[np.uint64(base + 20*W + idx)]
+							Mf += ya if ya > bf2 else bf2
+							Mr += ya if ya > br2 else br2
+
+							ya = ybuf[np.uint64(base + 23*W + idx)]
+							Mf += ya if ya > bf3 else bf3
+							Mr += ya if ya > br3 else br3
+							t = ybuf[np.uint64(ovf + idx)]
+							t = t if t > nvf else nvf
+							mf += t if t < avf else avf
+							t = ybuf[np.uint64(ovr + idx)]
+							t = t if t > nvr else nvr
+							mr += t if t < avr else avr
+
+							min_f[b, idx] = mf
+							max_f[b, idx] = Mf
+							min_r[b, idx] = mr
+							max_r[b, idx] = Mr
+
+				# With no NaN and no -0.0 among the scores, equal scores
+				# have equal bits, so any maximum is the one numpy's gives.
+				best_score = np.float32(0.0)
+				for idx in range(len_output):
+					s_f = np.float32(min_f[b, idx] / max_f[b, idx])
+					s_r = np.float32(min_r[b, idx] / max_r[b, idx])
+					if s_f != s_f or (s_f == 0 and math.copysign(1.0, s_f) < 0):
+						flag = 1
+					if s_r != s_r or (s_r == 0 and math.copysign(1.0, s_r) < 0):
+						flag = 1
+
+					s = s_f if s_f > s_r else s_r
+					if idx == 0 or s > best_score:
+						best_score = s
+
+				best[l, i] = best_score
+			flags[l] = flag
+
+
+# Whether `_fwd_rev_best8` compiles with its arrays marked noalias; without
+# that its vector loops stay scalar, and `_fwd_rev_best` is used instead.
+_FWD_REV_SERIAL = getattr(_fwd_rev_best8, '_modisco_noalias', False)
+
+
+@precompile.signature('uint8(float32[:, ::1], float32[:, ::1], float32[:, ::1])')
+@njit(parallel=True)
+def _jaccard_all(X, Y, best):
+	"""best[l, i]: the score of row l of Y against row i of X, for every
+	row of X, at the one offset, with each row flattened to its positions
+	and channels in (j, k) order. Bit-identical to `_jaccard_best`'s
+	single-offset branch with neighbours 0..nx-1: each score's float64 sums
+	take the same terms in the same order, followed by the same division and
+	float32 rounding. The neighbours are innermost, one pair of sums each,
+	so that loop vectorizes; each score is written by one thread.
+
+	Returns 0, leaving best unfinished, when X or Y holds a NaN or an
+	infinity. Only a NaN's payload and sign could then differ from
+	`_jaccard_best`'s (which operand's NaN an operation returns depends on
+	the generated code); with finite values the only NaN is 0/0's."""
+
+	nx, D = X.shape
+	ny = Y.shape[0]
+
+	# X transposed, so that one position's values across the neighbours are
+	# contiguous, and padded with zeros to a multiple of 16 neighbours so
+	# that the vector loop has no scalar remainder. The padding's scores are
+	# computed and never read. (np.empty and a loop: np.zeros of a 2-D
+	# array costs about 0.25 s more to compile.)
+	n_pad = (nx + 15) // 16 * 16
+	X_t = np.empty((D, n_pad), dtype=np.float32)
+	finite = True
+	for j in range(D):
+		for i in range(nx):
+			v = X[i, j]
+			if not math.isfinite(v):
+				finite = False
+			X_t[j, i] = v
+		for i in range(nx, n_pad):
+			X_t[j, i] = 0.0
+
+	if not finite:
+		return 0
+
+	finite_rows = np.empty(ny, dtype=np.uint8)
+	for l in prange(ny):
+		min_sums = np.zeros(n_pad, dtype=np.float64)
+		max_sums = np.zeros(n_pad, dtype=np.float64)
+		row_finite = 1
+
+		for j in range(D):
+			if not math.isfinite(Y[l, j]):
+				row_finite = 0
+			y = abs(Y[l, j])
+			sign_y = np.sign(Y[l, j])
+
+			for i in range(n_pad):
+				v = X_t[j, i]
+				x = abs(v)
+				sign = np.sign(v) * sign_y
+				gt = y > x
+				min_sums[i] += (x if gt else y) * sign
+				max_sums[i] += y if gt else x
+
+		for i in range(nx):
+			best[l, i] = np.float32(min_sums[i] / max_sums[i])
+		finite_rows[l] = row_finite
+
+	for l in range(ny):
+		if finite_rows[l] == 0:
+			return 0
+	return 1
+
 
 def pearson_correlation(X, Y, min_overlap=None, func=np.ceil):
-	if X.ndim == 2:
-		X = X[None, :, :]
+	return pearson_correlations([X], Y, min_overlap=min_overlap, func=func)[0]
+
+
+def pearson_correlations(Xs, Y, min_overlap=None, func=np.ceil):
+	"""[pearson_correlation(X, Y, min_overlap, func) for X in Xs].
+
+	For arrays X of one shape, Y is padded once, and on the fast path its
+	windows are normalized once, for all of them; each X's scores are then
+	the same operations on the same operands as in a call of its own.
+	"""
+
+	Xs = [X[None, :, :] if X.ndim == 2 else X for X in Xs]
 	if Y.ndim == 2:
 		Y = Y[None, :, :]
 
+	if len(set(X.shape for X in Xs)) > 1:
+		return [pearson_correlations([X], Y, min_overlap=min_overlap,
+			func=func)[0] for X in Xs]
+
 	if min_overlap is not None:
-		n_pad = int(func(X.shape[1]*(1-min_overlap)))
-		pad_width = ((0, 0), (n_pad, n_pad), (0, 0)) 
-		Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
+		n_pad = int(func(Xs[0].shape[1]*(1-min_overlap)))
+		if n_pad >= 0:
+			# np.pad(mode="constant") without its Python overhead: a new
+			# C-ordered array of Y's dtype, zeros around a copy of Y.
+			m, l, k = Y.shape
+			Y_padded = np.zeros((m, l + 2*n_pad, k), dtype=Y.dtype)
+			Y_padded[:, n_pad:n_pad+l] = Y
+			Y = Y_padded
+		else:
+			pad_width = ((0, 0), (n_pad, n_pad), (0, 0))
+			Y = np.pad(array=Y, pad_width=pad_width, mode="constant")
 
-	n, d, _ = X.shape
+	n, d, _ = Xs[0].shape
 	len_output = 1 + Y.shape[1] - d 
-	scores = np.zeros((n, len_output))
+	Y_normed = None
 
-	for idx in range(len_output):
-		Y_ = Y[:, idx:idx+d]
+	results = []
+	for X in Xs:
+		scores = np.zeros((n, len_output))
 
-		scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
-				  (Y_ / np.linalg.norm(Y_)).ravel()) 
-		scores_ = np.nan_to_num(scores_)
-		scores[:,idx] = scores_
+		if (n == 1 and Y.shape[0] == 1 and X.shape[2] == Y.shape[2]
+				and len_output > 0 and X.dtype in (np.float32, np.float64)
+				and Y.dtype in (np.float32, np.float64)
+				and Y.flags.c_contiguous):
+			# The loop below with its loop-invariant work taken out. Every
+			# value comes from the same operation on the same operands:
+			# np.linalg.norm(Y_) is sqrt(Y_.ravel().dot(itself)), so each
+			# offset's window (a contiguous view, as Y_.ravel() is) is dotted
+			# with itself; sqrt and the division are elementwise and exact;
+			# np.dot casts both vectors to their common dtype, as done here,
+			# and each score is one np.dot of the same two contiguous vectors
+			# of the same length; nan_to_num maps each element as on a scalar.
+			# The normalized windows depend only on Y and d, so they are
+			# made for the first X that needs them and kept for the rest.
+			if Y_normed is None:
+				k = Y.shape[2]
+				Y_flat = Y.reshape(-1)
+				windows = np.lib.stride_tricks.as_strided(Y_flat,
+					shape=(len_output, d*k), strides=(k*Y_flat.itemsize,
+					Y_flat.itemsize), writeable=False)
 
-	argmaxs = np.argmax(scores, axis=1)
-	idxs = np.arange(len(scores))
-	return np.array([[scores[idxs, argmaxs], argmaxs - n_pad]]).transpose(0, 2, 1)
+				sqnorms = np.array(list(map(np.ndarray.dot, windows, windows)),
+					dtype=Y.dtype)
+				Y_normed = windows / np.sqrt(sqnorms)[:, None]
+
+			X_normed = (X / np.linalg.norm(X)).ravel()
+			dtype = np.result_type(X_normed, Y_normed)
+			X_normed = X_normed.astype(dtype, copy=False)
+			normed = Y_normed.astype(dtype, copy=False)
+
+			scores_ = np.array(list(map(X_normed.dot, normed)), dtype=dtype)
+			# nan_to_num changes only NaN and infinite values, so when there
+			# are none it returns an identical copy, which is skipped.
+			if np.isfinite(scores_).all():
+				scores[0] = scores_
+			else:
+				scores[0] = np.nan_to_num(scores_)
+		else:
+			for idx in range(len_output):
+				Y_ = Y[:, idx:idx+d]
+
+				scores_ = np.dot((X / np.linalg.norm(X)).ravel(),
+						  (Y_ / np.linalg.norm(Y_)).ravel())
+				scores_ = np.nan_to_num(scores_)
+				scores[:,idx] = scores_
+
+		argmaxs = np.argmax(scores, axis=1)
+		idxs = np.arange(len(scores))
+		results.append(np.array([[scores[idxs, argmaxs], argmaxs - n_pad]]
+			).transpose(0, 2, 1))
+
+	return results
 
 
 class NNTsneConditionalProbs():
@@ -271,6 +2077,7 @@ class NNTsneConditionalProbs():
 		distances = distances_nn.astype(np.float32, copy=False)
 		neighbors = neighbors_nn
 		
+		import sklearn.manifold
 		conditional_P = sklearn.manifold._utils._binary_search_perplexity(
 			distances, self.perplexity, verbose=False)
 
@@ -281,13 +2088,27 @@ class NNTsneConditionalProbs():
 		#normalize the conditional_P to sum to 1 across the rows
 		conditional_P = conditional_P / marginal_sum[:,None]
 
-		data = []
-		rows = []
-		cols = []
-		for row_idx,(ps,neigh_row) in enumerate(zip(conditional_P, neighbors)):
-			data.extend([p for p,neighbor in zip(ps, neigh_row)])
-			rows.extend([row_idx for neighbor in neigh_row])
-			cols.extend([neighbor for neighbor in neigh_row])
+		n_rows, n_cols = conditional_P.shape
+		if n_rows == n_samples and n_rows > 0 and all(
+				len(neigh_row) == n_cols for neigh_row in neighbors):
+			# Every row of neighbours is as long as its row of
+			# probabilities, so the loop below would list the probabilities
+			# row by row, each row's index once per neighbour, and the
+			# neighbours row by row: the same values, in the same order, as
+			# these arrays. coo_matrix picks the index dtype from the values
+			# and converts both index lists to it, and the data keeps
+			# conditional_P's dtype either way.
+			data = conditional_P.ravel()
+			rows = np.repeat(np.arange(n_rows), n_cols)
+			cols = np.concatenate(neighbors)
+		else:
+			data = []
+			rows = []
+			cols = []
+			for row_idx,(ps,neigh_row) in enumerate(zip(conditional_P, neighbors)):
+				data.extend([p for p,neighbor in zip(ps, neigh_row)])
+				rows.extend([row_idx for neighbor in neigh_row])
+				cols.extend([neighbor for neighbor in neigh_row])
 
 		P = coo_matrix((data, (rows, cols)),
 					   shape=(len(neighbors), len(neighbors)))
