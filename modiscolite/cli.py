@@ -378,6 +378,7 @@ def report(
         ttl=lite,
         n_examples=n_examples,
         trim_threshold=trim_threshold,
+        is_writing_tomtom_matrix=write_tomtom,
     )
 
 

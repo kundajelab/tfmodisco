@@ -532,6 +532,29 @@ def test_report_lite(report_h5, tmp_path, meme_db):
 
 
 @pytest.mark.cmd
+@pytest.mark.parametrize("flag,expected", [([], False), (["-t"], True)])
+def test_report_write_tomtom(report_h5, tmp_path, meme_db, monkeypatch, flag,
+	expected):
+	import pandas
+	import modiscolite.descriptive_report
+
+	calls = []
+	def _tomtom_dataframe(*args, **kwargs):
+		calls.append(kwargs['is_writing_tomtom_matrix'])
+		return pandas.DataFrame({'match0': [], 'qval0': []})
+
+	monkeypatch.setattr(modiscolite.descriptive_report,
+		"generate_tomtom_dataframe", _tomtom_dataframe)
+
+	output = tmp_path / "report"
+	result = _invoke(["report", "-i", report_h5, "-o", output, "-m", meme_db,
+		"-n", 1, "--n_examples", 1] + flag)
+
+	assert result.exit_code == 0, result.output
+	assert calls == [expected]
+
+
+@pytest.mark.cmd
 def test_report_simple(report_h5, tmp_path):
 	output = tmp_path / "report"
 	result = _invoke(["report-simple", "-i", report_h5, "-o", output, "-s",
