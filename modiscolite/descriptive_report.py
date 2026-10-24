@@ -452,7 +452,8 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
                               img_path_suffix: str = './',
                               meme_motif_db: Optional[str] = None,
                               top_n_matches: int = 3, ttl: bool = False,
-                              n_examples: int = 10, trim_threshold: float = 0.3):
+                              n_examples: int = 10, trim_threshold: float = 0.3,
+                              is_writing_tomtom_matrix: bool = False):
     """Generate descriptive HTML report."""
 
     if not os.path.isdir(output_dir):
@@ -483,7 +484,7 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
                 trim_threshold=trim_threshold)
         else:
             tomtom_df = generate_tomtom_dataframe(Path(modisco_h5py), Path(output_dir), Path(meme_motif_db) if meme_motif_db else None,
-                is_writing_tomtom_matrix=False, pattern_groups=pattern_groups,
+                is_writing_tomtom_matrix=is_writing_tomtom_matrix, pattern_groups=pattern_groups,
                 top_n_matches=top_n_matches, trim_threshold=trim_threshold)
 
         # Convert to dictionary format
