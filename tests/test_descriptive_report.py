@@ -7,6 +7,7 @@ import shutil
 
 import h5py
 import numpy
+import pandas
 import pytest
 
 import modiscolite.descriptive_report
@@ -748,3 +749,25 @@ def test_generate_descriptive_report_suffix(small_h5, tmp_path, plots, suffix):
 	path = generate_descriptive_report(str(small_h5), str(tmp_path),
 		img_path_suffix=suffix, n_examples=1)
 	assert os.path.exists(path)
+
+
+def test_generate_descriptive_report_missing_tomtom_matches(modisco_h5,
+	meme_db, tmp_path, plots, monkeypatch):
+	# Patterns with fewer TOMTOM hits than top_n_matches get None, which
+	# pandas >= 3 stores as NaN in the string columns.
+	def _tomtom_dataframe(*args, **kwargs):
+		return pandas.DataFrame({
+			'match0': ['db_motif_0', 'db_motif_1', 'db_motif_0', 'db_motif_1'],
+			'qval0': [0.01, 0.02, 0.03, 0.04],
+			'match1': ['db_motif_2', None, None, 'db_motif_3'],
+			'qval1': [0.05, None, None, 0.06]})
+
+	monkeypatch.setattr(modiscolite.descriptive_report,
+		"generate_tomtom_dataframe", _tomtom_dataframe)
+
+	path = generate_descriptive_report(str(modisco_h5), str(tmp_path),
+		meme_motif_db=str(meme_db), top_n_matches=2, n_examples=1)
+
+	html = open(path).read()
+	assert 'db_motif_2' in html
+	assert 'db_motif_3' in html
