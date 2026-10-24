@@ -494,7 +494,10 @@ def generate_descriptive_report(modisco_h5py: str, output_dir: str,
                     match_col = f'match{j}'
                     pval_col = f'pval{j}' if ttl else f'qval{j}'
                     if match_col in tomtom_df.columns:
-                        tomtom_data[pattern_tag][f'match_{j}'] = tomtom_df.iloc[i][match_col]
+                        match_value = tomtom_df.iloc[i][match_col]
+                        if match_value is None or match_value != match_value:  # pandas >= 3 turns None into NaN
+                            match_value = None
+                        tomtom_data[pattern_tag][f'match_{j}'] = match_value
                         tomtom_data[pattern_tag][f'pval_{j}'] = tomtom_df.iloc[i][pval_col]
 
         # Create TOMTOM match logos and descriptive names
