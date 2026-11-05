@@ -388,7 +388,12 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 
 	The results will look like:
 	><chrom>:<start>-<end> <strand> <pattern_name>.<seqlet_id>
-	FASTA sequence extracted from a fast file
+	FASTA sequence extracted from the one-hot encoded input.
+
+	Headers use one-based, inclusive genomic coordinates. Sequences remain in
+	forward genomic orientation, even when the header's dir field is '-'.
+	Stored seqlet bounds are zero-based, half-open offsets within the centered
+	input window; full-length arrays are translated back to that window here.
 
 	Parameters
 	----------
@@ -429,6 +434,8 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 		exit(1)
 
 	sequences = sequences['arr_0']
+	if sequences.ndim != 3 or sequences.shape[1] != 4:
+		raise ValueError("sequences must have shape (examples, 4, length)")
 
 	if sequences.shape[0] != len(peak_rows_filtered):
 		print(textwrap.dedent(f"""\
@@ -445,7 +452,16 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 		if window_size is None:
 			if 'window_size' not in grp.attrs:
 				raise ValueError("window_size must be specified either in the h5 file or as an argument. Older versions of modisco does not store `window_size` in the h5 file.")
-			window_size = int(grp.attrs['window_size'])
+			window_size = grp.attrs['window_size']
+		input_length = sequences.shape[2]
+		if (isinstance(window_size, (bool, np.bool_))
+			or not isinstance(window_size, (int, np.integer))
+			or not 0 < window_size <= input_length):
+			raise ValueError("window_size must be a positive integer no larger "
+				"than the sequence length")
+		# Normalize NumPy integer metadata before arithmetic (notably uint64).
+		window_size = int(window_size)
+		crop_start = input_length // 2 - window_size // 2
 
 		for contribution_dir in ['pos', 'neg']:
 
@@ -464,13 +480,18 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 					peak_row = peak_rows_filtered[row_num].split('\t')
 					chrom = peak_row[0]
 
-					seqlet_start_offset = datasets['seqlets']['start'][idx] + 1
-					seqlet_end_offset = datasets['seqlets']['end'][idx]
+					seqlet_start_offset = int(datasets['seqlets']['start'][idx])
+					seqlet_end_offset = int(datasets['seqlets']['end'][idx])
+					if not 0 <= seqlet_start_offset < seqlet_end_offset <= window_size:
+						raise ValueError(f"Invalid seqlet bounds for {pattern_name}.{idx}: "
+							f"[{seqlet_start_offset}, {seqlet_end_offset}) "
+							f"outside window_size={window_size}")
 
 					nucleotide_tracks = sequences[row_num]
 					assert nucleotide_tracks.shape[0] == 4
 					sequence = []
-					for pos in range(seqlet_start_offset, seqlet_end_offset):
+					for pos in range(crop_start + seqlet_start_offset,
+						crop_start + seqlet_end_offset):
 						bp_track = nucleotide_tracks[:, pos]
 						hit = np.argmax(bp_track)
 						sequence.append(alphabet[hit])
@@ -479,7 +500,7 @@ def write_fasta_from_h5(modisco_results_filepath: os.PathLike, peaks_filepath: o
 					# Calculate the start and ends.
 					absolute_peak_center = (int(peak_row[1]) + int(peak_row[2])) // 2
 					window_center_offset = window_size // 2
-					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset
+					absolute_seqlet_start = absolute_peak_center - window_center_offset + seqlet_start_offset + 1
 					absolute_seqlet_end = absolute_peak_center - window_center_offset + seqlet_end_offset
 
 					strand_char = '-' if bool(datasets['seqlets']['is_revcomp'][idx]) is True else '+'
