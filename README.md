@@ -82,6 +82,26 @@ neg_patterns/
 
 where `[...]` denotes that data is stored at that attribute. Importantly, the seqlets are all in the correct orientation. If a seqlet has been flipped to be the reverse complement, the sequence, contribution scores, and coordinates have also been flipped. In cases where there are not enough seqlets to consider a metacluster, that attribute (`neg_patterns` or `pos_patterns`) may not appear in the file.
 
+## Exporting seqlets as FASTA
+
+```sh
+modisco seqlet-fasta -i modisco_results.h5 -p peaks.bed -s ohe.npz -c '*' -o seqlets.fa
+```
+
+Use a length-last NPZ array (`arr_0`, shape `examples, 4, length`) containing
+the original centered input sequences, or sequences already cropped to the
+input window. Its rows must match the peaks after filtering with `-c`, in the
+same order used for interpretation. The exporter translates crop-relative,
+zero-based half-open seqlet bounds into the supplied sequence array using
+`input_length // 2 - window_size // 2`. The window must fit in that array.
+
+The input window is read from the results' `window_size` attribute. For older
+files without it, supply the original `modisco motifs -w` value using
+`seqlet-fasta -w`; an explicit value overrides metadata. FASTA headers use
+**one-based, inclusive** genomic coordinates centered on each peak's midpoint.
+Sequences are always in **forward genomic orientation**; `dir=-` records the
+seqlet's motif orientation and does not reverse-complement the exported bases.
+
 ## Generating reports
 
 The TF-MoDISco report can be generated with the following command:

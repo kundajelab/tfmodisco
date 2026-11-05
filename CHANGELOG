@@ -8,6 +8,10 @@ Unreleased
 	- Fix MergeMotifsAcrossRuns.ipynb seqlet reconstruction by translating each
 	  run's input-window coordinates back to the full input. Use saved window_size
 	  metadata, or an explicit per-file window for older results without it.
+	- Fix seqlet FASTA export to translate centered input-window coordinates
+	  into full-length sequence arrays and retain the first base of each seqlet.
+	  Preserve inclusive headers and forward-strand output; reject invalid
+	  input shapes, windows and seqlet bounds.
 
 Version 2.6.0
 ==============
