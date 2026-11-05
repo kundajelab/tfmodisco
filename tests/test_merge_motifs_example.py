@@ -190,3 +190,34 @@ def test_numpy_integer_windows_preserve_sequence_and_scores(
     np.testing.assert_array_equal(seqlet.hypothetical_contribs, expected_scores)
     np.testing.assert_array_equal(seqlet.contrib_scores, expected_sequence * expected_scores)
     np.testing.assert_array_equal(state["union_onehot"], onehot)
+
+
+@pytest.mark.parametrize("dtype,length,window,start,end,expected_start,expected_end", [
+    pytest.param(np.int8, 1000, 200, 10, 30, 410, 430,
+                 id="int8-offset-outside-dtype"),
+    pytest.param(np.uint8, 1000, 200, 10, 30, 410, 430,
+                 id="uint8-offset-outside-dtype"),
+    pytest.param(np.int8, 400, 200, 100, 120, 200, 220,
+                 id="int8-addition-wraps"),
+    pytest.param(np.uint8, 600, 400, 200, 230, 300, 330,
+                 id="uint8-addition-wraps"),
+])
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+def test_compact_seqlet_coordinates_do_not_overflow(
+        tmp_path, dtype, length, window, start, end,
+        expected_start, expected_end, reverse):
+    entry, onehot, scores = _write_run(
+        tmp_path, length=length, window=window,
+        patterns=[[(0, dtype(start), dtype(end), reverse)]])
+    with h5.File(entry[0]) as handle:
+        assert handle["pos_patterns/pattern_0/seqlets/start"].dtype == np.dtype(dtype)
+    _, (seqlet,) = _reconstruct([entry])
+    assert (seqlet.start, seqlet.end) == (expected_start, expected_end)
+    expected_sequence = onehot[0, expected_start:expected_end]
+    expected_scores = scores[0, expected_start:expected_end]
+    if reverse:
+        expected_sequence = expected_sequence[::-1, ::-1]
+        expected_scores = expected_scores[::-1, ::-1]
+    np.testing.assert_array_equal(seqlet.sequence, expected_sequence)
+    np.testing.assert_array_equal(seqlet.hypothetical_contribs, expected_scores)
+    np.testing.assert_array_equal(seqlet.contrib_scores, expected_sequence * expected_scores)
